@@ -1,32 +1,57 @@
 # AI Piutang Vouching
 
-Sistem pemeriksaan dokumen piutang berbasis OCR dengan dua tahap pemeriksaan:
+Foundation for SAP-to-physical Billing reconciliation and SPJ vouching.
 
-1. **Rekonsiliasi Program SAP ↔ Fisik Billing**
-2. **Vouching Fisik Billing ↔ Fisik SPJ**
+## Current flow
+1. Upload Program SAP Excel (`POST /sap/import`).
+2. Validate SAP population (`GET /sap/validate/{batch_id}`).
+3. Upload physical Billing/SPJ (`POST /documents/BILLING`, `POST /documents/SPJ`).
+4. Run OCR/extraction (`POST /documents/{document_id}/ocr`).
+5. Run SAP ↔ Billing reconciliation (`POST /reconciliation/{batch_id}/run`).
+6. Review reconciliation summary (`GET /reconciliation/{batch_id}`).
+7. Run Billing ↔ SPJ vouching (`POST /spj/vouch`).
+8. Read overall result (`GET /results/{billing_id}`).
+9. Review exceptions (`GET /exceptions`) and record reviewer decisions (`POST /reviews/vouching/{result_id}`).
+10. View evidence metadata/source file (`GET /documents/{document_id}`, `GET /documents/{document_id}/content`).
+11. Review audit trail (`GET /audit-trail`).
+12. Generate Excel/PDF report (`GET /reports/{batch_id}?format=xlsx|pdf`).
 
-## Business Rule Utama
+## Business guardrails
+- SAP is the expected population.
+- One SAP Billing = exactly one physical Billing document.
+- No amount tolerance: nominal must match exactly (`difference = 0`).
+- OCR is evidence extraction only; deterministic rules make vouching decisions.
+- Raw OCR and normalized values are retained separately.
+- Ambiguous/incomplete extraction is surfaced for human review.
 
-- 1 Billing pada Program SAP = tepat 1 dokumen Billing fisik.
-- Jika 0 dokumen fisik: `EXCEPTION / BILLING_DOCUMENT_NOT_FOUND`.
-- Jika >1 dokumen fisik: `EXCEPTION / DUPLICATE_PHYSICAL_BILLING`.
-- SAP vs Billing dibandingkan berdasarkan Billing Document, Doc Date, dan Nominal.
-- Billing vs SPJ dibandingkan berdasarkan No. SPJ.
-- OCR membantu ekstraksi data, tetapi **tidak menentukan hasil audit**. Final result ditentukan deterministic rule engine.
+## Development
+Python 3.11+, PostgreSQL 16+.
 
-## Status
+```bash
+python -m venv .venv
+# Windows
+.venv\\Scripts\\activate
+# Linux/macOS
+source .venv/bin/activate
+pip install -r requirements.txt
+copy .env.example .env  # Windows
+# cp .env.example .env  # Linux/macOS
+alembic upgrade head
+uvicorn app.main:app --reload
+pytest -q
+```
 
-`PASS` · `REVIEW` · `EXCEPTION` · `NOT_FOUND`
+## Docker
+Set `POSTGRES_PASSWORD` in the environment, then:
 
-## Project Documents
+```bash
+docker compose build
+docker compose up -d
+```
 
-- [PROJECT_CHARTER.md](PROJECT_CHARTER.md)
-- [REQUIREMENTS.md](REQUIREMENTS.md)
-- [DATA_MODEL.md](DATA_MODEL.md)
-- [VOUCHING_RULES.md](VOUCHING_RULES.md)
-- [CODEX_INSTRUCTIONS.md](CODEX_INSTRUCTIONS.md)
-- [TASKS/TASK-001.md](TASKS/TASK-001.md)
+The application image installs Tesseract OCR and runs database migrations before starting the API. See `DEPLOYMENT.md` for the release and rollback checklist.
 
-## Development Principle
+## Testing gate
+Every task must pass implementation tests, migration checks, and relevant end-to-end checks before release. The release gate is TASK-017/018 with green CI and a completed smoke test.
 
-Project dikembangkan secara bertahap per task. Business rule yang sudah berstatus LOCKED tidak boleh diubah tanpa persetujuan project owner.
+See `PROJECT_CHARTER.md`, `REQUIREMENTS.md`, `VOUCHING_RULES.md`, `DATA_MODEL.md`, `CODEX_INSTRUCTIONS.md`, and `DEVELOPMENT_PLAN.md` for locked scope and task rules.
