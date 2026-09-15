@@ -43,7 +43,16 @@ def _parse_amount(value: str | None) -> Decimal | None:
         else:
             raw = raw.replace(",", "")
     elif "," in raw:
-        raw = raw.replace(",", "")
+        # In Indonesian documents a comma is commonly the decimal separator.
+        # Treat comma as thousands only when it clearly separates 3-digit groups.
+        if re.fullmatch(r"-?\d{1,3}(?:,\d{3})+", raw):
+            raw = raw.replace(",", "")
+        else:
+            raw = raw.replace(",", ".")
+    elif "." in raw:
+        # Dot-only values such as 1.500.000 are Indonesian thousands notation.
+        if re.fullmatch(r"-?\d{1,3}(?:\.\d{3})+", raw):
+            raw = raw.replace(".", "")
     try:
         return Decimal(raw).quantize(Decimal("0.01"))
     except Exception:
