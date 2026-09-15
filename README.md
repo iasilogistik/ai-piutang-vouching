@@ -1,32 +1,49 @@
 # AI Piutang Vouching
 
-Sistem pemeriksaan dokumen piutang berbasis OCR dengan dua tahap pemeriksaan:
+Foundation project for SAP-to-physical billing reconciliation and SPJ vouching.
 
-1. **Rekonsiliasi Program SAP ↔ Fisik Billing**
-2. **Vouching Fisik Billing ↔ Fisik SPJ**
+## Development
 
-## Business Rule Utama
+### Prerequisites
+- Python 3.11+
+- PostgreSQL 16+ (or Docker)
+- Git
 
-- 1 Billing pada Program SAP = tepat 1 dokumen Billing fisik.
-- Jika 0 dokumen fisik: `EXCEPTION / BILLING_DOCUMENT_NOT_FOUND`.
-- Jika >1 dokumen fisik: `EXCEPTION / DUPLICATE_PHYSICAL_BILLING`.
-- SAP vs Billing dibandingkan berdasarkan Billing Document, Doc Date, dan Nominal.
-- Billing vs SPJ dibandingkan berdasarkan No. SPJ.
-- OCR membantu ekstraksi data, tetapi **tidak menentukan hasil audit**. Final result ditentukan deterministic rule engine.
+### Setup
 
-## Status
+```bash
+python -m venv .venv
+# Windows
+.venv\Scripts\activate
+# Linux/macOS
+source .venv/bin/activate
+pip install -r requirements.txt
+copy .env.example .env  # Windows
+# cp .env.example .env  # Linux/macOS
+```
 
-`PASS` · `REVIEW` · `EXCEPTION` · `NOT_FOUND`
+Set `DATABASE_URL` in `.env` for your local PostgreSQL database.
 
-## Project Documents
+### Database and migration
 
-- [PROJECT_CHARTER.md](PROJECT_CHARTER.md)
-- [REQUIREMENTS.md](REQUIREMENTS.md)
-- [DATA_MODEL.md](DATA_MODEL.md)
-- [VOUCHING_RULES.md](VOUCHING_RULES.md)
-- [CODEX_INSTRUCTIONS.md](CODEX_INSTRUCTIONS.md)
-- [TASKS/TASK-001.md](TASKS/TASK-001.md)
+```bash
+alembic upgrade head
+```
 
-## Development Principle
+### Run
 
-Project dikembangkan secara bertahap per task. Business rule yang sudah berstatus LOCKED tidak boleh diubah tanpa persetujuan project owner.
+```bash
+uvicorn app.main:app --reload
+```
+
+Health check: `GET /health` should return HTTP 200 and `{"status":"healthy"}`.
+
+### Test
+
+```bash
+pytest
+```
+
+## Scope
+
+See `PROJECT_CHARTER.md`, `REQUIREMENTS.md` (when added), and `VOUCHING_RULES.md` for locked business requirements. Task-specific instructions are in `TASKS/`.
