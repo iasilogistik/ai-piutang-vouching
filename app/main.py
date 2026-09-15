@@ -6,6 +6,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
+from app.audit_service import list_audit_trail, record_audit
 from app.database import SessionLocal, engine
 from app.models import BillingReconciliation, Document, ImportBatch, PhysicalBilling, SPJ, VouchingResult
 from app.services.sap_import import import_sap_upload
@@ -38,6 +39,9 @@ def sap_import(file: UploadFile = File(...), period: date | None = None,
                uploaded_by: str | None = None, db: Session = Depends(get_db)) -> dict[str, object]:
     try:
         batch = import_sap_upload(db, file, uploaded_by=uploaded_by, period=period)
+        record_audit(db, entity_type="IMPORT_BATCH", entity_id=batch.id, action="SAP_IMPORT",
+                     actor=uploaded_by, status_to=batch.status, metadata={"file_name": batch.file_name, "total_records": batch.total_records})
+        db.commit()
     except ValueError as exc:
         db.rollback(); raise handle_error(exc) from exc
     return {"batch_id": batch.id, "file_name": batch.file_name, "period": batch.period.isoformat() if batch.period else None,
@@ -58,6 +62,9 @@ def upload_document(document_type: str, file: UploadFile = File(...), uploaded_b
         raise HTTPException(status_code=400, detail="document_type must be BILLING or SPJ")
     try:
         doc = save_document(db, file, document_type=document_type, uploaded_by=uploaded_by)
+        record_audit(db, entity_type="DOCUMENT", entity_id=doc.id, action="UPLOAD", actor=uploaded_by,
+                     status_to="UPLOADED", metadata={"document_type": document_type, "file_name": doc.file_name, "file_hash": doc.file_hash})
+        db.commit()
     except ValueError as exc:
         db.rollback(); raise handle_error(exc) from exc
     return {"document_id": doc.id, "file_name": doc.file_name, "document_type": doc.document_type, "file_hash": doc.file_hash}
@@ -65,13 +72,22 @@ def upload_document(document_type: str, file: UploadFile = File(...), uploaded_b
 
 @app.post("/documents/{document_id}/ocr")
 def run_ocr(document_id: int, db: Session = Depends(get_db)):
-    try: return ocr_document(db, document_id)
+    try:
+        result = ocr_document(db, document_id)
+        record_audit(db, entity_type="DOCUMENT", entity_id=document_id, action="OCR",
+                     status_to="OCR_PROCESSED", metadata={"engine": result.get("engine"), "confidence": result.get("confidence")})
+        db.commit()
+        return result
     except ValueError as exc: raise handle_error(exc) from exc
 
 
 @app.post("/reconciliation/{batch_id}/run")
 def run_reconciliation(batch_id: int, db: Session = Depends(get_db)):
-    try: rows = reconcile_batch(db, batch_id)
+    try:
+        rows = reconcile_batch(db, batch_id)
+        record_audit(db, entity_type="IMPORT_BATCH", entity_id=batch_id, action="RECONCILIATION_RUN",
+                     status_to="COMPLETED", metadata={"total": len(rows)})
+        db.commit()
     except ValueError as exc: raise handle_error(exc) from exc
     return {"batch_id": batch_id, "total": len(rows), "results": [{"id": r.id, "status": r.status,
         "exception_code": r.exception_code, "nominal_difference": str(r.nominal_difference)} for r in rows]}
@@ -91,6 +107,9 @@ def reconciliation_dashboard(batch_id: int, db: Session = Depends(get_db)):
 @app.post("/spj/vouch")
 def run_spj_vouching(db: Session = Depends(get_db)):
     rows = vouch_spj(db)
+    record_audit(db, entity_type="VOUCHING", entity_id=None, action="SPJ_VOUCHING_RUN",
+                 status_to="COMPLETED", metadata={"total": len(rows)})
+    db.commit()
     return {"total": len(rows), "results": [{"id": r.id, "billing_id": r.billing_id, "spj_id": r.spj_id,
         "status": r.status, "rule_code": r.rule_code} for r in rows]}
 
@@ -118,7 +137,10 @@ def review_vouching(result_id: int, status: str, reviewer_id: str, remarks: str 
     if not result: raise HTTPException(status_code=404, detail="Vouching result not found")
     status = status.upper()
     if status not in {"PASS", "REVIEW", "EXCEPTION"}: raise HTTPException(status_code=400, detail="Invalid review status")
+    old_status = result.status
     result.status = status; result.reviewer_id = reviewer_id; result.reviewed_at = func.now(); result.remarks = remarks
+    record_audit(db, entity_type="VOUCHING_RESULT", entity_id=result.id, action="REVIEW",
+                 actor=reviewer_id, status_from=old_status, status_to=status, remarks=remarks)
     db.commit(); db.refresh(result)
     return {"id": result.id, "status": result.status, "reviewer_id": result.reviewer_id, "remarks": result.remarks}
 
@@ -146,3 +168,17 @@ def document_content(document_id: int, db: Session = Depends(get_db)):
     path = Path(doc.storage_path)
     if not path.is_file(): raise HTTPException(status_code=404, detail="Stored document file not found")
     return FileResponse(path, filename=doc.file_name)
+
+
+@app.get("/audit-trail")
+def audit_trail(entity_type: str | None = None, entity_id: int | None = None,
+                limit: int = 100, db: Session = Depends(get_db)):
+    if limit < 1 or limit > 500:
+        raise HTTPException(status_code=400, detail="limit must be between 1 and 500")
+    rows = list_audit_trail(db, entity_type=entity_type, entity_id=entity_id, limit=limit)
+    return {"total": len(rows), "entries": [{
+        "id": row.id, "entity_type": row.entity_type, "entity_id": row.entity_id,
+        "action": row.action, "status_from": row.status_from, "status_to": row.status_to,
+        "actor": row.actor, "remarks": row.remarks, "metadata": row.metadata_json,
+        "created_at": row.created_at,
+    } for row in rows]}
