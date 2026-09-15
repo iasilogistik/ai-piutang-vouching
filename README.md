@@ -1,6 +1,6 @@
 # AI Piutang Vouching
 
-Foundation for SAP-to-physical billing reconciliation and SPJ vouching.
+Foundation for SAP-to-physical Billing reconciliation and SPJ vouching.
 
 ## Current flow
 1. Upload Program SAP Excel (`POST /sap/import`).
@@ -13,6 +13,8 @@ Foundation for SAP-to-physical billing reconciliation and SPJ vouching.
 8. Read overall result (`GET /results/{billing_id}`).
 9. Review exceptions (`GET /exceptions`) and record reviewer decisions (`POST /reviews/vouching/{result_id}`).
 10. View evidence metadata/source file (`GET /documents/{document_id}`, `GET /documents/{document_id}/content`).
+11. Review audit trail (`GET /audit-trail`).
+12. Generate Excel/PDF report (`GET /reports/{batch_id}?format=xlsx|pdf`).
 
 ## Business guardrails
 - SAP is the expected population.
@@ -38,5 +40,18 @@ alembic upgrade head
 uvicorn app.main:app --reload
 pytest -q
 ```
+
+## Docker
+Set `POSTGRES_PASSWORD` in the environment, then:
+
+```bash
+docker compose build
+docker compose up -d
+```
+
+The application image installs Tesseract OCR and runs database migrations before starting the API. See `DEPLOYMENT.md` for the release and rollback checklist.
+
+## Testing gate
+Every task must pass implementation tests, migration checks, and relevant end-to-end checks before release. The release gate is TASK-017/018 with green CI and a completed smoke test.
 
 See `PROJECT_CHARTER.md`, `REQUIREMENTS.md`, `VOUCHING_RULES.md`, `DATA_MODEL.md`, `CODEX_INSTRUCTIONS.md`, and `DEVELOPMENT_PLAN.md` for locked scope and task rules.

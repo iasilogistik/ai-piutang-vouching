@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.audit_service import list_audit_trail, record_audit
 from app.database import SessionLocal, engine
 from app.models import BillingReconciliation, Document, ImportBatch, PhysicalBilling, SPJ, VouchingResult
+from app.services.reports import build_report
 from app.services.sap_import import import_sap_upload
 from app.services.vouching import ocr_document, overall_result, reconcile_batch, save_document, validate_sap_batch, vouch_spj
 
@@ -182,3 +183,13 @@ def audit_trail(entity_type: str | None = None, entity_id: int | None = None,
         "actor": row.actor, "remarks": row.remarks, "metadata": row.metadata_json,
         "created_at": row.created_at,
     } for row in rows]}
+
+
+@app.get("/reports/{batch_id}")
+def generate_report(batch_id: int, format: str = "xlsx", db: Session = Depends(get_db)):
+    try:
+        path = build_report(db, batch_id, format)
+    except ValueError as exc:
+        raise handle_error(exc) from exc
+    media = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" if path.suffix == ".xlsx" else "application/pdf"
+    return FileResponse(path, filename=path.name, media_type=media)
