@@ -43,14 +43,11 @@ def _parse_amount(value: str | None) -> Decimal | None:
         else:
             raw = raw.replace(",", "")
     elif "," in raw:
-        # In Indonesian documents a comma is commonly the decimal separator.
-        # Treat comma as thousands only when it clearly separates 3-digit groups.
         if re.fullmatch(r"-?\d{1,3}(?:,\d{3})+", raw):
             raw = raw.replace(",", "")
         else:
             raw = raw.replace(",", ".")
     elif "." in raw:
-        # Dot-only values such as 1.500.000 are Indonesian thousands notation.
         if re.fullmatch(r"-?\d{1,3}(?:\.\d{3})+", raw):
             raw = raw.replace(".", "")
     try:
@@ -138,16 +135,20 @@ def extract_text(path: str) -> tuple[str, str]:
 
 
 def parse_document_fields(text: str) -> dict[str, Any]:
-    def grab(patterns: list[str]) -> str | None:
+    def grab(patterns: list[str], group: int = 1) -> str | None:
         for pattern in patterns:
             match = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
             if match:
-                return _norm(match.group(1))
+                return _norm(match.group(group))
         return None
-    billing = grab([r"Billing\s*(?:Document|No\.?)\s*[:#-]?\s*([A-Z0-9./-]+)", r"No\.?\s*Billing\s*[:#-]?\s*([A-Z0-9./-]+)"])
+
+    billing = grab([
+        r"Billing\s*(?:Document|No\.?)\s*[:#-]?\s*([A-Z0-9./-]+)",
+        r"No\.?\s*Billing\s*[:#-]?\s*([A-Z0-9./-]+)",
+    ])
     no_spj = grab([r"No\.?\s*SPJ\s*[:#-]?\s*([A-Z0-9./-]+)"])
     date_raw = grab([r"(?:Doc\.?\s*Date|Tanggal)\s*[:#-]?\s*([0-9./-]+)"])
-    nominal_raw = grab([r"(?:Nominal|Total|Amount)\s*[:#-]?\s*(Rp\.?\s*)?([0-9.,-]+)"])
+    nominal_raw = grab([r"(?:Nominal|Total|Amount)\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9.,-]+)"])
     return {"billing_document_raw": billing, "billing_document": _norm_key(billing),
             "no_spj_raw": no_spj, "no_spj": _norm_key(no_spj),
             "doc_date": _parse_date(date_raw), "nominal": _parse_amount(nominal_raw)}
