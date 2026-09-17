@@ -56,14 +56,32 @@ def _parse_amount(value: str | None) -> Decimal | None:
         return None
 
 
+_INDONESIAN_MONTHS = {
+    "januari": 1, "februari": 2, "maret": 3, "april": 4,
+    "mei": 5, "juni": 6, "juli": 7, "agustus": 8,
+    "september": 9, "oktober": 10, "november": 11, "desember": 12,
+}
+
+
 def _parse_date(value: str | None) -> date | None:
     if not value:
         return None
+    raw = _norm(value)
+    if not raw:
+        return None
     for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%d.%m.%Y"):
         try:
-            return datetime.strptime(value.strip(), fmt).date()
+            return datetime.strptime(raw, fmt).date()
         except ValueError:
             continue
+    match = re.fullmatch(r"(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})", raw, re.IGNORECASE)
+    if match:
+        month = _INDONESIAN_MONTHS.get(match.group(2).lower())
+        if month:
+            try:
+                return date(int(match.group(3)), month, int(match.group(1)))
+            except ValueError:
+                return None
     return None
 
 
@@ -115,20 +133,44 @@ def validate_sap_batch(db: Session, batch_id: int) -> dict[str, Any]:
     return {"batch_id": batch_id, "total_records": len(rows), "valid": not problems, "problems": problems}
 
 
+def _ocr_pdf_scan(path: str) -> tuple[str, str]:
+    try:
+        import fitz
+        from PIL import Image
+        import pytesseract
+        import io
+
+        pdf = fitz.open(path)
+        pages: list[str] = []
+        try:
+            for page in pdf:
+                pixmap = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+                image = Image.open(io.BytesIO(pixmap.tobytes("png")))
+                pages.append(pytesseract.image_to_string(image, lang="eng"))
+        finally:
+            pdf.close()
+        text = "\n".join(pages).strip()
+        return text, "TESSERACT_PDF" if text else "REVIEW_REQUIRED"
+    except Exception:
+        return "", "REVIEW_REQUIRED"
+
+
 def extract_text(path: str) -> tuple[str, str]:
     suffix = Path(path).suffix.lower()
     if suffix == ".pdf":
         try:
             from pypdf import PdfReader
             reader = PdfReader(path)
-            text = "\n".join(page.extract_text() or "" for page in reader.pages)
-            return text, "PDF_TEXT"
+            text = "\n".join(page.extract_text() or "" for page in reader.pages).strip()
+            if text:
+                return text, "PDF_TEXT"
         except Exception:
-            return "", "REVIEW_REQUIRED"
+            pass
+        return _ocr_pdf_scan(path)
     try:
         from PIL import Image
         import pytesseract
-        text = pytesseract.image_to_string(Image.open(path))
+        text = pytesseract.image_to_string(Image.open(path), lang="eng")
         return text, "TESSERACT"
     except Exception:
         return "", "REVIEW_REQUIRED"
@@ -147,8 +189,10 @@ def parse_document_fields(text: str) -> dict[str, Any]:
         r"No\.?\s*Billing\s*[:#-]?\s*([A-Z0-9./-]+)",
     ])
     no_spj = grab([r"No\.?\s*SPJ\s*[:#-]?\s*([A-Z0-9./-]+)"])
-    date_raw = grab([r"(?:Doc\.?\s*Date|Tanggal)\s*[:#-]?\s*([0-9./-]+)"])
-    nominal_raw = grab([r"(?:Nominal|Total|Amount)\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9.,-]+)"])
+    date_raw = grab([r"(?:Doc\.?\s*Date|Tanggal)\s*[:#-]?\s*([0-9A-Za-z./-]+(?:\s+[A-Za-z]+\s+\d{4})?)"])
+    nominal_raw = grab([
+        r"(?:Grand\s*Total|Total\s*Bayar|Total|Nominal|Amount)\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9.,-]+)",
+    ])
     return {"billing_document_raw": billing, "billing_document": _norm_key(billing),
             "no_spj_raw": no_spj, "no_spj": _norm_key(no_spj),
             "doc_date": _parse_date(date_raw), "nominal": _parse_amount(nominal_raw)}
@@ -160,7 +204,7 @@ def ocr_document(db: Session, document_id: int) -> dict[str, Any]:
         raise ValueError("Document not found")
     text, engine = extract_text(doc.storage_path)
     fields = parse_document_fields(text)
-    confidence = Decimal("0.5000") if engine == "TESSERACT" else (Decimal("0.9000") if text else Decimal("0.0000"))
+    confidence = Decimal("0.5000") if engine.startswith("TESSERACT") else (Decimal("0.9000") if text else Decimal("0.0000"))
     if doc.document_type == "BILLING":
         row = db.scalar(select(PhysicalBilling).where(PhysicalBilling.document_id == doc.id))
         if not row:
@@ -215,7 +259,7 @@ def reconcile_batch(db: Session, batch_id: int) -> list[BillingReconciliation]:
             rec = BillingReconciliation(sap_billing_id=sap.id, physical_billing_id=physical.id,
                 billing_match=billing_match, date_match=date_match, nominal_match=nominal_match,
                 nominal_difference=difference, status=status,
-                exception_code=None if status in {"MATCH", "REVIEW"} else ("BILLING_FIELD_MISMATCH"),
+                exception_code=None if status in {"MATCH", "REVIEW"} else "BILLING_FIELD_MISMATCH",
                 remarks="OCR field incomplete; human review required" if missing_ocr else None)
         db.add(rec)
         db.flush()
