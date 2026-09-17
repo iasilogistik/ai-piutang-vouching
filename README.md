@@ -6,7 +6,7 @@ Foundation for SAP-to-physical Billing reconciliation and SPJ vouching.
 1. Upload Program SAP Excel (`POST /sap/import`).
 2. Validate SAP population (`GET /sap/validate/{batch_id}`).
 3. Upload physical Billing/SPJ (`POST /documents/BILLING`, `POST /documents/SPJ`).
-4. Run OCR/extraction (`POST /documents/{document_id}/ocr`).
+4. Run OCR/extraction for all physical documents (`POST /documents/{document_id}/ocr`).
 5. Run SAP ↔ Billing reconciliation (`POST /reconciliation/{batch_id}/run`).
 6. Review reconciliation summary (`GET /reconciliation/{batch_id}`).
 7. Run Billing ↔ SPJ vouching (`POST /spj/vouch`).
@@ -19,7 +19,9 @@ Foundation for SAP-to-physical Billing reconciliation and SPJ vouching.
 ## Business guardrails
 - SAP is the expected population.
 - One SAP Billing = exactly one physical Billing document.
-- No amount tolerance: nominal must match exactly (`difference = 0`).
+- Nominal comparison is exact after documented partial-payment deductions.
+- Explicit partial-payment amounts found by OCR on Billing and/or SPJ are summed and deducted from the document nominal.
+- Partial-payment text is retained separately from the normalized amount; ambiguous extraction is for human review.
 - OCR is evidence extraction only; deterministic rules make vouching decisions.
 - Raw OCR and normalized values are retained separately.
 - Ambiguous/incomplete extraction is surfaced for human review.

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import UploadFile
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import BillingReconciliation, Document, ImportBatch, PhysicalBilling, SAPBilling, SPJ, VouchingResult
@@ -85,6 +85,31 @@ def _parse_date(value: str | None) -> date | None:
     return None
 
 
+def _extract_partial_payments(text: str) -> tuple[Decimal | None, str | None]:
+    patterns = [
+        r"(?:Pembayaran\s+(?:Partial|Parsial)|(?:Partial|Parsial)\s+Payment|Bayar\s+(?:Partial|Parsial)|Partial)\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9][0-9.,]*)",
+    ]
+    amounts: list[Decimal] = []
+    raw_matches: list[str] = []
+    for pattern in patterns:
+        for match in re.finditer(pattern, text, re.IGNORECASE | re.MULTILINE):
+            amount = _parse_amount(match.group(1))
+            if amount is not None:
+                amounts.append(amount)
+                raw_matches.append(_norm(match.group(0)) or match.group(0))
+    if not amounts:
+        return None, None
+    return sum(amounts, Decimal("0.00")).quantize(Decimal("0.01")), "; ".join(raw_matches)
+
+
+def _net_document_amount(nominal: Decimal | int | float | None, billing_partial: Decimal | int | float | None = None,
+                         spj_partial: Decimal | int | float | None = None) -> Decimal | None:
+    if nominal is None:
+        return None
+    nominal = Decimal(str(nominal))
+    return (nominal - Decimal(str(billing_partial or 0)) - Decimal(str(spj_partial or 0))).quantize(Decimal("0.01"))
+
+
 def save_document(db: Session, upload: UploadFile, *, document_type: str, uploaded_by: str | None = None) -> Document:
     filename = Path(upload.filename or "document").name
     suffix = Path(filename).suffix.lower()
@@ -139,7 +164,6 @@ def _ocr_pdf_scan(path: str) -> tuple[str, str]:
         from PIL import Image
         import pytesseract
         import io
-
         pdf = fitz.open(path)
         pages: list[str] = []
         try:
@@ -183,19 +207,24 @@ def parse_document_fields(text: str) -> dict[str, Any]:
             if match:
                 return _norm(match.group(group))
         return None
-
     billing = grab([
         r"Billing\s*(?:Document|No\.?)\s*[:#-]?\s*([A-Z0-9./-]+)",
         r"No\.?\s*Billing\s*[:#-]?\s*([A-Z0-9./-]+)",
     ])
     no_spj = grab([r"No\.?\s*SPJ\s*[:#-]?\s*([A-Z0-9./-]+)"])
     date_raw = grab([r"(?:Doc\.?\s*Date|Tanggal)\s*[:#-]?\s*([0-9A-Za-z./-]+(?:\s+[A-Za-z]+\s+\d{4})?)"])
-    nominal_raw = grab([
-        r"(?:Grand\s*Total|Total\s*Bayar|Total|Nominal|Amount)\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9.,-]+)",
-    ])
-    return {"billing_document_raw": billing, "billing_document": _norm_key(billing),
-            "no_spj_raw": no_spj, "no_spj": _norm_key(no_spj),
-            "doc_date": _parse_date(date_raw), "nominal": _parse_amount(nominal_raw)}
+    nominal_raw = grab([r"(?:Grand\s*Total|Total\s*Bayar|Total|Nominal|Amount)\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9.,-]+)"])
+    partial_payment, partial_payment_raw = _extract_partial_payments(text)
+    return {
+        "billing_document_raw": billing,
+        "billing_document": _norm_key(billing),
+        "no_spj_raw": no_spj,
+        "no_spj": _norm_key(no_spj),
+        "doc_date": _parse_date(date_raw),
+        "nominal": _parse_amount(nominal_raw),
+        "partial_payment_raw": partial_payment_raw,
+        "partial_payment": partial_payment,
+    }
 
 
 def ocr_document(db: Session, document_id: int) -> dict[str, Any]:
@@ -209,23 +238,26 @@ def ocr_document(db: Session, document_id: int) -> dict[str, Any]:
         row = db.scalar(select(PhysicalBilling).where(PhysicalBilling.document_id == doc.id))
         if not row:
             raise ValueError("Physical Billing record not found")
-        for key in ("billing_document_raw", "no_spj_raw", "doc_date", "nominal"):
+        for key in ("billing_document_raw", "no_spj_raw", "doc_date", "nominal", "partial_payment_raw", "partial_payment"):
             setattr(row, key, fields.get(key))
         row.billing_document = fields.get("billing_document")
         row.no_spj = fields.get("no_spj")
         row.ocr_confidence = confidence
-        result = {"document_id": doc.id, "document_type": doc.document_type, "engine": engine, "fields": fields, "confidence": str(confidence)}
+        result_fields = fields
     else:
         row = db.scalar(select(SPJ).where(SPJ.document_id == doc.id))
         if not row:
             raise ValueError("SPJ record not found")
         row.no_spj_raw = fields.get("no_spj_raw")
         row.no_spj = fields.get("no_spj")
+        row.partial_payment_raw = fields.get("partial_payment_raw")
+        row.partial_payment = fields.get("partial_payment")
         row.ocr_confidence = confidence
-        result = {"document_id": doc.id, "document_type": doc.document_type, "engine": engine,
-                  "fields": {"no_spj_raw": fields.get("no_spj_raw"), "no_spj": fields.get("no_spj")}, "confidence": str(confidence)}
+        result_fields = {"no_spj_raw": fields.get("no_spj_raw"), "no_spj": fields.get("no_spj"),
+                         "partial_payment_raw": fields.get("partial_payment_raw"), "partial_payment": fields.get("partial_payment")}
     db.commit()
-    return result
+    return {"document_id": doc.id, "document_type": doc.document_type, "engine": engine,
+            "fields": result_fields, "confidence": str(confidence)}
 
 
 def reconcile_batch(db: Session, batch_id: int) -> list[BillingReconciliation]:
@@ -252,15 +284,30 @@ def reconcile_batch(db: Session, batch_id: int) -> list[BillingReconciliation]:
             physical = candidates[0]
             billing_match = _norm_key(physical.billing_document) == _norm_key(sap.billing_document)
             date_match = physical.doc_date == sap.doc_date if physical.doc_date else False
-            difference = sap.nominal - physical.nominal if physical.nominal is not None else sap.nominal
-            nominal_match = difference == Decimal("0.00") if physical.nominal is not None else False
+            spj_partial = Decimal("0.00")
+            partial_note: str | None = None
+            if physical.no_spj:
+                spj_matches = db.scalars(select(SPJ).where(SPJ.no_spj == _norm_key(physical.no_spj))).all()
+                if len(spj_matches) == 1 and spj_matches[0].partial_payment is not None:
+                    spj_partial = spj_matches[0].partial_payment
+            billing_partial = physical.partial_payment or Decimal("0.00")
+            net_nominal = _net_document_amount(physical.nominal, billing_partial, spj_partial)
+            difference = sap.nominal - net_nominal if net_nominal is not None else sap.nominal
+            nominal_match = difference == Decimal("0.00") if net_nominal is not None else False
             missing_ocr = physical.billing_document is None or physical.doc_date is None or physical.nominal is None
             status = "REVIEW" if missing_ocr else ("MATCH" if billing_match and date_match and nominal_match else "EXCEPTION")
+            remarks_parts = []
+            if billing_partial:
+                remarks_parts.append(f"Billing partial payment deducted: {billing_partial}")
+            if spj_partial:
+                remarks_parts.append(f"SPJ partial payment deducted: {spj_partial}")
+            if missing_ocr:
+                remarks_parts.append("OCR field incomplete; human review required")
             rec = BillingReconciliation(sap_billing_id=sap.id, physical_billing_id=physical.id,
                 billing_match=billing_match, date_match=date_match, nominal_match=nominal_match,
                 nominal_difference=difference, status=status,
                 exception_code=None if status in {"MATCH", "REVIEW"} else "BILLING_FIELD_MISMATCH",
-                remarks="OCR field incomplete; human review required" if missing_ocr else None)
+                remarks="; ".join(remarks_parts) or partial_note)
         db.add(rec)
         db.flush()
         results.append(rec)
