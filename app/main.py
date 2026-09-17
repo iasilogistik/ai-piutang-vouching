@@ -152,14 +152,24 @@ def document_evidence(document_id: int, db: Session = Depends(get_db)):
     if not doc: raise HTTPException(status_code=404, detail="Document not found")
     physical = db.scalar(select(PhysicalBilling).where(PhysicalBilling.document_id == document_id))
     spj = db.scalar(select(SPJ).where(SPJ.document_id == document_id))
-    return {"document_id": doc.id, "file_name": doc.file_name, "file_type": doc.file_type, "document_type": doc.document_type,
-            "file_hash": doc.file_hash, "storage_path": doc.storage_path, "uploaded_at": doc.uploaded_at,
-            "billing_fields": {"billing_document_raw": physical.billing_document_raw, "billing_document": physical.billing_document,
-                "no_spj_raw": physical.no_spj_raw, "no_spj": physical.no_spj, "doc_date": physical.doc_date,
-                "nominal": str(physical.nominal) if physical.nominal is not None else None,
-                "ocr_confidence": str(physical.ocr_confidence) if physical.ocr_confidence is not None else None} if physical else None,
-            "spj_fields": {"no_spj_raw": spj.no_spj_raw, "no_spj": spj.no_spj,
-                "ocr_confidence": str(spj.ocr_confidence) if spj.ocr_confidence is not None else None} if spj else None}
+    return {
+        "document_id": doc.id, "file_name": doc.file_name, "file_type": doc.file_type, "document_type": doc.document_type,
+        "file_hash": doc.file_hash, "storage_path": doc.storage_path, "uploaded_at": doc.uploaded_at,
+        "billing_fields": {
+            "billing_document_raw": physical.billing_document_raw, "billing_document": physical.billing_document,
+            "no_spj_raw": physical.no_spj_raw, "no_spj": physical.no_spj, "doc_date": physical.doc_date,
+            "nominal": str(physical.nominal) if physical.nominal is not None else None,
+            "partial_payment_raw": physical.partial_payment_raw,
+            "partial_payment": str(physical.partial_payment) if physical.partial_payment is not None else None,
+            "ocr_confidence": str(physical.ocr_confidence) if physical.ocr_confidence is not None else None,
+        } if physical else None,
+        "spj_fields": {
+            "no_spj_raw": spj.no_spj_raw, "no_spj": spj.no_spj,
+            "partial_payment_raw": spj.partial_payment_raw,
+            "partial_payment": str(spj.partial_payment) if spj.partial_payment is not None else None,
+            "ocr_confidence": str(spj.ocr_confidence) if spj.ocr_confidence is not None else None,
+        } if spj else None,
+    }
 
 
 @app.get("/documents/{document_id}/content")

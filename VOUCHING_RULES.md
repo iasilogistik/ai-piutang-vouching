@@ -1,6 +1,6 @@
 # VOUCHING RULES
 
-Version: 1.0  
+Version: 1.1  
 Status: LOCKED
 
 ## Stage 1 — SAP vs Physical Billing
@@ -25,14 +25,24 @@ Tidak sama → `EXCEPTION / BILLING_NUMBER_MISMATCH`
 
 Tidak sama → `EXCEPTION / DOC_DATE_MISMATCH`
 
-### R-SAP-004 — Nominal
+### R-SAP-004 — Nominal setelah Partial Payment
 
-`difference = SAP.Nominal - PhysicalBilling.Nominal`
+Jika foto Physical Billing dan/atau Physical SPJ memuat pembayaran partial yang teridentifikasi secara eksplisit, seluruh nilai pembayaran partial dijumlahkan sebagai pengurang.
+
+`NetPhysicalNominal = PhysicalBilling.Nominal - BillingPartialPayment - SPJPartialPayment`
+
+`difference = SAP.Nominal - NetPhysicalNominal`
 
 `difference = 0` → match.  
 `difference != 0` → `EXCEPTION / NOMINAL_MISMATCH`.
 
-V1 tidak menggunakan tolerance nominal.
+Tidak ada tolerance nominal.
+
+Pembayaran partial yang ambigu/tidak dapat diekstrak dengan yakin → `REVIEW`, bukan ditebak.
+
+### R-SAP-005 — Partial Payment Extraction
+
+Hanya pembayaran yang ditandai secara eksplisit sebagai partial/parsial yang diperlakukan sebagai pengurang. Nilai dan teks mentahnya disimpan terpisah untuk audit trail. Jika terdapat lebih dari satu partial payment, semuanya dijumlahkan.
 
 ## Stage 2 — Physical Billing vs Physical SPJ
 
