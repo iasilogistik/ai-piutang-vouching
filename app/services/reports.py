@@ -11,7 +11,8 @@ from reportlab.lib.styles import getSampleStyleSheet
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import BillingReconciliation, ImportBatch, PhysicalBilling, SAPBilling, VouchingResult
+from app.models import BillingReconciliation, ImportBatch, PhysicalBilling, SAPBilling, SPJ, VouchingResult
+from app.services.vouching import _net_document_amount
 
 REPORT_ROOT = Path("storage/reports")
 
@@ -31,6 +32,37 @@ def _rows(db: Session, batch_id: int):
     return batch, db.execute(stmt).all()
 
 
+def _spj_partial(db: Session, physical: PhysicalBilling | None):
+    if not physical or not physical.no_spj:
+        return None
+    matches = db.scalars(select(SPJ).where(SPJ.no_spj == physical.no_spj)).all()
+    if len(matches) == 1:
+        return matches[0].partial_payment
+    return None
+
+
+def _detail_values(db: Session, sap: SAPBilling, rec: BillingReconciliation | None, physical: PhysicalBilling | None, vouch: VouchingResult | None):
+    billing_partial = physical.partial_payment if physical and physical.partial_payment is not None else 0
+    spj_partial = _spj_partial(db, physical) or 0
+    net_physical = _net_document_amount(physical.nominal if physical else None, billing_partial, spj_partial)
+    return [
+        sap.billing_document,
+        sap.doc_date.isoformat(),
+        float(sap.nominal),
+        physical.billing_document if physical else "",
+        physical.doc_date.isoformat() if physical and physical.doc_date else "",
+        float(physical.nominal) if physical and physical.nominal is not None else "",
+        float(billing_partial) if billing_partial else 0,
+        float(spj_partial) if spj_partial else 0,
+        float(net_physical) if net_physical is not None else "",
+        float(rec.nominal_difference) if rec else float(sap.nominal),
+        rec.status if rec else "NOT_FOUND",
+        rec.exception_code if rec else "BILLING_DOCUMENT_NOT_FOUND",
+        vouch.status if vouch else "NOT_FOUND",
+        vouch.rule_code if vouch else "",
+    ]
+
+
 def build_report(db: Session, batch_id: int, fmt: str) -> Path:
     fmt = fmt.lower()
     if fmt not in {"xlsx", "pdf"}:
@@ -45,6 +77,12 @@ def build_report(db: Session, batch_id: int, fmt: str) -> Path:
         status = rec.status if rec else "NOT_FOUND"
         counts[status] = counts.get(status, 0) + 1
 
+    headers = [
+        "Billing Document SAP", "Doc Date SAP", "Nominal SAP", "Billing Document Fisik", "Doc Date Fisik",
+        "Nominal Billing Fisik", "Partial Billing", "Partial SPJ", "Net Physical Nominal", "Difference",
+        "Reconciliation", "Exception", "SPJ Result", "SPJ Rule",
+    ]
+
     if fmt == "xlsx":
         wb = Workbook()
         ws = wb.active
@@ -56,15 +94,9 @@ def build_report(db: Session, batch_id: int, fmt: str) -> Path:
         for status in ("MATCH", "REVIEW", "EXCEPTION", "NOT_FOUND"):
             ws.append([status, counts[status]])
         detail = wb.create_sheet("Reconciliation")
-        detail.append(["Billing Document SAP", "Doc Date SAP", "Nominal SAP", "Billing Document Fisik", "Doc Date Fisik", "Nominal Fisik", "Difference", "Reconciliation", "Exception", "SPJ Result", "SPJ Rule"])
+        detail.append(headers)
         for sap, rec, physical, vouch in rows:
-            detail.append([
-                sap.billing_document, sap.doc_date.isoformat(), float(sap.nominal),
-                physical.billing_document if physical else "", physical.doc_date.isoformat() if physical and physical.doc_date else "",
-                float(physical.nominal) if physical and physical.nominal is not None else "",
-                float(rec.nominal_difference) if rec else float(sap.nominal), rec.status if rec else "NOT_FOUND",
-                rec.exception_code if rec else "BILLING_DOCUMENT_NOT_FOUND", vouch.status if vouch else "NOT_FOUND", vouch.rule_code if vouch else "",
-            ])
+            detail.append(_detail_values(db, sap, rec, physical, vouch))
         for sheet in wb.worksheets:
             sheet.freeze_panes = "A2"
             for column in sheet.columns:
@@ -80,9 +112,10 @@ def build_report(db: Session, batch_id: int, fmt: str) -> Path:
         table = Table([["Status", "Count"]] + summary, colWidths=[120, 80])
         table.setStyle(TableStyle([("GRID", (0,0), (-1,-1), 0.5, colors.black), ("BACKGROUND", (0,0), (-1,0), colors.lightgrey)]))
         story += [table, Spacer(1, 14)]
-        data = [["Billing SAP", "Nominal SAP", "Nominal Fisik", "Selisih", "Reconcile", "Exception", "SPJ"]]
+        data = [["Billing SAP", "Nominal SAP", "Nominal Billing", "Partial Billing", "Partial SPJ", "Net Physical", "Selisih", "Reconcile", "Exception", "SPJ"]]
         for sap, rec, physical, vouch in rows:
-            data.append([sap.billing_document, str(sap.nominal), str(physical.nominal if physical and physical.nominal is not None else ""), str(rec.nominal_difference if rec else sap.nominal), rec.status if rec else "NOT_FOUND", rec.exception_code if rec else "BILLING_DOCUMENT_NOT_FOUND", vouch.status if vouch else "NOT_FOUND"])
+            values = _detail_values(db, sap, rec, physical, vouch)
+            data.append([values[0], values[2], values[5], values[6], values[7], values[8], values[9], values[10], values[11], values[12]])
         detail = Table(data, repeatRows=1)
         detail.setStyle(TableStyle([("GRID", (0,0), (-1,-1), 0.35, colors.black), ("BACKGROUND", (0,0), (-1,0), colors.lightgrey), ("FONTSIZE", (0,0), (-1,-1), 7)]))
         story.append(detail)
