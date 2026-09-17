@@ -30,7 +30,7 @@ def test_pdf_without_text_layer_falls_back_to_tesseract(monkeypatch, tmp_path):
         open=lambda path: FakeDoc(),
     )
     monkeypatch.setitem(sys.modules, "fitz", fake_fitz)
-    monkeypatch.setattr("pytesseract.image_to_string", lambda image: "Billing No: 8501735930")
+    monkeypatch.setattr("pytesseract.image_to_string", lambda image, **kwargs: "Billing No: 8501735930")
 
     text, engine = extract_text(str(pdf))
 
