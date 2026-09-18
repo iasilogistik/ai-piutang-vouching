@@ -30,7 +30,7 @@ def upload_bytes(storage_path: str, content: bytes, content_type: str) -> None:
     with httpx.Client(timeout=60.0) as client:
         response = client.post(
             _object_url(storage_path),
-            headers={**_headers(content_type), "x-upsert": "false"},
+            headers={**_headers(content_type), "x-upsert": "true"},
             content=content,
         )
     if response.status_code not in {200, 201}:
