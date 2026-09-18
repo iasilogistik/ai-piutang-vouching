@@ -54,7 +54,7 @@ def sap_import(file: UploadFile = File(...), period: date | None = None,
 
 
 @app.get("/sap/validate/{batch_id}")
-def sap_validate(batch_id: int, db: Session = Depends(get_db)):
+def sap_validate(batch_id: int, db: Session = Depends(get_db), user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER", "VIEWER"))):
     try: return validate_sap_batch(db, batch_id)
     except ValueError as exc: raise handle_error(exc) from exc
 
@@ -103,7 +103,7 @@ def run_reconciliation(batch_id: int, db: Session = Depends(get_db),
 
 
 @app.get("/reconciliation/{batch_id}")
-def reconciliation_dashboard(batch_id: int, db: Session = Depends(get_db)):
+def reconciliation_dashboard(batch_id: int, db: Session = Depends(get_db), user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER", "VIEWER"))):
     rows = db.scalars(select(BillingReconciliation).join(BillingReconciliation.sap_billing).where(
         BillingReconciliation.sap_billing.has(import_batch_id=batch_id))).all()
     counts = {status: sum(1 for row in rows if row.status == status) for status in ("MATCH", "REVIEW", "EXCEPTION", "NOT_FOUND")}
@@ -125,13 +125,13 @@ def run_spj_vouching(db: Session = Depends(get_db),
 
 
 @app.get("/results/{billing_id}")
-def get_overall_result(billing_id: int, db: Session = Depends(get_db)):
+def get_overall_result(billing_id: int, db: Session = Depends(get_db), user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER", "VIEWER"))):
     try: return overall_result(db, billing_id)
     except ValueError as exc: raise handle_error(exc) from exc
 
 
 @app.get("/exceptions")
-def exceptions(db: Session = Depends(get_db)):
+def exceptions(db: Session = Depends(get_db), user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER", "VIEWER"))):
     recs = db.scalars(select(BillingReconciliation).where(BillingReconciliation.status.in_(["EXCEPTION", "REVIEW"]))).all()
     vouches = db.scalars(select(VouchingResult).where(VouchingResult.status.in_(["EXCEPTION", "REVIEW"]))).all()
     return {"total": len(recs) + len(vouches), "reconciliation": [{"id": r.id, "status": r.status, "code": r.exception_code,
@@ -158,7 +158,7 @@ def review_vouching(result_id: int, status: str, remarks: str | None = None,
 
 
 @app.get("/documents/{document_id}")
-def document_evidence(document_id: int, db: Session = Depends(get_db)):
+def document_evidence(document_id: int, db: Session = Depends(get_db), user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER", "VIEWER"))):
     doc = db.get(Document, document_id)
     if not doc: raise HTTPException(status_code=404, detail="Document not found")
     physical = db.scalar(select(PhysicalBilling).where(PhysicalBilling.document_id == document_id))
@@ -184,7 +184,7 @@ def document_evidence(document_id: int, db: Session = Depends(get_db)):
 
 
 @app.get("/documents/{document_id}/content")
-def document_content(document_id: int, db: Session = Depends(get_db)):
+def document_content(document_id: int, db: Session = Depends(get_db), user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER", "VIEWER"))):
     doc = db.get(Document, document_id)
     if not doc: raise HTTPException(status_code=404, detail="Document not found")
     if settings.use_supabase_storage:
@@ -201,7 +201,7 @@ def document_content(document_id: int, db: Session = Depends(get_db)):
 
 @app.get("/audit-trail")
 def audit_trail(entity_type: str | None = None, entity_id: int | None = None,
-                limit: int = 100, db: Session = Depends(get_db)):
+                limit: int = 100, db: Session = Depends(get_db), user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER", "VIEWER"))):
     if limit < 1 or limit > 500:
         raise HTTPException(status_code=400, detail="limit must be between 1 and 500")
     rows = list_audit_trail(db, entity_type=entity_type, entity_id=entity_id, limit=limit)
@@ -214,7 +214,7 @@ def audit_trail(entity_type: str | None = None, entity_id: int | None = None,
 
 
 @app.get("/reports/{batch_id}")
-def generate_report(batch_id: int, format: str = "xlsx", db: Session = Depends(get_db)):
+def generate_report(batch_id: int, format: str = "xlsx", db: Session = Depends(get_db), user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER", "VIEWER"))):
     try:
         path = build_report(db, batch_id, format)
     except ValueError as exc:
