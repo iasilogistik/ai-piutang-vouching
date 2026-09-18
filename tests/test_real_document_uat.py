@@ -73,4 +73,4 @@ def test_grand_total_is_not_replaced_by_sub_total() -> None:
     PPN 56.437
     Grand Total 570.000
     """
-    assert _parse_amount(parse_document_fields(text)["nominal"]) == Decimal("570000.00")
+    assert parse_document_fields(text)["nominal"] == Decimal("570000.00")
