@@ -2,7 +2,7 @@ from datetime import date
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
@@ -10,7 +10,9 @@ from app.audit_service import list_audit_trail, record_audit
 from app.database import SessionLocal, engine
 from app.models import BillingReconciliation, Document, ImportBatch, PhysicalBilling, SPJ, VouchingResult
 from app.services.reports import build_report
+from app.config import settings
 from app.services.sap_import import import_sap_upload
+from app.services.storage import download_bytes
 from app.services.vouching import ocr_document, overall_result, reconcile_batch, save_document, validate_sap_batch, vouch_spj
 
 app = FastAPI(title="AI Piutang Vouching")
@@ -176,6 +178,13 @@ def document_evidence(document_id: int, db: Session = Depends(get_db)):
 def document_content(document_id: int, db: Session = Depends(get_db)):
     doc = db.get(Document, document_id)
     if not doc: raise HTTPException(status_code=404, detail="Document not found")
+    if settings.use_supabase_storage:
+        try:
+            content = download_bytes(doc.storage_path)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        media = "application/pdf" if doc.file_type == "PDF" else f"image/{doc.file_type.lower()}"
+        return Response(content=content, media_type=media, headers={"Content-Disposition": f'inline; filename="{doc.file_name}"'})
     path = Path(doc.storage_path)
     if not path.is_file(): raise HTTPException(status_code=404, detail="Stored document file not found")
     return FileResponse(path, filename=doc.file_name)
