@@ -26,12 +26,12 @@ def _db():
 
 
 def _verify_token(token: str) -> str:
-    if not settings.supabase_url:
+    if not settings.supabase_url or not settings.supabase_publishable_key:
         raise HTTPException(status_code=503, detail="Authentication is not configured")
     with httpx.Client(timeout=10.0) as client:
         response = client.get(
             f"{settings.supabase_url.rstrip('/')}/auth/v1/user",
-            headers={"Authorization": f"Bearer {token}"},
+            headers={"apikey": settings.supabase_publishable_key, "Authorization": f"Bearer {token}"},
         )
     if response.status_code != 200:
         raise HTTPException(status_code=401, detail="Invalid or expired access token")
