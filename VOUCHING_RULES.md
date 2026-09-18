@@ -3,6 +3,12 @@
 Version: 1.1  
 Status: LOCKED
 
+## SAP Population Preparation
+
+### R-SAP-000 — Effective Vouching Key
+
+Untuk SAP ledger export, gunakan `Billing Document` sebagai key utama. Jika `Billing Document` kosong dan kolom `Text` terisi, gunakan `Text` sebagai effective vouching key. Jika keduanya kosong, baris dikeluarkan dari population vouching. Jika effective key berulang, `Company Code Currency Value` dijumlahkan sehingga satu effective key menghasilkan satu nilai SAP net.
+
 ## Stage 1 — SAP vs Physical Billing
 
 ### R-SAP-001 — Cardinality
