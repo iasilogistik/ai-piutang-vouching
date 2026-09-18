@@ -60,8 +60,9 @@ def sap_validate(batch_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/documents/{document_type}")
-def upload_document(document_type: str, file: UploadFile = File(...), uploaded_by: str | None = None,
-                    db: Session = Depends(get_db)):
+def upload_document(document_type: str, file: UploadFile = File(...),
+                    db: Session = Depends(get_db),
+                    user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR"))):
     document_type = document_type.upper()
     if document_type not in {"BILLING", "SPJ"}:
         raise HTTPException(status_code=400, detail="document_type must be BILLING or SPJ")
@@ -140,8 +141,9 @@ def exceptions(db: Session = Depends(get_db)):
 
 
 @app.post("/reviews/vouching/{result_id}")
-def review_vouching(result_id: int, status: str, reviewer_id: str, remarks: str | None = None,
-                    db: Session = Depends(get_db)):
+def review_vouching(result_id: int, status: str, remarks: str | None = None,
+                    db: Session = Depends(get_db),
+                    user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER"))):
     reviewer_id = user.user_id
     result = db.get(VouchingResult, result_id)
     if not result: raise HTTPException(status_code=404, detail="Vouching result not found")
