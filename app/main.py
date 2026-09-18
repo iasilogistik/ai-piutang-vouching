@@ -66,7 +66,8 @@ def upload_document(document_type: str, file: UploadFile = File(...), uploaded_b
     if document_type not in {"BILLING", "SPJ"}:
         raise HTTPException(status_code=400, detail="document_type must be BILLING or SPJ")
     try:
-        uploaded_by = user.user_id\n        doc = save_document(db, file, document_type=document_type, uploaded_by=uploaded_by)
+        uploaded_by = user.user_id
+        doc = save_document(db, file, document_type=document_type, uploaded_by=uploaded_by)
         record_audit(db, entity_type="DOCUMENT", entity_id=doc.id, action="UPLOAD", actor=uploaded_by,
                      status_to="UPLOADED", metadata={"document_type": document_type, "file_name": doc.file_name, "file_hash": doc.file_hash})
         db.commit()
@@ -76,7 +77,8 @@ def upload_document(document_type: str, file: UploadFile = File(...), uploaded_b
 
 
 @app.post("/documents/{document_id}/ocr")
-def run_ocr(document_id: int, db: Session = Depends(get_db),\n            user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR"))):
+def run_ocr(document_id: int, db: Session = Depends(get_db),
+            user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR"))):
     try:
         result = ocr_document(db, document_id)
         record_audit(db, entity_type="DOCUMENT", entity_id=document_id, action="OCR",
@@ -87,7 +89,8 @@ def run_ocr(document_id: int, db: Session = Depends(get_db),\n            user: 
 
 
 @app.post("/reconciliation/{batch_id}/run")
-def run_reconciliation(batch_id: int, db: Session = Depends(get_db),\n                       user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR"))):
+def run_reconciliation(batch_id: int, db: Session = Depends(get_db),
+                       user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR"))):
     try:
         rows = reconcile_batch(db, batch_id)
         record_audit(db, entity_type="IMPORT_BATCH", entity_id=batch_id, action="RECONCILIATION_RUN",
@@ -110,7 +113,8 @@ def reconciliation_dashboard(batch_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/spj/vouch")
-def run_spj_vouching(db: Session = Depends(get_db),\n                     user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR"))):
+def run_spj_vouching(db: Session = Depends(get_db),
+                     user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR"))):
     rows = vouch_spj(db)
     record_audit(db, entity_type="VOUCHING", entity_id=None, action="SPJ_VOUCHING_RUN",
                  status_to="COMPLETED", metadata={"total": len(rows)})
@@ -138,7 +142,8 @@ def exceptions(db: Session = Depends(get_db)):
 @app.post("/reviews/vouching/{result_id}")
 def review_vouching(result_id: int, status: str, reviewer_id: str, remarks: str | None = None,
                     db: Session = Depends(get_db)):
-    reviewer_id = user.user_id\n    result = db.get(VouchingResult, result_id)
+    reviewer_id = user.user_id
+    result = db.get(VouchingResult, result_id)
     if not result: raise HTTPException(status_code=404, detail="Vouching result not found")
     status = status.upper()
     if status not in {"PASS", "REVIEW", "EXCEPTION"}: raise HTTPException(status_code=400, detail="Invalid review status")
