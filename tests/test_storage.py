@@ -29,4 +29,4 @@ def test_supabase_storage_upload(monkeypatch):
     storage.upload_bytes("BILLING/a.pdf", b"pdf", "application/pdf")
     assert "/storage/v1/object/audit-documents/BILLING/a.pdf" in captured["url"]
     assert captured["content"] == b"pdf"
-    assert captured["headers"]["Authorization"] == "Bearer secret"
+    assert captured["headers"]["Authorization"] == "Bearer secret"\n    assert captured["headers"]["x-upsert"] == "true"
