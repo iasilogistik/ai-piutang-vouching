@@ -11,7 +11,9 @@ from fastapi import UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.models import BillingReconciliation, Document, ImportBatch, PhysicalBilling, SAPBilling, SPJ, VouchingResult
+from app.services.storage import materialize, upload_bytes
 
 STORAGE_ROOT = Path("storage/uploads")
 ALLOWED_DOC_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png"}
@@ -119,11 +121,17 @@ def save_document(db: Session, upload: UploadFile, *, document_type: str, upload
     if not content:
         raise ValueError("Uploaded document is empty")
     digest = hashlib.sha256(content).hexdigest()
-    STORAGE_ROOT.mkdir(parents=True, exist_ok=True)
-    target = STORAGE_ROOT / f"{digest}{suffix}"
-    target.write_bytes(content)
+    if settings.use_supabase_storage:
+        storage_path = f"{document_type}/{digest}{suffix}"
+        content_type = upload.content_type or ("application/pdf" if suffix == ".pdf" else f"image/{suffix.lstrip('.')}")
+        upload_bytes(storage_path, content, content_type)
+    else:
+        STORAGE_ROOT.mkdir(parents=True, exist_ok=True)
+        target = STORAGE_ROOT / f"{digest}{suffix}"
+        target.write_bytes(content)
+        storage_path = str(target)
     doc = Document(file_name=filename, file_type=suffix[1:].upper(), document_type=document_type,
-                   file_hash=digest, storage_path=str(target), uploaded_by=uploaded_by)
+                   file_hash=digest, storage_path=storage_path, uploaded_by=uploaded_by)
     db.add(doc)
     db.commit()
     db.refresh(doc)
@@ -263,7 +271,16 @@ def ocr_document(db: Session, document_id: int) -> dict[str, Any]:
     doc = db.get(Document, document_id)
     if not doc:
         raise ValueError("Document not found")
-    text, engine = extract_text(doc.storage_path)
+    ocr_path = doc.storage_path
+    temporary_path: str | None = None
+    if settings.use_supabase_storage:
+        temporary_path = materialize(doc.storage_path, Path(doc.file_name).suffix.lower())
+        ocr_path = temporary_path
+    try:
+        text, engine = extract_text(ocr_path)
+    finally:
+        if temporary_path:
+            Path(temporary_path).unlink(missing_ok=True)
     fields = parse_document_fields(text)
     confidence = Decimal("0.5000") if engine.startswith("TESSERACT") else (Decimal("0.9000") if text else Decimal("0.0000"))
     if doc.document_type == "BILLING":
