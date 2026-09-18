@@ -71,10 +71,15 @@ def upload_document(document_type: str, file: UploadFile = File(...),
         doc = save_document(db, file, document_type=document_type, uploaded_by=uploaded_by)
         record_audit(db, entity_type="DOCUMENT", entity_id=doc.id, action="UPLOAD", actor=uploaded_by,
                      status_to="UPLOADED", metadata={"document_type": document_type, "file_name": doc.file_name, "file_hash": doc.file_hash})
+        analysis = ocr_document(db, doc.id)
+        record_audit(db, entity_type="DOCUMENT", entity_id=doc.id, action="AUTO_EXTRACT",
+                     actor=uploaded_by, status_to="EXTRACTED",
+                     metadata={"engine": analysis.get("engine"), "confidence": analysis.get("confidence")})
         db.commit()
     except ValueError as exc:
         db.rollback(); raise handle_error(exc) from exc
-    return {"document_id": doc.id, "file_name": doc.file_name, "document_type": doc.document_type, "file_hash": doc.file_hash}
+    return {"document_id": doc.id, "file_name": doc.file_name, "document_type": doc.document_type, "file_hash": doc.file_hash,
+            "analysis": analysis}
 
 
 @app.post("/documents/{document_id}/ocr")
