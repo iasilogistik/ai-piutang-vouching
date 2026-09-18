@@ -103,7 +103,7 @@ class SPJ(Base):
 
 class VouchingResult(Base):
     __tablename__ = "vouching_result"
-    __table_args__ = (UniqueConstraint("billing_id", name="uq_vouching_result_billing"), Index("ix_vouching_result_status", "status"))
+    __table_args__ = (UniqueConstraint("billing_id", name="uq_vouching_result_billing"), Index("ix_vouching_result_status", "status"), Index("ix_vouching_result_spj_id", "spj_id"))
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     billing_id: Mapped[int] = mapped_column(ForeignKey("physical_billing.id", ondelete="CASCADE"), nullable=False)
     spj_id: Mapped[int | None] = mapped_column(ForeignKey("spj.id", ondelete="SET NULL"))
