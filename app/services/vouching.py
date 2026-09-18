@@ -244,6 +244,7 @@ def parse_document_fields(text: str) -> dict[str, Any]:
         r"Grand\s*Total\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9][0-9.,-]*)",
         r"Total\s*Bayar\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9][0-9.,-]*)",
         r"(?:^|\n)\s*Total\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9][0-9.,-]*)",
+        r"Nominal\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9][0-9.,-]*)",
     ])
     partial_payment, partial_payment_raw = _extract_partial_payments(text)
     return {
