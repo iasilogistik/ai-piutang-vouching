@@ -25,6 +25,7 @@ SAP_LEDGER_COLUMNS = {
     "Company Code Currency Value": "nominal",
     "Customer Account: Name 1": "customer_account_name",
 }
+SAP_LEDGER_TEXT_COLUMN = "Text"
 
 
 def _clean_text(value: object) -> str | None:
@@ -98,26 +99,32 @@ def _import_sap_ledger(dataframe: pd.DataFrame) -> list[dict[str, object]]:
     if missing:
         raise ValueError(f"Missing SAP export columns: {', '.join(missing)}")
 
-    frame = dataframe[dataframe["Billing Document"].notna()].copy()
-    if frame.empty:
-        raise ValueError("SAP export contains no Billing Document rows")
-
+    frame = dataframe.copy()
+    has_text = SAP_LEDGER_TEXT_COLUMN in frame.columns
     frame["_billing_document"] = frame["Billing Document"].map(_clean_identifier)
+    frame["_text_fallback"] = (
+        frame[SAP_LEDGER_TEXT_COLUMN].map(_clean_identifier) if has_text else None
+    )
+    frame["_vouching_key"] = frame["_billing_document"].fillna(frame["_text_fallback"])
+    # Approved UAT rule: rows with neither Billing Document nor Text are outside
+    # the vouching population and are removed.
+    frame = frame[frame["_vouching_key"].notna()].copy()
+    if frame.empty:
+        raise ValueError("SAP export contains no Billing Document or Text rows")
+
     frame["_value"] = pd.to_numeric(frame["Company Code Currency Value"], errors="coerce")
-    invalid = frame[frame["_billing_document"].isna() | frame["_value"].isna()]
+    invalid = frame[frame["_value"].isna()]
     if not invalid.empty:
         row_number = int(invalid.index[0]) + 2
-        raise ValueError(f"Row {row_number}: invalid Billing Document or Company Code Currency Value")
+        raise ValueError(f"Row {row_number}: invalid Company Code Currency Value")
 
-    # The SAP export is a piutang ledger: one billing can occur on several
-    # rows because subsequent payments/adjustments use the same Billing Document.
-    # The vouching population therefore uses the net balance per Billing Document.
-    grouped = frame.groupby("_billing_document", sort=False)
+    # Duplicate effective keys are aggregated to the net SAP balance.
+    grouped = frame.groupby("_vouching_key", sort=False)
     rows: list[dict[str, object]] = []
-    for billing_document, group in grouped:
+    for vouching_key, group in grouped:
         dates = pd.to_datetime(group["Document Date"], errors="coerce").dropna()
         if dates.empty:
-            raise ValueError(f"Billing Document {billing_document}: Document Date is required")
+            raise ValueError(f"Billing/Text {vouching_key}: Document Date is required")
         customer = next(
             (_clean_text(value) for value in group["Customer Account: Name 1"] if _clean_text(value)),
             None,
@@ -127,7 +134,7 @@ def _import_sap_ledger(dataframe: pd.DataFrame) -> list[dict[str, object]]:
             {
                 "customer": None,
                 "customer_account_name": customer,
-                "billing_document": str(billing_document),
+                "billing_document": str(vouching_key),
                 "doc_date": dates.max().date(),
                 "nominal": nominal,
             }
