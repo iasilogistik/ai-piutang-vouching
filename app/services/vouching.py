@@ -123,7 +123,7 @@ def save_document(db: Session, upload: UploadFile, *, document_type: str, upload
     digest = hashlib.sha256(content).hexdigest()
     if settings.use_supabase_storage:
         storage_path = f"{document_type}/{digest}{suffix}"
-        content_type = upload.content_type or ("application/pdf" if suffix == ".pdf" else f"image/{suffix.lstrip('.')}")
+        content_type = upload.content_type or ("application/pdf" if suffix == ".pdf" else "image/jpeg" if suffix in {".jpg", ".jpeg"} else "image/png")
         upload_bytes(storage_path, content, content_type)
     else:
         STORAGE_ROOT.mkdir(parents=True, exist_ok=True)
