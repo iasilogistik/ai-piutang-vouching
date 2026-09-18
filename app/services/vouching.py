@@ -207,13 +207,44 @@ def parse_document_fields(text: str) -> dict[str, Any]:
             if match:
                 return _norm(match.group(group))
         return None
+
+    # Physical billing PDFs use "Nomor Faktur", while some exports/screenshots
+    # use "Billing Document". Support both labels.
     billing = grab([
         r"Billing\s*(?:Document|No\.?)\s*[:#-]?\s*([A-Z0-9./-]+)",
         r"No\.?\s*Billing\s*[:#-]?\s*([A-Z0-9./-]+)",
+        r"Nomor\s+Faktur\s*[:#-]?\s*([0-9]+)",
     ])
-    no_spj = grab([r"No\.?\s*SPJ\s*[:#-]?\s*([A-Z0-9./-]+)"])
-    date_raw = grab([r"(?:Doc\.?\s*Date|Tanggal)\s*[:#-]?\s*([0-9A-Za-z./-]+(?:\s+[A-Za-z]+\s+\d{4})?)"])
-    nominal_raw = grab([r"(?:Grand\s*Total|Total\s*Bayar|Total|Nominal|Amount)\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9.,-]+)"])
+
+    # Billing pages carry the SPJ number without the "SPJ/" prefix. For a
+    # scanned SPJ header, keep only the final numeric identifier so both
+    # documents normalize to the same key.
+    no_spj = grab([
+        r"No\.?\s*SPJ\s*[:#-]?\s*([A-Z0-9./-]+)",
+        r"Nomor\s+SPJ\s*[:#-]?\s*([A-Z0-9./-]+)",
+    ])
+    if no_spj and no_spj.upper().startswith("SPJ/"):
+        no_spj = no_spj.rstrip(".").split("/")[-1]
+
+    if not no_spj:
+        spj_header = grab([r"\b(SPJ/[A-Z0-9./-]+)"])
+        if spj_header:
+            no_spj = spj_header.rstrip(".").split("/")[-1]
+
+    # Invoice date must take priority over the earlier delivery date when a
+    # PDF contains both SPJ and Billing pages.
+    date_raw = grab([
+        r"(?:Doc\.?\s*Date|Tanggal\s+Faktur)\s*[:#-]?\s*([0-9A-Za-z./-]+(?:\s+[A-Za-z]+\s+\d{4})?)",
+        r"(?:Tanggal)\s*[:#-]?\s*([0-9A-Za-z./-]+(?:\s+[A-Za-z]+\s+\d{4})?)",
+    ])
+
+    # Prefer Grand Total explicitly. A generic "Total" search can accidentally
+    # capture the Sub Total line before Grand Total.
+    nominal_raw = grab([
+        r"Grand\s*Total\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9][0-9.,-]*)",
+        r"Total\s*Bayar\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9][0-9.,-]*)",
+        r"(?:^|\n)\s*Total\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9][0-9.,-]*)",
+    ])
     partial_payment, partial_payment_raw = _extract_partial_payments(text)
     return {
         "billing_document_raw": billing,
