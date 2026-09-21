@@ -12,6 +12,7 @@ from app.database import SessionLocal, engine
 from app.models import BillingReconciliation, Document, DocumentControlEvidence, ImportBatch, PhysicalBilling, SPJ, VouchingResult
 from app.services.reports import build_report
 from app.config import settings
+from app.services.control_evidence_dashboard import build_control_evidence_dashboard
 from app.services.control_evidence_store import analyze_and_persist_control_evidence, evidence_payload
 from app.services.sap_import import import_sap_upload
 from app.services.storage import download_bytes
@@ -158,6 +159,15 @@ def exceptions(db: Session = Depends(get_db), user: CurrentUser = Depends(requir
         "billing_id": r.billing_id, "reviewer_id": r.reviewer_id} for r in vouches],
         "control_evidence": [{"id": row.id, "document_id": row.document_id, "review_required": row.review_required,
         "review_reasons": [reason.strip() for reason in (row.review_reasons or "").split(";") if reason.strip()]} for row in control_rows]}
+
+
+@app.get("/dashboard/control-evidence")
+def control_evidence_dashboard(review_only: bool = False, limit: int = 200,
+                               db: Session = Depends(get_db),
+                               user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER", "VIEWER"))):
+    if limit < 1 or limit > 500:
+        raise HTTPException(status_code=400, detail="limit must be between 1 and 500")
+    return build_control_evidence_dashboard(db, review_only=review_only, limit=limit)
 
 
 @app.post("/reviews/vouching/{result_id}")
