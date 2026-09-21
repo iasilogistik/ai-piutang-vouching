@@ -13,6 +13,26 @@ down_revision = "0010_branch_backfill"
 branch_labels = None
 depends_on = None
 
+def _supabase_authenticated_available() -> bool:
+    bind = op.get_bind()
+    return bool(
+        bind.execute(
+            sa.text(
+                """
+                select
+                  exists (select 1 from pg_roles where rolname = 'authenticated')
+                  and exists (
+                    select 1
+                    from pg_proc p
+                    join pg_namespace n on n.oid = p.pronamespace
+                    where n.nspname = 'public' and p.proname = 'current_app_role'
+                  )
+                """
+            )
+        ).scalar()
+    )
+
+
 
 def upgrade() -> None:
     op.create_table(
