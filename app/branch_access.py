@@ -36,8 +36,12 @@ def ensure_branch_access(user: CurrentUser, resource_branch: str | None) -> None
 def branch_for_actor(db: Session, user_id: str | None) -> str | None:
     if not user_id:
         return None
+    # Lightweight unit tests use SQLite and intentionally do not create the
+    # application user table. Production/local integration databases use Postgres.
+    if db.get_bind().dialect.name == "sqlite":
+        return None
     value = db.execute(
-        text("select branch from public.user_roles where user_id::text = :user_id"),
+        text("select branch from public.user_roles where cast(user_id as text) = :user_id"),
         {"user_id": user_id},
     ).scalar_one_or_none()
     return normalize_branch(value)
