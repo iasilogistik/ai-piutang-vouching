@@ -6,10 +6,19 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.auth import CurrentUser, require_roles
+from app.database import SessionLocal
 
 _ALLOWED_ROLES = {"ADMIN", "AUDITOR", "REVIEWER", "VIEWER"}
 _REGISTERED = False
 router = APIRouter()
+
+
+def _db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 
 def _serialize(row) -> dict[str, object]:
@@ -197,7 +206,7 @@ def user_management_ui():
 
 
 @router.get("/admin/users")
-def list_users(db: Session = Depends(), user: CurrentUser = Depends(require_roles("ADMIN"))):
+def list_users(db: Session = Depends(_db), user: CurrentUser = Depends(require_roles("ADMIN"))):
     rows = db.execute(
         text(
             """
@@ -218,7 +227,7 @@ def upsert_user_role(
     role: str = Form("VIEWER"),
     branch: str | None = Form(None),
     is_active: bool = Form(True),
-    db: Session = Depends(),
+    db: Session = Depends(_db),
     user: CurrentUser = Depends(require_roles("ADMIN")),
 ):
     user_id = user_id.strip()
@@ -262,7 +271,7 @@ def upsert_user_role(
 
 
 @router.post("/admin/users/{user_id}/deactivate")
-def deactivate_user_role(user_id: str, db: Session = Depends(), user: CurrentUser = Depends(require_roles("ADMIN"))):
+def deactivate_user_role(user_id: str, db: Session = Depends(_db), user: CurrentUser = Depends(require_roles("ADMIN"))):
     row = db.execute(
         text(
             """
@@ -280,12 +289,9 @@ def deactivate_user_role(user_id: str, db: Session = Depends(), user: CurrentUse
     return _serialize(row)
 
 
-def register_user_management_routes(app, db_dependency) -> None:
+def register_user_management_routes(app) -> None:
     global _REGISTERED
     if _REGISTERED:
         return
-    for route in router.routes:
-        if route.path.startswith("/admin/users"):
-            route.dependant.dependencies[0].call = db_dependency  # type: ignore[attr-defined]
     app.include_router(router)
     _REGISTERED = True
