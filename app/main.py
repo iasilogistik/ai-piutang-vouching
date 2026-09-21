@@ -2,7 +2,7 @@ from datetime import date
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
@@ -15,6 +15,7 @@ from app.config import settings
 from app.services.control_evidence_dashboard import build_control_evidence_dashboard
 from app.services.control_evidence_review import review_control_evidence
 from app.services.control_evidence_store import analyze_and_persist_control_evidence, evidence_payload
+from app.services.control_evidence_ui import control_evidence_dashboard_html
 from app.services.sap_import import import_sap_upload
 from app.services.storage import download_bytes
 from app.services.vouching import ocr_document, overall_result, reconcile_batch, save_document, validate_sap_batch, vouch_spj
@@ -39,6 +40,11 @@ def health() -> dict[str, str]:
     with engine.connect() as connection:
         connection.execute(text("SELECT 1"))
     return {"status": "healthy"}
+
+
+@app.get("/ui/control-evidence", response_class=HTMLResponse)
+def control_evidence_ui():
+    return HTMLResponse(control_evidence_dashboard_html())
 
 
 @app.post("/sap/import")
