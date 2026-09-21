@@ -211,3 +211,31 @@ class ReviewWorkflow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class AuditReport(Base):
+    __tablename__ = "audit_reports"
+    __table_args__ = (
+        Index("ix_audit_reports_branch", "branch"),
+        Index("ix_audit_reports_status", "status"),
+        Index("ix_audit_reports_period", "period_start", "period_end"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    branch: Mapped[str] = mapped_column(String(255), nullable=False)
+    period_start: Mapped[date] = mapped_column(Date, nullable=False)
+    period_end: Mapped[date] = mapped_column(Date, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="DRAFT")
+    population_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    sampled_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    matched_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    exception_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    unresolved_exception_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    resolved_exception_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    finding_summary: Mapped[str | None] = mapped_column(Text)
+    conclusion: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[str | None] = mapped_column(String(100))
+    approved_by: Mapped[str | None] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
