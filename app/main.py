@@ -10,6 +10,8 @@ from app.audit_service import list_audit_trail, record_audit
 from app.auth import CurrentUser, require_roles
 from app.database import SessionLocal, engine
 from app.models import BillingReconciliation, Document, DocumentControlEvidence, ImportBatch, PhysicalBilling, SPJ, VouchingResult
+from app.services.bulk_upload_ui import bulk_upload_html
+from app.services.bulk_zip import classify_entry, iter_bulk_zip_entries, make_upload
 from app.services.reports import build_control_evidence_report, build_report
 from app.config import settings
 from app.services.combined_upload_ui import combined_upload_html
@@ -37,6 +39,29 @@ def handle_error(exc: ValueError) -> HTTPException:
     return HTTPException(status_code=400, detail=str(exc))
 
 
+def _ingest_physical_document(db: Session, upload, *, document_type: str, uploaded_by: str | None,
+                              source_mode: str, metadata_extra: dict[str, object] | None = None) -> dict[str, object]:
+    doc = save_document(db, upload, document_type=document_type, uploaded_by=uploaded_by)
+    metadata = {"document_type": document_type, "file_name": doc.file_name, "file_hash": doc.file_hash,
+                "source_mode": source_mode}
+    if metadata_extra:
+        metadata.update(metadata_extra)
+    record_audit(db, entity_type="DOCUMENT", entity_id=doc.id, action="UPLOAD", actor=uploaded_by,
+                 status_to="UPLOADED", metadata=metadata)
+    analysis = ocr_document(db, doc.id)
+    control_evidence = None
+    if document_type == "SPJ":
+        control_evidence = analyze_and_persist_control_evidence(db, doc.id)
+    record_audit(db, entity_type="DOCUMENT", entity_id=doc.id, action="AUTO_EXTRACT",
+                 actor=uploaded_by, status_to="EXTRACTED",
+                 metadata={"engine": analysis.get("engine"), "confidence": analysis.get("confidence"),
+                           "source_mode": source_mode,
+                           "control_evidence_review_required": bool(control_evidence and control_evidence.get("review_required")),
+                           **(metadata_extra or {})})
+    return {"document_id": doc.id, "file_name": doc.file_name, "file_hash": doc.file_hash,
+            "document_type": document_type, "analysis": analysis, "control_evidence": control_evidence}
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     with engine.connect() as connection:
@@ -52,6 +77,11 @@ def control_evidence_ui():
 @app.get("/ui/combined-upload", response_class=HTMLResponse)
 def combined_upload_ui():
     return HTMLResponse(combined_upload_html())
+
+
+@app.get("/ui/bulk-upload", response_class=HTMLResponse)
+def bulk_upload_ui():
+    return HTMLResponse(bulk_upload_html())
 
 
 @app.get("/ui/uat-pasuruan", response_class=HTMLResponse)
@@ -78,6 +108,56 @@ def sap_import(file: UploadFile = File(...), period: date | None = None,
 def sap_validate(batch_id: int, db: Session = Depends(get_db), user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER", "VIEWER"))):
     try: return validate_sap_batch(db, batch_id)
     except ValueError as exc: raise handle_error(exc) from exc
+
+
+@app.post("/documents/bulk-zip")
+def upload_bulk_zip(file: UploadFile = File(...), mode: str = "AUTO", db: Session = Depends(get_db),
+                    user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR"))):
+    try:
+        uploaded_by = user.user_id
+        entries = iter_bulk_zip_entries(file)
+        results = []
+        for entry in entries:
+            document_types = classify_entry(entry.source_path, mode)
+            if not document_types:
+                results.append({"source_path": entry.source_path, "file_name": entry.filename, "mode": mode.upper(),
+                                "status": "SKIPPED", "reason": "Unable to classify file as BILLING, SPJ, or COMBINED"})
+                continue
+            try:
+                if document_types == ["BILLING", "SPJ"]:
+                    billing = _ingest_physical_document(db, make_upload(entry), document_type="BILLING", uploaded_by=uploaded_by,
+                                                        source_mode="BULK_ZIP_COMBINED",
+                                                        metadata_extra={"zip_source_path": entry.source_path})
+                    spj = _ingest_physical_document(db, make_upload(entry), document_type="SPJ", uploaded_by=uploaded_by,
+                                                    source_mode="BULK_ZIP_COMBINED",
+                                                    metadata_extra={"zip_source_path": entry.source_path,
+                                                                    "billing_document_id": billing["document_id"]})
+                    db.commit()
+                    results.append({"source_path": entry.source_path, "file_name": entry.filename,
+                                    "mode": "COMBINED", "status": "SUCCESS",
+                                    "billing_document_id": billing["document_id"], "spj_document_id": spj["document_id"],
+                                    "control_evidence_review_required": bool(spj.get("control_evidence") and spj["control_evidence"].get("review_required"))})
+                else:
+                    document_type = document_types[0]
+                    payload = _ingest_physical_document(db, make_upload(entry), document_type=document_type, uploaded_by=uploaded_by,
+                                                        source_mode="BULK_ZIP",
+                                                        metadata_extra={"zip_source_path": entry.source_path})
+                    db.commit()
+                    results.append({"source_path": entry.source_path, "file_name": entry.filename,
+                                    "mode": document_type, "status": "SUCCESS",
+                                    "billing_document_id": payload["document_id"] if document_type == "BILLING" else None,
+                                    "spj_document_id": payload["document_id"] if document_type == "SPJ" else None,
+                                    "control_evidence_review_required": bool(payload.get("control_evidence") and payload["control_evidence"].get("review_required"))})
+            except ValueError as item_exc:
+                db.rollback()
+                results.append({"source_path": entry.source_path, "file_name": entry.filename,
+                                "mode": "+".join(document_types), "status": "ERROR", "reason": str(item_exc)})
+    except ValueError as exc:
+        db.rollback(); raise handle_error(exc) from exc
+    summary = {"success": sum(1 for row in results if row["status"] == "SUCCESS"),
+               "skipped": sum(1 for row in results if row["status"] == "SKIPPED"),
+               "error": sum(1 for row in results if row["status"] == "ERROR")}
+    return {"mode": mode.upper(), "total_entries": len(entries), "summary": summary, "results": results}
 
 
 @app.post("/documents/combined")
