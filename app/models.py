@@ -104,7 +104,10 @@ class SPJ(Base):
 
 class DocumentControlEvidence(Base):
     __tablename__ = "document_control_evidence"
-    __table_args__ = (Index("ix_document_control_evidence_review_required", "review_required"),)
+    __table_args__ = (
+        Index("ix_document_control_evidence_review_required", "review_required"),
+        Index("ix_document_control_evidence_review_status", "review_status"),
+    )
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     document_id: Mapped[int] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, unique=True)
 
@@ -135,6 +138,10 @@ class DocumentControlEvidence(Base):
 
     review_required: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     review_reasons: Mapped[str | None] = mapped_column(Text)
+    review_status: Mapped[str | None] = mapped_column(String(20))
+    reviewer_id: Mapped[str | None] = mapped_column(String(100))
+    reviewer_remarks: Mapped[str | None] = mapped_column(Text)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 

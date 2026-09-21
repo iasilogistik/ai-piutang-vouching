@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import BillingReconciliation, ImportBatch, PhysicalBilling, SAPBilling, SPJ, VouchingResult
+from app.services.control_evidence_dashboard import build_control_evidence_dashboard
 from app.services.vouching import _net_document_amount
 
 REPORT_ROOT = Path("storage/reports")
@@ -63,6 +64,14 @@ def _detail_values(db: Session, sap: SAPBilling, rec: BillingReconciliation | No
     ]
 
 
+def _autosize(wb: Workbook) -> None:
+    for sheet in wb.worksheets:
+        sheet.freeze_panes = "A2"
+        for column in sheet.columns:
+            width = min(max(len(str(cell.value or "")) for cell in column) + 2, 45)
+            sheet.column_dimensions[column[0].column_letter].width = width
+
+
 def build_report(db: Session, batch_id: int, fmt: str) -> Path:
     fmt = fmt.lower()
     if fmt not in {"xlsx", "pdf"}:
@@ -97,11 +106,7 @@ def build_report(db: Session, batch_id: int, fmt: str) -> Path:
         detail.append(headers)
         for sap, rec, physical, vouch in rows:
             detail.append(_detail_values(db, sap, rec, physical, vouch))
-        for sheet in wb.worksheets:
-            sheet.freeze_panes = "A2"
-            for column in sheet.columns:
-                width = min(max(len(str(cell.value or "")) for cell in column) + 2, 35)
-                sheet.column_dimensions[column[0].column_letter].width = width
+        _autosize(wb)
         wb.save(path)
     else:
         styles = getSampleStyleSheet()
@@ -120,4 +125,71 @@ def build_report(db: Session, batch_id: int, fmt: str) -> Path:
         detail.setStyle(TableStyle([("GRID", (0,0), (-1,-1), 0.35, colors.black), ("BACKGROUND", (0,0), (-1,0), colors.lightgrey), ("FONTSIZE", (0,0), (-1,-1), 7)]))
         story.append(detail)
         doc.build(story)
+    return path
+
+
+def build_control_evidence_report(db: Session, *, review_only: bool = False, limit: int = 500) -> Path:
+    REPORT_ROOT.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    path = REPORT_ROOT / f"spj_control_evidence_{stamp}.xlsx"
+    dashboard = build_control_evidence_dashboard(db, review_only=review_only, limit=limit)
+
+    wb = Workbook()
+    summary_sheet = wb.active
+    summary_sheet.title = "Summary"
+    summary_sheet.append(["Metric", "Value"])
+    summary_sheet.append(["Total SPJ Evidence", dashboard["summary"]["total_documents"]])
+    summary_sheet.append(["PASS", dashboard["summary"].get("overall_control_status", {}).get("PASS", 0)])
+    summary_sheet.append(["REVIEW", dashboard["summary"].get("overall_control_status", {}).get("REVIEW", 0)])
+    summary_sheet.append(["EXCEPTION", dashboard["summary"].get("overall_control_status", {}).get("EXCEPTION", 0)])
+    summary_sheet.append(["Review Required", dashboard["summary"]["review_required_documents"]])
+
+    rows_sheet = wb.create_sheet("Control Evidence")
+    headers = [
+        "Control Evidence ID", "Document ID", "File Name", "No SPJ", "Billing ID", "SPJ Vouching Status",
+        "Overall Control Status", "Review Required", "Review Status", "Reviewer", "Reviewer Remarks",
+        "TTD Penerima", "TTD Driver", "TTD Satpam", "TTD BM", "TTD Checker", "Stempel", "Nama Stempel",
+        "Stempel vs Customer", "Alasan Review", "Document URL",
+    ]
+    rows_sheet.append(headers)
+    for row in dashboard["rows"]:
+        rows_sheet.append([
+            row.get("control_evidence_id"),
+            row.get("document_id"),
+            row.get("file_name"),
+            row.get("no_spj"),
+            row.get("billing_id"),
+            row.get("spj_vouching_status"),
+            row.get("overall_control_status"),
+            row.get("review_required"),
+            row.get("review_status"),
+            row.get("reviewer_id"),
+            row.get("reviewer_remarks"),
+            row.get("receiver_signature_status"),
+            row.get("driver_signature_status"),
+            row.get("security_signature_status"),
+            row.get("bm_signature_status"),
+            row.get("checker_signature_status"),
+            row.get("receiver_stamp_status"),
+            row.get("stamp_text_raw"),
+            row.get("stamp_customer_match_status"),
+            "; ".join(row.get("review_reasons") or []),
+            row.get("document_url"),
+        ])
+
+    queue_sheet = wb.create_sheet("Manual Review Queue")
+    queue_sheet.append(headers)
+    for row in dashboard["manual_review_queue"]:
+        queue_sheet.append([
+            row.get("control_evidence_id"), row.get("document_id"), row.get("file_name"), row.get("no_spj"),
+            row.get("billing_id"), row.get("spj_vouching_status"), row.get("overall_control_status"),
+            row.get("review_required"), row.get("review_status"), row.get("reviewer_id"), row.get("reviewer_remarks"),
+            row.get("receiver_signature_status"), row.get("driver_signature_status"), row.get("security_signature_status"),
+            row.get("bm_signature_status"), row.get("checker_signature_status"), row.get("receiver_stamp_status"),
+            row.get("stamp_text_raw"), row.get("stamp_customer_match_status"), "; ".join(row.get("review_reasons") or []),
+            row.get("document_url"),
+        ])
+
+    _autosize(wb)
+    wb.save(path)
     return path
