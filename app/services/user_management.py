@@ -5,9 +5,10 @@ from fastapi.responses import HTMLResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.audit_service import record_audit
 from app.auth import CurrentUser, require_roles
 from app.database import SessionLocal
-from app.services.branch_master import register_branch_master_routes
+from app.services.branch_master import normalize_branch_code, register_branch_master_routes
 
 _ALLOWED_ROLES = {"ADMIN", "AUDITOR", "REVIEWER", "VIEWER"}
 _REGISTERED = False
@@ -47,6 +48,20 @@ def _clean(value: str | None) -> str | None:
         return None
     value = value.strip()
     return value or None
+
+
+def _validated_active_branch(db: Session, branch: str | None) -> str | None:
+    branch = _clean(branch)
+    if branch is None:
+        return None
+    code = normalize_branch_code(branch)
+    row = db.execute(
+        text("select branch_code from public.branches where branch_code = :code and active = true"),
+        {"code": code},
+    ).mappings().one_or_none()
+    if row is None:
+        raise HTTPException(status_code=400, detail="branch must reference an active branch")
+    return row["branch_code"]
 
 
 def _users_html() -> str:
@@ -106,7 +121,7 @@ def _users_html() -> str:
       <div><label for="email">Email</label><input id="email" placeholder="nama@perusahaan.co.id" /></div>
       <div><label for="displayName">Nama</label><input id="displayName" placeholder="Nama user" /></div>
       <div><label for="role">Role</label><select id="role"><option>ADMIN</option><option>AUDITOR</option><option>REVIEWER</option><option>VIEWER</option></select></div>
-      <div><label for="branch">Cabang</label><input id="branch" placeholder="Pasuruan / Gresik / Tangerang" /></div>
+      <div><label for="branch">Cabang</label><select id="branch"><option value="">-- ADMIN: tanpa cabang --</option></select></div>
       <div><label for="isActive">Status</label><select id="isActive"><option value="true">Aktif</option><option value="false">Nonaktif</option></select></div>
     </div>
     <div class="actions">
@@ -141,12 +156,24 @@ function appendLog(label, payload, ok = true) {
   const text = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2);
   logEl.textContent = `[${time}] ${ok ? 'OK' : 'ERROR'} - ${label}\n${text}\n\n` + (logEl.textContent === 'Belum ada aktivitas.' ? '' : logEl.textContent);
 }
+async function loadBranches(selected = '') {
+  try {
+    const response = await fetch('/admin/branches?active=true', { headers: authHeaders() });
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.detail || JSON.stringify(body));
+    const select = document.getElementById('branch');
+    select.innerHTML = '<option value="">-- ADMIN: tanpa cabang --</option>' + (body.branches || []).map(
+      branch => `<option value="${branch.branch_code}">${branch.branch_code} - ${branch.branch_name}</option>`
+    ).join('');
+    select.value = selected || '';
+  } catch (error) { appendLog('Muat Master Cabang', error.message, false); }
+}
 function setForm(user) {
   document.getElementById('userId').value = user.user_id || '';
   document.getElementById('email').value = user.email || '';
   document.getElementById('displayName').value = user.display_name || '';
   document.getElementById('role').value = user.role || 'VIEWER';
-  document.getElementById('branch').value = user.branch || '';
+  loadBranches(user.branch || '');
   document.getElementById('isActive').value = String(user.is_active !== false);
 }
 function render(users) {
@@ -163,6 +190,7 @@ async function loadUsers() {
     const response = await fetch('/admin/users', { headers: authHeaders() });
     const body = await response.json();
     if (!response.ok) throw new Error(body.detail || JSON.stringify(body));
+    await loadBranches(document.getElementById('branch').value);
     render(body.users || []);
     appendLog('Muat User', body);
   } catch (error) { appendLog('Muat User', error.message, false); }
@@ -195,6 +223,13 @@ window.deactivateUser = async (userId) => {
 document.getElementById('loadBtn').addEventListener('click', loadUsers);
 document.getElementById('saveBtn').addEventListener('click', saveUser);
 document.getElementById('clearBtn').addEventListener('click', () => setForm({ role:'VIEWER', is_active:true }));
+document.getElementById('role').addEventListener('change', () => {
+  const branchSelect = document.getElementById('branch');
+  if (document.getElementById('role').value !== 'ADMIN' && !branchSelect.value && branchSelect.options.length > 1) {
+    branchSelect.selectedIndex = 1;
+  }
+});
+loadBranches();
 </script>
 </body>
 </html>
@@ -235,9 +270,15 @@ def upsert_user_role(
     if not user_id:
         raise HTTPException(status_code=400, detail="user_id is required")
     role = _require_valid_role(role)
-    branch = _clean(branch)
+    branch = _validated_active_branch(db, branch)
     if role != "ADMIN" and not branch:
         raise HTTPException(status_code=400, detail="branch is required for non-ADMIN users")
+
+    previous = db.execute(
+        text("select role::text as role, branch, is_active from public.user_roles where user_id = :user_id"),
+        {"user_id": user_id},
+    ).mappings().one_or_none()
+
     db.execute(
         text(
             """
@@ -260,6 +301,25 @@ def upsert_user_role(
             "branch": branch,
             "is_active": is_active,
         },
+    )
+    previous_branch = previous["branch"] if previous is not None else None
+    action = "BRANCH_REASSIGN" if previous is not None and previous_branch != branch else "USER_ROLE_UPSERT"
+    record_audit(
+        db,
+        entity_type="USER_ROLE",
+        entity_id=None,
+        action=action,
+        actor=user.user_id,
+        status_from=previous["role"] if previous is not None else None,
+        status_to=role,
+        metadata={
+            "target_user_id": user_id,
+            "old_branch": previous_branch,
+            "new_branch": branch,
+            "old_active": bool(previous["is_active"]) if previous is not None else None,
+            "new_active": is_active,
+        },
+        branch=branch or previous_branch,
     )
     db.commit()
     row = db.execute(
