@@ -6,7 +6,7 @@ Foundation for SAP-to-physical Billing reconciliation and SPJ vouching.
 1. Upload Program SAP Excel (`POST /sap/import`).
 2. Validate SAP population (`GET /sap/validate/{batch_id}`).
 3. Upload physical Billing/SPJ (`POST /documents/BILLING`, `POST /documents/SPJ`).
-4. Run OCR/extraction for all physical documents (`POST /documents/{document_id}/ocr`).
+4. Billing/SPJ is automatically extracted during upload; `POST /documents/{document_id}/ocr` remains available only for explicit re-processing.
 5. Run SAP ↔ Billing reconciliation (`POST /reconciliation/{batch_id}/run`).
 6. Review reconciliation summary (`GET /reconciliation/{batch_id}`).
 7. Run Billing ↔ SPJ vouching (`POST /spj/vouch`).
