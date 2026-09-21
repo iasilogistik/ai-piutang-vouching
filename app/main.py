@@ -9,9 +9,10 @@ from sqlalchemy.orm import Session
 from app.audit_service import list_audit_trail, record_audit
 from app.auth import CurrentUser, require_roles
 from app.database import SessionLocal, engine
-from app.models import BillingReconciliation, Document, ImportBatch, PhysicalBilling, SPJ, VouchingResult
+from app.models import BillingReconciliation, Document, DocumentControlEvidence, ImportBatch, PhysicalBilling, SPJ, VouchingResult
 from app.services.reports import build_report
 from app.config import settings
+from app.services.control_evidence_store import analyze_and_persist_control_evidence, evidence_payload
 from app.services.sap_import import import_sap_upload
 from app.services.storage import download_bytes
 from app.services.vouching import ocr_document, overall_result, reconcile_batch, save_document, validate_sap_batch, vouch_spj
@@ -72,14 +73,18 @@ def upload_document(document_type: str, file: UploadFile = File(...),
         record_audit(db, entity_type="DOCUMENT", entity_id=doc.id, action="UPLOAD", actor=uploaded_by,
                      status_to="UPLOADED", metadata={"document_type": document_type, "file_name": doc.file_name, "file_hash": doc.file_hash})
         analysis = ocr_document(db, doc.id)
+        control_evidence = None
+        if doc.document_type == "SPJ":
+            control_evidence = analyze_and_persist_control_evidence(db, doc.id)
         record_audit(db, entity_type="DOCUMENT", entity_id=doc.id, action="AUTO_EXTRACT",
                      actor=uploaded_by, status_to="EXTRACTED",
-                     metadata={"engine": analysis.get("engine"), "confidence": analysis.get("confidence")})
+                     metadata={"engine": analysis.get("engine"), "confidence": analysis.get("confidence"),
+                               "control_evidence_review_required": bool(control_evidence and control_evidence.get("review_required"))})
         db.commit()
     except ValueError as exc:
         db.rollback(); raise handle_error(exc) from exc
     return {"document_id": doc.id, "file_name": doc.file_name, "document_type": doc.document_type, "file_hash": doc.file_hash,
-            "analysis": analysis}
+            "analysis": analysis, "control_evidence": control_evidence}
 
 
 @app.post("/documents/{document_id}/ocr")
@@ -87,9 +92,16 @@ def run_ocr(document_id: int, db: Session = Depends(get_db),
             user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR"))):
     try:
         result = ocr_document(db, document_id)
+        doc = db.get(Document, document_id)
+        control_evidence = None
+        if doc and doc.document_type == "SPJ":
+            control_evidence = analyze_and_persist_control_evidence(db, document_id)
         record_audit(db, entity_type="DOCUMENT", entity_id=document_id, action="OCR",
-                     status_to="OCR_PROCESSED", metadata={"engine": result.get("engine"), "confidence": result.get("confidence")})
+                     status_to="OCR_PROCESSED", metadata={"engine": result.get("engine"), "confidence": result.get("confidence"),
+                                                           "control_evidence_review_required": bool(control_evidence and control_evidence.get("review_required"))})
         db.commit()
+        if control_evidence is not None:
+            result["control_evidence"] = control_evidence
         return result
     except ValueError as exc: raise handle_error(exc) from exc
 
@@ -139,10 +151,13 @@ def get_overall_result(billing_id: int, db: Session = Depends(get_db), user: Cur
 def exceptions(db: Session = Depends(get_db), user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER", "VIEWER"))):
     recs = db.scalars(select(BillingReconciliation).where(BillingReconciliation.status.in_(["EXCEPTION", "REVIEW"]))).all()
     vouches = db.scalars(select(VouchingResult).where(VouchingResult.status.in_(["EXCEPTION", "REVIEW"]))).all()
+    control_rows = db.scalars(select(DocumentControlEvidence).where(DocumentControlEvidence.review_required == True)).all()  # noqa: E712
     return {"total": len(recs) + len(vouches), "reconciliation": [{"id": r.id, "status": r.status, "code": r.exception_code,
         "remarks": r.remarks, "sap_billing_id": r.sap_billing_id} for r in recs],
         "vouching": [{"id": r.id, "status": r.status, "code": r.rule_code, "remarks": r.remarks,
-        "billing_id": r.billing_id, "reviewer_id": r.reviewer_id} for r in vouches]}
+        "billing_id": r.billing_id, "reviewer_id": r.reviewer_id} for r in vouches],
+        "control_evidence": [{"id": row.id, "document_id": row.document_id, "review_required": row.review_required,
+        "review_reasons": [reason.strip() for reason in (row.review_reasons or "").split(";") if reason.strip()]} for row in control_rows]}
 
 
 @app.post("/reviews/vouching/{result_id}")
@@ -168,6 +183,7 @@ def document_evidence(document_id: int, db: Session = Depends(get_db), user: Cur
     if not doc: raise HTTPException(status_code=404, detail="Document not found")
     physical = db.scalar(select(PhysicalBilling).where(PhysicalBilling.document_id == document_id))
     spj = db.scalar(select(SPJ).where(SPJ.document_id == document_id))
+    control = db.scalar(select(DocumentControlEvidence).where(DocumentControlEvidence.document_id == document_id))
     return {
         "document_id": doc.id, "file_name": doc.file_name, "file_type": doc.file_type, "document_type": doc.document_type,
         "file_hash": doc.file_hash, "storage_path": doc.storage_path, "uploaded_at": doc.uploaded_at,
@@ -185,6 +201,7 @@ def document_evidence(document_id: int, db: Session = Depends(get_db), user: Cur
             "partial_payment": str(spj.partial_payment) if spj.partial_payment is not None else None,
             "ocr_confidence": str(spj.ocr_confidence) if spj.ocr_confidence is not None else None,
         } if spj else None,
+        "control_evidence": evidence_payload(control),
     }
 
 
