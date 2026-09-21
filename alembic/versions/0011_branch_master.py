@@ -49,27 +49,28 @@ def upgrade() -> None:
     """)
 
     op.execute("alter table public.branches enable row level security")
-    op.execute("grant select, insert, update on public.branches to authenticated")
-    op.execute("grant usage, select on sequence public.branches_id_seq to authenticated")
-    op.execute("""
-        create policy "app_read_branches" on public.branches
-        for select to authenticated
-        using (
-            active = true
-            or (select public.current_app_role()) = 'ADMIN'::public.app_role
-        )
-    """)
-    op.execute("""
-        create policy "admin_insert_branches" on public.branches
-        for insert to authenticated
-        with check ((select public.current_app_role()) = 'ADMIN'::public.app_role)
-    """)
-    op.execute("""
-        create policy "admin_update_branches" on public.branches
-        for update to authenticated
-        using ((select public.current_app_role()) = 'ADMIN'::public.app_role)
-        with check ((select public.current_app_role()) = 'ADMIN'::public.app_role)
-    """)
+    if _supabase_authenticated_available():
+        op.execute("grant select, insert, update on public.branches to authenticated")
+        op.execute("grant usage, select on sequence public.branches_id_seq to authenticated")
+        op.execute("""
+            create policy "app_read_branches" on public.branches
+            for select to authenticated
+            using (
+                active = true
+                or (select public.current_app_role()) = 'ADMIN'::public.app_role
+            )
+        """)
+        op.execute("""
+            create policy "admin_insert_branches" on public.branches
+            for insert to authenticated
+            with check ((select public.current_app_role()) = 'ADMIN'::public.app_role)
+        """)
+        op.execute("""
+            create policy "admin_update_branches" on public.branches
+            for update to authenticated
+            using ((select public.current_app_role()) = 'ADMIN'::public.app_role)
+            with check ((select public.current_app_role()) = 'ADMIN'::public.app_role)
+        """)
 
 
 def downgrade() -> None:
