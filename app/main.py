@@ -28,9 +28,11 @@ from app.services.login_ui import login_html
 from app.services.sap_import import import_sap_upload
 from app.services.storage import download_bytes
 from app.services.uat_pasuruan_ui import uat_pasuruan_html
+from app.services.user_management import register_user_management_routes
 from app.services.vouching import ocr_document, overall_result, reconcile_batch, save_document, validate_sap_batch, vouch_spj
 
 app = FastAPI(title="AI Piutang Vouching")
+register_user_management_routes(app)
 
 
 def get_db():
