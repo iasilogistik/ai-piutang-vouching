@@ -47,10 +47,13 @@ def current_user(authorization: str | None = Header(default=None), db: Session =
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="Bearer access token required")
     user_id = _verify_token(authorization.split(" ", 1)[1].strip())
-    role = db.execute(
-        text("select role::text from public.user_roles where user_id = :user_id"),
+    row = db.execute(
+        text("select role::text as role, coalesce(is_active, true) as is_active from public.user_roles where user_id = :user_id"),
         {"user_id": user_id},
-    ).scalar_one_or_none() or "VIEWER"
+    ).mappings().one_or_none()
+    if row is not None and not row["is_active"]:
+        raise HTTPException(status_code=403, detail="Application user is inactive")
+    role = row["role"] if row is not None else "VIEWER"
     return CurrentUser(user_id=user_id, role=role)
 
 
