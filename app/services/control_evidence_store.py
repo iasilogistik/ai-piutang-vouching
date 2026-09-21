@@ -65,6 +65,10 @@ def evidence_payload(row: DocumentControlEvidence | None) -> dict[str, Any] | No
         },
         "review_required": row.review_required,
         "review_reasons": [reason.strip() for reason in (row.review_reasons or "").split(";") if reason.strip()],
+        "review_status": row.review_status,
+        "reviewer_id": row.reviewer_id,
+        "reviewer_remarks": row.reviewer_remarks,
+        "reviewed_at": row.reviewed_at,
     }
 
 
