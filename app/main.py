@@ -8,8 +8,9 @@ from sqlalchemy.orm import Session
 
 from app.audit_service import list_audit_trail, record_audit
 from app.auth import CurrentUser, require_roles
+from app.branch_access import ensure_branch_access, scoped_branch
 from app.database import SessionLocal, engine
-from app.models import BillingReconciliation, Document, DocumentControlEvidence, ImportBatch, PhysicalBilling, SPJ, VouchingResult
+from app.models import BillingReconciliation, Document, DocumentControlEvidence, ImportBatch, PhysicalBilling, SAPBilling, SPJ, VouchingResult
 from app.services.auth_gateway import login_with_password, refresh_access_token
 from app.services.bulk_upload_ui import bulk_upload_html
 from app.services.bulk_zip import classify_entry, iter_bulk_zip_entries, make_upload
@@ -42,6 +43,22 @@ def get_db():
 
 def handle_error(exc: ValueError) -> HTTPException:
     return HTTPException(status_code=400, detail=str(exc))
+
+
+def _document_for_user(db: Session, document_id: int, user: CurrentUser) -> Document:
+    doc = db.get(Document, document_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    ensure_branch_access(user, doc.branch)
+    return doc
+
+
+def _batch_for_user(db: Session, batch_id: int, user: CurrentUser) -> ImportBatch:
+    batch = db.get(ImportBatch, batch_id)
+    if not batch:
+        raise HTTPException(status_code=404, detail="SAP import batch not found")
+    ensure_branch_access(user, batch.branch)
+    return batch
 
 
 def _ingest_physical_document(db: Session, upload, *, document_type: str, uploaded_by: str | None,
@@ -161,7 +178,8 @@ def auth_refresh(refresh_token: str = Form(...)):
 
 @app.get("/auth/me")
 def auth_me(user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER", "VIEWER"))):
-    return {"user_id": user.user_id, "role": user.role}
+    return {"user_id": user.user_id, "role": user.role, "branch": user.branch,
+            "access_scope": "ALL" if user.role == "ADMIN" else scoped_branch(user)}
 
 
 @app.get("/ui/control-evidence", response_class=HTMLResponse)
@@ -206,7 +224,7 @@ def sap_import(file: UploadFile = File(...), period: date | None = None,
 
 @app.get("/sap/validate/{batch_id}")
 def sap_validate(batch_id: int, db: Session = Depends(get_db), user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER", "VIEWER"))):
-    try: return validate_sap_batch(db, batch_id)
+    try: return validate_sap_batch(db, batch_id, branch=scoped_branch(user))
     except ValueError as exc: raise handle_error(exc) from exc
 
 
@@ -369,8 +387,8 @@ def upload_document(document_type: str, file: UploadFile = File(...),
 def run_ocr(document_id: int, db: Session = Depends(get_db),
             user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR"))):
     try:
+        doc = _document_for_user(db, document_id, user)
         result = ocr_document(db, document_id)
-        doc = db.get(Document, document_id)
         control_evidence = None
         if doc and doc.document_type == "SPJ":
             control_evidence = analyze_and_persist_control_evidence(db, document_id)
@@ -388,7 +406,7 @@ def run_ocr(document_id: int, db: Session = Depends(get_db),
 def run_reconciliation(batch_id: int, db: Session = Depends(get_db),
                        user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR"))):
     try:
-        rows = reconcile_batch(db, batch_id)
+        rows = reconcile_batch(db, batch_id, branch=scoped_branch(user))
         record_audit(db, entity_type="IMPORT_BATCH", entity_id=batch_id, action="RECONCILIATION_RUN",
                      status_to="COMPLETED", metadata={"total": len(rows)})
         db.commit()
@@ -399,6 +417,7 @@ def run_reconciliation(batch_id: int, db: Session = Depends(get_db),
 
 @app.get("/reconciliation/{batch_id}")
 def reconciliation_dashboard(batch_id: int, db: Session = Depends(get_db), user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER", "VIEWER"))):
+    _batch_for_user(db, batch_id, user)
     rows = db.scalars(select(BillingReconciliation).join(BillingReconciliation.sap_billing).where(
         BillingReconciliation.sap_billing.has(import_batch_id=batch_id))).all()
     counts = {status: sum(1 for row in rows if row.status == status) for status in ("MATCH", "REVIEW", "EXCEPTION", "NOT_FOUND")}
@@ -411,7 +430,7 @@ def reconciliation_dashboard(batch_id: int, db: Session = Depends(get_db), user:
 @app.post("/spj/vouch")
 def run_spj_vouching(db: Session = Depends(get_db),
                      user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR"))):
-    rows = vouch_spj(db)
+    rows = vouch_spj(db, branch=scoped_branch(user))
     record_audit(db, entity_type="VOUCHING", entity_id=None, action="SPJ_VOUCHING_RUN",
                  status_to="COMPLETED", metadata={"total": len(rows)})
     db.commit()
@@ -421,15 +440,37 @@ def run_spj_vouching(db: Session = Depends(get_db),
 
 @app.get("/results/{billing_id}")
 def get_overall_result(billing_id: int, db: Session = Depends(get_db), user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER", "VIEWER"))):
-    try: return overall_result(db, billing_id)
+    try: return overall_result(db, billing_id, branch=scoped_branch(user))
     except ValueError as exc: raise handle_error(exc) from exc
 
 
 @app.get("/exceptions")
 def exceptions(db: Session = Depends(get_db), user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER", "VIEWER"))):
-    recs = db.scalars(select(BillingReconciliation).where(BillingReconciliation.status.in_(["EXCEPTION", "REVIEW"]))).all()
-    vouches = db.scalars(select(VouchingResult).where(VouchingResult.status.in_(["EXCEPTION", "REVIEW"]))).all()
-    control_rows = db.scalars(select(DocumentControlEvidence).where(DocumentControlEvidence.review_required == True)).all()  # noqa: E712
+    branch = scoped_branch(user)
+    rec_query = (
+        select(BillingReconciliation)
+        .join(BillingReconciliation.sap_billing)
+        .join(SAPBilling.import_batch)
+        .where(BillingReconciliation.status.in_(["EXCEPTION", "REVIEW"]))
+    )
+    vouch_query = (
+        select(VouchingResult)
+        .join(VouchingResult.billing)
+        .join(PhysicalBilling.document)
+        .where(VouchingResult.status.in_(["EXCEPTION", "REVIEW"]))
+    )
+    control_query = (
+        select(DocumentControlEvidence)
+        .join(DocumentControlEvidence.document)
+        .where(DocumentControlEvidence.review_required == True)  # noqa: E712
+    )
+    if branch is not None:
+        rec_query = rec_query.where(ImportBatch.branch == branch)
+        vouch_query = vouch_query.where(Document.branch == branch)
+        control_query = control_query.where(Document.branch == branch)
+    recs = db.scalars(rec_query).all()
+    vouches = db.scalars(vouch_query).all()
+    control_rows = db.scalars(control_query).all()
     return {"total": len(recs) + len(vouches) + len(control_rows), "reconciliation": [{"id": r.id, "status": r.status, "code": r.exception_code,
         "remarks": r.remarks, "sap_billing_id": r.sap_billing_id} for r in recs],
         "vouching": [{"id": r.id, "status": r.status, "code": r.rule_code, "remarks": r.remarks,
@@ -445,7 +486,7 @@ def export_control_evidence_dashboard(review_only: bool = False, limit: int = 50
                                       user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER", "VIEWER"))):
     if limit < 1 or limit > 500:
         raise HTTPException(status_code=400, detail="limit must be between 1 and 500")
-    path = build_control_evidence_report(db, review_only=review_only, limit=limit)
+    path = build_control_evidence_report(db, review_only=review_only, limit=limit, branch=scoped_branch(user))
     media = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     return FileResponse(path, filename=path.name, media_type=media)
 
@@ -456,7 +497,7 @@ def control_evidence_dashboard(review_only: bool = False, limit: int = 200,
                                user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER", "VIEWER"))):
     if limit < 1 or limit > 500:
         raise HTTPException(status_code=400, detail="limit must be between 1 and 500")
-    return build_control_evidence_dashboard(db, review_only=review_only, limit=limit)
+    return build_control_evidence_dashboard(db, review_only=review_only, limit=limit, branch=scoped_branch(user))
 
 
 @app.post("/reviews/control-evidence/{evidence_id}")
@@ -464,7 +505,10 @@ def review_control_evidence_result(evidence_id: int, status: str, remarks: str |
                                    db: Session = Depends(get_db),
                                    user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER"))):
     try:
-        result = review_control_evidence(db, evidence_id, status=status, reviewer_id=user.user_id, remarks=remarks)
+        result = review_control_evidence(
+            db, evidence_id, status=status, reviewer_id=user.user_id, remarks=remarks,
+            branch=scoped_branch(user),
+        )
         record_audit(
             db,
             entity_type="DOCUMENT_CONTROL_EVIDENCE",
@@ -489,6 +533,7 @@ def review_vouching(result_id: int, status: str, remarks: str | None = None,
     reviewer_id = user.user_id
     result = db.get(VouchingResult, result_id)
     if not result: raise HTTPException(status_code=404, detail="Vouching result not found")
+    ensure_branch_access(user, result.billing.document.branch)
     status = status.upper()
     if status not in {"PASS", "REVIEW", "EXCEPTION"}: raise HTTPException(status_code=400, detail="Invalid review status")
     old_status = result.status
@@ -501,8 +546,7 @@ def review_vouching(result_id: int, status: str, remarks: str | None = None,
 
 @app.get("/documents/{document_id}")
 def document_evidence(document_id: int, db: Session = Depends(get_db), user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER", "VIEWER"))):
-    doc = db.get(Document, document_id)
-    if not doc: raise HTTPException(status_code=404, detail="Document not found")
+    doc = _document_for_user(db, document_id, user)
     physical = db.scalar(select(PhysicalBilling).where(PhysicalBilling.document_id == document_id))
     spj = db.scalar(select(SPJ).where(SPJ.document_id == document_id))
     control = db.scalar(select(DocumentControlEvidence).where(DocumentControlEvidence.document_id == document_id))
@@ -529,8 +573,7 @@ def document_evidence(document_id: int, db: Session = Depends(get_db), user: Cur
 
 @app.get("/documents/{document_id}/content")
 def document_content(document_id: int, db: Session = Depends(get_db), user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER", "VIEWER"))):
-    doc = db.get(Document, document_id)
-    if not doc: raise HTTPException(status_code=404, detail="Document not found")
+    doc = _document_for_user(db, document_id, user)
     if settings.use_supabase_storage:
         try:
             content = download_bytes(doc.storage_path)
@@ -548,11 +591,11 @@ def audit_trail(entity_type: str | None = None, entity_id: int | None = None,
                 limit: int = 100, db: Session = Depends(get_db), user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER", "VIEWER"))):
     if limit < 1 or limit > 500:
         raise HTTPException(status_code=400, detail="limit must be between 1 and 500")
-    rows = list_audit_trail(db, entity_type=entity_type, entity_id=entity_id, limit=limit)
+    rows = list_audit_trail(db, entity_type=entity_type, entity_id=entity_id, limit=limit, branch=scoped_branch(user))
     return {"total": len(rows), "entries": [{
         "id": row.id, "entity_type": row.entity_type, "entity_id": row.entity_id,
         "action": row.action, "status_from": row.status_from, "status_to": row.status_to,
-        "actor": row.actor, "remarks": row.remarks, "metadata": row.metadata_json,
+        "actor": row.actor, "branch": row.branch, "remarks": row.remarks, "metadata": row.metadata_json,
         "created_at": row.created_at,
     } for row in rows]}
 
@@ -560,7 +603,7 @@ def audit_trail(entity_type: str | None = None, entity_id: int | None = None,
 @app.get("/reports/{batch_id}")
 def generate_report(batch_id: int, format: str = "xlsx", db: Session = Depends(get_db), user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER", "VIEWER"))):
     try:
-        path = build_report(db, batch_id, format)
+        path = build_report(db, batch_id, format, branch=scoped_branch(user))
     except ValueError as exc:
         raise handle_error(exc) from exc
     media = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" if path.suffix == ".xlsx" else "application/pdf"
