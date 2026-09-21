@@ -42,7 +42,7 @@ _MENU = {
     ],
     "VIEWER": [
         ("Dashboard", "/ui/dashboard"),
-        ("Reports", "/ui/control-evidence"),
+        ("Reports", "/ui/audit-reports"),
         ("Evidence", "/ui/control-evidence"),
     ],
 }
