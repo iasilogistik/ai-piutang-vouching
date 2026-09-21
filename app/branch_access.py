@@ -37,7 +37,7 @@ def branch_for_actor(db: Session, user_id: str | None) -> str | None:
     if not user_id:
         return None
     value = db.execute(
-        text("select branch from public.user_roles where user_id = :user_id"),
+        text("select branch from public.user_roles where user_id::text = :user_id"),
         {"user_id": user_id},
     ).scalar_one_or_none()
     return normalize_branch(value)
