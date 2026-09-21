@@ -189,3 +189,25 @@ class AuditException(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ReviewWorkflow(Base):
+    __tablename__ = "review_workflows"
+    __table_args__ = (
+        UniqueConstraint("entity_type", "entity_id", name="uq_review_workflows_entity"),
+        Index("ix_review_workflows_branch", "branch"),
+        Index("ix_review_workflows_status", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    entity_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    entity_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    branch: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, server_default="NEW")
+    auditor_id: Mapped[str | None] = mapped_column(String(100))
+    reviewer_id: Mapped[str | None] = mapped_column(String(100))
+    auditor_remarks: Mapped[str | None] = mapped_column(Text)
+    reviewer_remarks: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
