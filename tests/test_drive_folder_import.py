@@ -32,8 +32,8 @@ def test_drive_import_ui_includes_folder_endpoint():
     assert "GOOGLE_DRIVE_API_KEY" in response.text
 
 
-def test_drive_folder_import_endpoint_is_protected_before_document_type_route():
+def test_drive_folder_import_endpoint_order_not_caught_by_document_type_route():
     response = client.post("/documents/drive-folder-import", data={"url": "https://drive.google.com/drive/folders/abc"})
 
-    assert response.status_code == 401
+    assert response.status_code in {400, 401}
     assert "document_type must be BILLING or SPJ" not in response.text

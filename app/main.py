@@ -10,6 +10,7 @@ from app.audit_service import list_audit_trail, record_audit
 from app.auth import CurrentUser, require_roles
 from app.database import SessionLocal, engine
 from app.models import BillingReconciliation, Document, DocumentControlEvidence, ImportBatch, PhysicalBilling, SPJ, VouchingResult
+from app.services.auth_gateway import login_with_password, refresh_access_token
 from app.services.bulk_upload_ui import bulk_upload_html
 from app.services.bulk_zip import classify_entry, iter_bulk_zip_entries, make_upload
 from app.services.reports import build_control_evidence_report, build_report
@@ -22,6 +23,7 @@ from app.services.control_evidence_ui import control_evidence_dashboard_html
 from app.services.drive_folder import download_drive_folder_file, is_supported_drive_folder_file, list_google_drive_folder_files
 from app.services.drive_import_ui import drive_import_html
 from app.services.drive_link import download_drive_link_file
+from app.services.login_ui import login_html
 from app.services.sap_import import import_sap_upload
 from app.services.storage import download_bytes
 from app.services.uat_pasuruan_ui import uat_pasuruan_html
@@ -134,6 +136,32 @@ def health() -> dict[str, str]:
     with engine.connect() as connection:
         connection.execute(text("SELECT 1"))
     return {"status": "healthy"}
+
+
+@app.get("/login", response_class=HTMLResponse)
+def login_ui():
+    return HTMLResponse(login_html())
+
+
+@app.post("/auth/login")
+def auth_login(email: str = Form(...), password: str = Form(...)):
+    try:
+        return login_with_password(email, password)
+    except ValueError as exc:
+        raise handle_error(exc) from exc
+
+
+@app.post("/auth/refresh")
+def auth_refresh(refresh_token: str = Form(...)):
+    try:
+        return refresh_access_token(refresh_token)
+    except ValueError as exc:
+        raise handle_error(exc) from exc
+
+
+@app.get("/auth/me")
+def auth_me(user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER", "VIEWER"))):
+    return {"user_id": user.user_id, "role": user.role}
 
 
 @app.get("/ui/control-evidence", response_class=HTMLResponse)
