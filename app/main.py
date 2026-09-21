@@ -25,6 +25,7 @@ from app.services.drive_folder import download_drive_folder_file, is_supported_d
 from app.services.drive_import_ui import drive_import_html
 from app.services.drive_link import download_drive_link_file
 from app.services.login_ui import login_html
+from app.services.navigation import register_navigation_routes
 from app.services.sap_import import import_sap_upload
 from app.services.storage import download_bytes
 from app.services.uat_pasuruan_ui import uat_pasuruan_html
@@ -33,6 +34,7 @@ from app.services.vouching import ocr_document, overall_result, reconcile_batch,
 
 app = FastAPI(title="AI Piutang Vouching")
 register_user_management_routes(app)
+register_navigation_routes(app)
 
 
 def get_db():

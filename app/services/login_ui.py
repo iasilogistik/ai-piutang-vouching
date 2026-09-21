@@ -69,6 +69,16 @@ const form = document.getElementById('loginForm');
 const btn = document.getElementById('loginBtn');
 const message = document.getElementById('message');
 function show(text, ok) { message.textContent = text; message.className = `msg ${ok ? 'ok' : 'err'}`; }
+async function loadRoleNavigation() {
+  const target = document.getElementById('roleNav');
+  const token = localStorage.getItem('auditToken') || '';
+  if (!token) { target.innerHTML = ''; return; }
+  try {
+    const response = await fetch('/ui/navigation', { headers:{ Authorization:\`Bearer \${token}\` } });
+    if (!response.ok) { target.innerHTML = ''; return; }
+    target.innerHTML = await response.text();
+  } catch { target.innerHTML = ''; }
+}
 function storeSession(data) {
   localStorage.setItem('auditToken', data.access_token || '');
   if (data.refresh_token) localStorage.setItem('auditRefreshToken', data.refresh_token);
@@ -88,7 +98,7 @@ form.addEventListener('submit', async (event) => {
     let body; try { body = JSON.parse(text); } catch { body = text; }
     if (!response.ok) throw new Error(body.detail || JSON.stringify(body));
     storeSession(body);
-    show('Login berhasil. Token sudah disimpan di browser.', true);
+    show('Login berhasil. Token sudah disimpan di browser.', true);\n    await loadRoleNavigation();
   } catch (error) {
     show(error.message || 'Login gagal.', false);
   } finally {
@@ -100,9 +110,9 @@ document.getElementById('logoutBtn').addEventListener('click', () => {
   localStorage.removeItem('auditRefreshToken');
   localStorage.removeItem('auditExpiresAt');
   localStorage.removeItem('auditUser');
-  show('Token browser sudah dihapus.', true);
+  document.getElementById('roleNav').innerHTML = '';\n  show('Token browser sudah dihapus.', true);
 });
-</script>
+loadRoleNavigation();\n</script>
 </body>
 </html>
 """
