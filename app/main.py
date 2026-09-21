@@ -1,7 +1,7 @@
 from datetime import date
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
@@ -19,6 +19,8 @@ from app.services.control_evidence_dashboard import build_control_evidence_dashb
 from app.services.control_evidence_review import review_control_evidence
 from app.services.control_evidence_store import analyze_and_persist_control_evidence, evidence_payload
 from app.services.control_evidence_ui import control_evidence_dashboard_html
+from app.services.drive_import_ui import drive_import_html
+from app.services.drive_link import download_drive_link_file
 from app.services.sap_import import import_sap_upload
 from app.services.storage import download_bytes
 from app.services.uat_pasuruan_ui import uat_pasuruan_html
@@ -62,6 +64,31 @@ def _ingest_physical_document(db: Session, upload, *, document_type: str, upload
             "document_type": document_type, "analysis": analysis, "control_evidence": control_evidence}
 
 
+def _ingest_classified_upload(db: Session, upload, *, document_types: list[str], uploaded_by: str | None,
+                              source_mode: str, metadata_extra: dict[str, object] | None = None) -> dict[str, object]:
+    if document_types == ["BILLING", "SPJ"]:
+        billing = _ingest_physical_document(db, upload, document_type="BILLING", uploaded_by=uploaded_by,
+                                            source_mode=source_mode,
+                                            metadata_extra=metadata_extra)
+        upload.file.seek(0)
+        spj_meta = {**(metadata_extra or {}), "billing_document_id": billing["document_id"]}
+        spj = _ingest_physical_document(db, upload, document_type="SPJ", uploaded_by=uploaded_by,
+                                        source_mode=source_mode,
+                                        metadata_extra=spj_meta)
+        return {"mode": "COMBINED", "status": "SUCCESS", "billing_document_id": billing["document_id"],
+                "spj_document_id": spj["document_id"],
+                "control_evidence_review_required": bool(spj.get("control_evidence") and spj["control_evidence"].get("review_required"))}
+
+    document_type = document_types[0]
+    payload = _ingest_physical_document(db, upload, document_type=document_type, uploaded_by=uploaded_by,
+                                        source_mode=source_mode,
+                                        metadata_extra=metadata_extra)
+    return {"mode": document_type, "status": "SUCCESS",
+            "billing_document_id": payload["document_id"] if document_type == "BILLING" else None,
+            "spj_document_id": payload["document_id"] if document_type == "SPJ" else None,
+            "control_evidence_review_required": bool(payload.get("control_evidence") and payload["control_evidence"].get("review_required"))}
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     with engine.connect() as connection:
@@ -82,6 +109,11 @@ def combined_upload_ui():
 @app.get("/ui/bulk-upload", response_class=HTMLResponse)
 def bulk_upload_ui():
     return HTMLResponse(bulk_upload_html())
+
+
+@app.get("/ui/drive-import", response_class=HTMLResponse)
+def drive_import_ui():
+    return HTMLResponse(drive_import_html())
 
 
 @app.get("/ui/uat-pasuruan", response_class=HTMLResponse)
@@ -110,6 +142,52 @@ def sap_validate(batch_id: int, db: Session = Depends(get_db), user: CurrentUser
     except ValueError as exc: raise handle_error(exc) from exc
 
 
+@app.post("/documents/drive-import")
+def import_drive_link(url: str = Form(...), mode: str = Form("AUTO"), db: Session = Depends(get_db),
+                      user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR"))):
+    try:
+        uploaded_by = user.user_id
+        upload = download_drive_link_file(url)
+        suffix = Path(upload.filename).suffix.lower()
+        if suffix == ".zip":
+            entries = iter_bulk_zip_entries(upload)
+            results = []
+            for entry in entries:
+                document_types = classify_entry(entry.source_path, mode)
+                if not document_types:
+                    results.append({"source_path": entry.source_path, "file_name": entry.filename, "mode": mode.upper(),
+                                    "status": "SKIPPED", "reason": "Unable to classify file as BILLING, SPJ, or COMBINED"})
+                    continue
+                try:
+                    payload = _ingest_classified_upload(db, make_upload(entry), document_types=document_types,
+                                                        uploaded_by=uploaded_by, source_mode="DRIVE_ZIP",
+                                                        metadata_extra={"drive_source_url": url, "zip_source_path": entry.source_path})
+                    db.commit()
+                    results.append({"source_path": entry.source_path, "file_name": entry.filename, **payload})
+                except ValueError as item_exc:
+                    db.rollback()
+                    results.append({"source_path": entry.source_path, "file_name": entry.filename,
+                                    "mode": "+".join(document_types), "status": "ERROR", "reason": str(item_exc)})
+            summary = {"success": sum(1 for row in results if row["status"] == "SUCCESS"),
+                       "skipped": sum(1 for row in results if row["status"] == "SKIPPED"),
+                       "error": sum(1 for row in results if row["status"] == "ERROR")}
+            return {"source": "SHARE_LINK", "file_name": upload.filename, "mode": mode.upper(),
+                    "total_entries": len(entries), "summary": summary, "results": results}
+
+        document_types = classify_entry(upload.filename, mode)
+        if not document_types:
+            raise ValueError("Unable to classify downloaded file as BILLING, SPJ, or COMBINED. Use mode BILLING, SPJ, or COMBINED.")
+        payload = _ingest_classified_upload(db, upload, document_types=document_types, uploaded_by=uploaded_by,
+                                            source_mode="DRIVE_LINK",
+                                            metadata_extra={"drive_source_url": url})
+        db.commit()
+        return {"source": "SHARE_LINK", "file_name": upload.filename, "mode": mode.upper(),
+                "summary": {"success": 1, "skipped": 0, "error": 0},
+                "results": [{"source_path": upload.filename, "file_name": upload.filename, **payload}]}
+    except ValueError as exc:
+        db.rollback(); raise handle_error(exc) from exc
+
+
 @app.post("/documents/bulk-zip")
 def upload_bulk_zip(file: UploadFile = File(...), mode: str = "AUTO", db: Session = Depends(get_db),
                     user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR"))):
@@ -124,30 +202,12 @@ def upload_bulk_zip(file: UploadFile = File(...), mode: str = "AUTO", db: Sessio
                                 "status": "SKIPPED", "reason": "Unable to classify file as BILLING, SPJ, or COMBINED"})
                 continue
             try:
-                if document_types == ["BILLING", "SPJ"]:
-                    billing = _ingest_physical_document(db, make_upload(entry), document_type="BILLING", uploaded_by=uploaded_by,
-                                                        source_mode="BULK_ZIP_COMBINED",
-                                                        metadata_extra={"zip_source_path": entry.source_path})
-                    spj = _ingest_physical_document(db, make_upload(entry), document_type="SPJ", uploaded_by=uploaded_by,
-                                                    source_mode="BULK_ZIP_COMBINED",
-                                                    metadata_extra={"zip_source_path": entry.source_path,
-                                                                    "billing_document_id": billing["document_id"]})
-                    db.commit()
-                    results.append({"source_path": entry.source_path, "file_name": entry.filename,
-                                    "mode": "COMBINED", "status": "SUCCESS",
-                                    "billing_document_id": billing["document_id"], "spj_document_id": spj["document_id"],
-                                    "control_evidence_review_required": bool(spj.get("control_evidence") and spj["control_evidence"].get("review_required"))})
-                else:
-                    document_type = document_types[0]
-                    payload = _ingest_physical_document(db, make_upload(entry), document_type=document_type, uploaded_by=uploaded_by,
-                                                        source_mode="BULK_ZIP",
-                                                        metadata_extra={"zip_source_path": entry.source_path})
-                    db.commit()
-                    results.append({"source_path": entry.source_path, "file_name": entry.filename,
-                                    "mode": document_type, "status": "SUCCESS",
-                                    "billing_document_id": payload["document_id"] if document_type == "BILLING" else None,
-                                    "spj_document_id": payload["document_id"] if document_type == "SPJ" else None,
-                                    "control_evidence_review_required": bool(payload.get("control_evidence") and payload["control_evidence"].get("review_required"))})
+                payload = _ingest_classified_upload(db, make_upload(entry), document_types=document_types,
+                                                    uploaded_by=uploaded_by,
+                                                    source_mode="BULK_ZIP_COMBINED" if document_types == ["BILLING", "SPJ"] else "BULK_ZIP",
+                                                    metadata_extra={"zip_source_path": entry.source_path})
+                db.commit()
+                results.append({"source_path": entry.source_path, "file_name": entry.filename, **payload})
             except ValueError as item_exc:
                 db.rollback()
                 results.append({"source_path": entry.source_path, "file_name": entry.filename,
