@@ -11,16 +11,17 @@ from reportlab.lib.styles import getSampleStyleSheet
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import BillingReconciliation, ImportBatch, PhysicalBilling, SAPBilling, SPJ, VouchingResult
+from app.branch_access import normalize_branch
+from app.models import BillingReconciliation, Document, ImportBatch, PhysicalBilling, SAPBilling, SPJ, VouchingResult
 from app.services.control_evidence_dashboard import build_control_evidence_dashboard
 from app.services.vouching import _net_document_amount
 
 REPORT_ROOT = Path("storage/reports")
 
 
-def _rows(db: Session, batch_id: int):
+def _rows(db: Session, batch_id: int, *, branch: str | None = None):
     batch = db.get(ImportBatch, batch_id)
-    if not batch:
+    if not batch or (branch is not None and normalize_branch(batch.branch) != normalize_branch(branch)):
         raise ValueError("SAP import batch not found")
     stmt = (
         select(SAPBilling, BillingReconciliation, PhysicalBilling, VouchingResult)
@@ -36,7 +37,10 @@ def _rows(db: Session, batch_id: int):
 def _spj_partial(db: Session, physical: PhysicalBilling | None):
     if not physical or not physical.no_spj:
         return None
-    matches = db.scalars(select(SPJ).where(SPJ.no_spj == physical.no_spj)).all()
+    physical_branch = normalize_branch(physical.document.branch)
+    query = select(SPJ).join(SPJ.document).where(SPJ.no_spj == physical.no_spj)
+    query = query.where(Document.branch == physical_branch if physical_branch is not None else Document.branch.is_(None))
+    matches = db.scalars(query).all()
     if len(matches) == 1:
         return matches[0].partial_payment
     return None
@@ -72,11 +76,11 @@ def _autosize(wb: Workbook) -> None:
             sheet.column_dimensions[column[0].column_letter].width = width
 
 
-def build_report(db: Session, batch_id: int, fmt: str) -> Path:
+def build_report(db: Session, batch_id: int, fmt: str, *, branch: str | None = None) -> Path:
     fmt = fmt.lower()
     if fmt not in {"xlsx", "pdf"}:
         raise ValueError("format must be xlsx or pdf")
-    batch, rows = _rows(db, batch_id)
+    batch, rows = _rows(db, batch_id, branch=branch)
     REPORT_ROOT.mkdir(parents=True, exist_ok=True)
     stamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
     path = REPORT_ROOT / f"vouching_batch_{batch_id}_{stamp}.{fmt}"
@@ -128,11 +132,13 @@ def build_report(db: Session, batch_id: int, fmt: str) -> Path:
     return path
 
 
-def build_control_evidence_report(db: Session, *, review_only: bool = False, limit: int = 500) -> Path:
+def build_control_evidence_report(
+    db: Session, *, review_only: bool = False, limit: int = 500, branch: str | None = None
+) -> Path:
     REPORT_ROOT.mkdir(parents=True, exist_ok=True)
     stamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
     path = REPORT_ROOT / f"spj_control_evidence_{stamp}.xlsx"
-    dashboard = build_control_evidence_dashboard(db, review_only=review_only, limit=limit)
+    dashboard = build_control_evidence_dashboard(db, review_only=review_only, limit=limit, branch=branch)
 
     wb = Workbook()
     summary_sheet = wb.active
