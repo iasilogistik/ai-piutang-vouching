@@ -93,7 +93,7 @@ def uat_pasuruan_html() -> str:
       <li><label><input type=\"checkbox\" data-check=\"step\" /> Upload 10 dokumen Billing/SPJ Pasuruan.</label></li>
       <li><label><input type=\"checkbox\" data-check=\"step\" /> Pastikan OCR/extraction otomatis berjalan saat upload.</label></li>
       <li><label><input type=\"checkbox\" data-check=\"step\" /> Jalankan SAP vs Billing dan Billing vs SPJ vouching.</label></li>
-      <li><label><input type=\"checkbox\" data-check=\"step\" /> Buka dashboard <code>/ui/control-evidence</code> dan cek TTD/stempel/checker.</label></li>
+      <li><label><input type=\"checkbox\" data-check=\"step\" /> Buka dashboard <code>/ui/control-evidence</code> dan cek TTD penerima, TTD driver, TTD satpam, TTD BM, TTD checker, dan stempel.</label></li>
       <li><label><input type=\"checkbox\" data-check=\"step\" /> Lakukan manual review untuk data REVIEW/UNKNOWN/MISSING.</label></li>
       <li><label><input type=\"checkbox\" data-check=\"step\" /> Export Excel control evidence dan simpan sebagai evidence UAT.</label></li>
       <li><label><input type=\"checkbox\" data-check=\"step\" /> Cek audit trail untuk upload, OCR, reconciliation, dan review evidence.</label></li>
