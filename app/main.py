@@ -19,6 +19,7 @@ from app.services.control_evidence_dashboard import build_control_evidence_dashb
 from app.services.control_evidence_review import review_control_evidence
 from app.services.control_evidence_store import analyze_and_persist_control_evidence, evidence_payload
 from app.services.control_evidence_ui import control_evidence_dashboard_html
+from app.services.drive_folder import download_drive_folder_file, is_supported_drive_folder_file, list_google_drive_folder_files
 from app.services.drive_import_ui import drive_import_html
 from app.services.drive_link import download_drive_link_file
 from app.services.sap_import import import_sap_upload
@@ -89,6 +90,45 @@ def _ingest_classified_upload(db: Session, upload, *, document_types: list[str],
             "control_evidence_review_required": bool(payload.get("control_evidence") and payload["control_evidence"].get("review_required"))}
 
 
+def _process_upload_or_zip(db: Session, upload, *, mode: str, uploaded_by: str | None,
+                           source_mode: str, metadata_extra: dict[str, object] | None = None) -> tuple[int, list[dict[str, object]]]:
+    suffix = Path(upload.filename).suffix.lower()
+    if suffix == ".zip":
+        entries = iter_bulk_zip_entries(upload)
+        results: list[dict[str, object]] = []
+        for entry in entries:
+            document_types = classify_entry(entry.source_path, mode)
+            if not document_types:
+                results.append({"source_path": entry.source_path, "file_name": entry.filename, "mode": mode.upper(),
+                                "status": "SKIPPED", "reason": "Unable to classify file as BILLING, SPJ, or COMBINED"})
+                continue
+            try:
+                payload = _ingest_classified_upload(db, make_upload(entry), document_types=document_types,
+                                                    uploaded_by=uploaded_by, source_mode=source_mode,
+                                                    metadata_extra={**(metadata_extra or {}), "zip_source_path": entry.source_path})
+                db.commit()
+                results.append({"source_path": entry.source_path, "file_name": entry.filename, **payload})
+            except ValueError as item_exc:
+                db.rollback()
+                results.append({"source_path": entry.source_path, "file_name": entry.filename,
+                                "mode": "+".join(document_types), "status": "ERROR", "reason": str(item_exc)})
+        return len(entries), results
+
+    document_types = classify_entry(upload.filename, mode)
+    if not document_types:
+        raise ValueError("Unable to classify downloaded file as BILLING, SPJ, or COMBINED. Use mode BILLING, SPJ, or COMBINED.")
+    payload = _ingest_classified_upload(db, upload, document_types=document_types, uploaded_by=uploaded_by,
+                                        source_mode=source_mode, metadata_extra=metadata_extra)
+    db.commit()
+    return 1, [{"source_path": upload.filename, "file_name": upload.filename, **payload}]
+
+
+def _summary(results: list[dict[str, object]]) -> dict[str, int]:
+    return {"success": sum(1 for row in results if row["status"] == "SUCCESS"),
+            "skipped": sum(1 for row in results if row["status"] == "SKIPPED"),
+            "error": sum(1 for row in results if row["status"] == "ERROR")}
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     with engine.connect() as connection:
@@ -142,48 +182,53 @@ def sap_validate(batch_id: int, db: Session = Depends(get_db), user: CurrentUser
     except ValueError as exc: raise handle_error(exc) from exc
 
 
+@app.post("/documents/drive-folder-import")
+def import_drive_folder(url: str = Form(...), mode: str = Form("AUTO"), db: Session = Depends(get_db),
+                        user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR"))):
+    try:
+        uploaded_by = user.user_id
+        files = list_google_drive_folder_files(url)
+        results: list[dict[str, object]] = []
+        for item in files:
+            if not is_supported_drive_folder_file(item):
+                results.append({"source_path": item.name, "file_name": item.name, "mode": mode.upper(),
+                                "status": "SKIPPED", "reason": "Unsupported Google Drive file type"})
+                continue
+            try:
+                upload = download_drive_folder_file(item)
+                _, item_results = _process_upload_or_zip(
+                    db,
+                    upload,
+                    mode=mode,
+                    uploaded_by=uploaded_by,
+                    source_mode="DRIVE_FOLDER_ZIP" if Path(upload.filename).suffix.lower() == ".zip" else "DRIVE_FOLDER",
+                    metadata_extra={"drive_folder_url": url, "drive_file_id": item.file_id, "drive_file_name": item.name},
+                )
+                for result in item_results:
+                    result["source_path"] = f"{item.name}/{result.get('source_path')}" if Path(upload.filename).suffix.lower() == ".zip" else item.name
+                    result["file_name"] = result.get("file_name") or item.name
+                results.extend(item_results)
+            except ValueError as item_exc:
+                db.rollback()
+                results.append({"source_path": item.name, "file_name": item.name,
+                                "mode": mode.upper(), "status": "ERROR", "reason": str(item_exc)})
+        return {"source": "GOOGLE_DRIVE_FOLDER", "mode": mode.upper(), "total_entries": len(results),
+                "summary": _summary(results), "results": results}
+    except ValueError as exc:
+        db.rollback(); raise handle_error(exc) from exc
+
+
 @app.post("/documents/drive-import")
 def import_drive_link(url: str = Form(...), mode: str = Form("AUTO"), db: Session = Depends(get_db),
                       user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR"))):
     try:
         uploaded_by = user.user_id
         upload = download_drive_link_file(url)
-        suffix = Path(upload.filename).suffix.lower()
-        if suffix == ".zip":
-            entries = iter_bulk_zip_entries(upload)
-            results = []
-            for entry in entries:
-                document_types = classify_entry(entry.source_path, mode)
-                if not document_types:
-                    results.append({"source_path": entry.source_path, "file_name": entry.filename, "mode": mode.upper(),
-                                    "status": "SKIPPED", "reason": "Unable to classify file as BILLING, SPJ, or COMBINED"})
-                    continue
-                try:
-                    payload = _ingest_classified_upload(db, make_upload(entry), document_types=document_types,
-                                                        uploaded_by=uploaded_by, source_mode="DRIVE_ZIP",
-                                                        metadata_extra={"drive_source_url": url, "zip_source_path": entry.source_path})
-                    db.commit()
-                    results.append({"source_path": entry.source_path, "file_name": entry.filename, **payload})
-                except ValueError as item_exc:
-                    db.rollback()
-                    results.append({"source_path": entry.source_path, "file_name": entry.filename,
-                                    "mode": "+".join(document_types), "status": "ERROR", "reason": str(item_exc)})
-            summary = {"success": sum(1 for row in results if row["status"] == "SUCCESS"),
-                       "skipped": sum(1 for row in results if row["status"] == "SKIPPED"),
-                       "error": sum(1 for row in results if row["status"] == "ERROR")}
-            return {"source": "SHARE_LINK", "file_name": upload.filename, "mode": mode.upper(),
-                    "total_entries": len(entries), "summary": summary, "results": results}
-
-        document_types = classify_entry(upload.filename, mode)
-        if not document_types:
-            raise ValueError("Unable to classify downloaded file as BILLING, SPJ, or COMBINED. Use mode BILLING, SPJ, or COMBINED.")
-        payload = _ingest_classified_upload(db, upload, document_types=document_types, uploaded_by=uploaded_by,
-                                            source_mode="DRIVE_LINK",
-                                            metadata_extra={"drive_source_url": url})
-        db.commit()
+        total, results = _process_upload_or_zip(db, upload, mode=mode, uploaded_by=uploaded_by,
+                                                source_mode="DRIVE_ZIP" if Path(upload.filename).suffix.lower() == ".zip" else "DRIVE_LINK",
+                                                metadata_extra={"drive_source_url": url})
         return {"source": "SHARE_LINK", "file_name": upload.filename, "mode": mode.upper(),
-                "summary": {"success": 1, "skipped": 0, "error": 0},
-                "results": [{"source_path": upload.filename, "file_name": upload.filename, **payload}]}
+                "total_entries": total, "summary": _summary(results), "results": results}
     except ValueError as exc:
         db.rollback(); raise handle_error(exc) from exc
 
@@ -214,10 +259,7 @@ def upload_bulk_zip(file: UploadFile = File(...), mode: str = "AUTO", db: Sessio
                                 "mode": "+".join(document_types), "status": "ERROR", "reason": str(item_exc)})
     except ValueError as exc:
         db.rollback(); raise handle_error(exc) from exc
-    summary = {"success": sum(1 for row in results if row["status"] == "SUCCESS"),
-               "skipped": sum(1 for row in results if row["status"] == "SKIPPED"),
-               "error": sum(1 for row in results if row["status"] == "ERROR")}
-    return {"mode": mode.upper(), "total_entries": len(entries), "summary": summary, "results": results}
+    return {"mode": mode.upper(), "total_entries": len(entries), "summary": _summary(results), "results": results}
 
 
 @app.post("/documents/combined")
