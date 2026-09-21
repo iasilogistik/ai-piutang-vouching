@@ -3,9 +3,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import DocumentControlEvidence
+from app.branch_access import normalize_branch
+from app.models import Document, DocumentControlEvidence
 from app.services.control_evidence_store import evidence_payload
 
 VALID_REVIEW_STATUSES = {"PASS", "REVIEW", "EXCEPTION"}
@@ -24,6 +26,7 @@ def review_control_evidence(
     status: str,
     reviewer_id: str,
     remarks: str | None = None,
+    branch: str | None = None,
 ) -> dict[str, Any]:
     """Apply an auditor manual review decision to SPJ control evidence.
 
@@ -32,7 +35,12 @@ def review_control_evidence(
     item stays in the manual review queue.
     """
 
-    row = db.get(DocumentControlEvidence, evidence_id)
+    query = select(DocumentControlEvidence).join(DocumentControlEvidence.document).where(
+        DocumentControlEvidence.id == evidence_id
+    )
+    if branch is not None:
+        query = query.where(Document.branch == normalize_branch(branch))
+    row = db.scalar(query)
     if row is None:
         raise ValueError("Control evidence result not found")
 
