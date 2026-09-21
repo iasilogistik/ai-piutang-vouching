@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.database import Base
 from app.main import app
 from app.models import (
@@ -189,11 +190,12 @@ def test_list_audit_reports_filters_branch():
         assert rows[0].branch == "PASURUAN"
 
 
-def test_audit_report_routes_are_served_and_protected():
+def test_audit_report_routes_are_served_and_protected(monkeypatch):
     client = TestClient(app)
     ui = client.get("/ui/audit-reports")
     assert ui.status_code == 200
     assert "Audit Reports" in ui.text
 
+    monkeypatch.setattr(settings, "auth_required", True)
     api = client.get("/audit-reports")
     assert api.status_code == 401
