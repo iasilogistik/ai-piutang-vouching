@@ -19,6 +19,7 @@ _MENU = {
         ("Exceptions", "/ui/exceptions"),
         ("Review Queue", "/ui/review-queue"),
         ("Audit Trail", "/ui/audit-trail"),
+        ("Reports", "/ui/audit-reports"),
         ("Users", "/ui/users"),
         ("Branches", "/ui/branches"),
     ],
@@ -30,13 +31,14 @@ _MENU = {
         ("Exceptions", "/ui/exceptions"),
         ("Review Queue", "/ui/review-queue"),
         ("Audit Trail", "/ui/audit-trail"),
+        ("Reports", "/ui/audit-reports"),
     ],
     "REVIEWER": [
         ("Dashboard", "/ui/dashboard"),
         ("Review Queue", "/ui/review-queue"),
         ("Evidence", "/ui/control-evidence"),
         ("Exceptions", "/ui/exceptions"),
-        ("Reports", "/ui/control-evidence"),
+        ("Reports", "/ui/audit-reports"),
     ],
     "VIEWER": [
         ("Dashboard", "/ui/dashboard"),
