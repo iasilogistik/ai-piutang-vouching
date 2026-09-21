@@ -36,7 +36,9 @@ def _norm_key(value: str | None) -> str | None:
 def _parse_amount(value: str | None) -> Decimal | None:
     if not value:
         return None
-    raw = re.sub(r"\\s+", "", value)\n    raw = raw.replace(":", ".")\n    raw = re.sub(r"[^0-9,.-]", "", raw)
+    raw = re.sub(r"\\s+", "", value)
+    raw = raw.replace(":", ".")
+    raw = re.sub(r"[^0-9,.-]", "", raw)
     if not raw:
         return None
     if "," in raw and "." in raw:
