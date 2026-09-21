@@ -99,7 +99,7 @@ def _install_branch_policies() -> None:
         language sql
         stable
         set search_path = ''
-        as $$
+        as $function$
           select upper(trim(ur.branch))
           from public.user_roles ur
           where ur.user_id::text = (select auth.uid())::text
