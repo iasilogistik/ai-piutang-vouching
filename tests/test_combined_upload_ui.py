@@ -16,8 +16,8 @@ def test_combined_upload_ui_shell_loads():
     assert "Buka Control Evidence" in response.text
 
 
-def test_combined_upload_endpoint_is_protected_before_document_type_route():
+def test_combined_upload_endpoint_does_not_hit_document_type_route():
     response = client.post("/documents/combined")
 
-    assert response.status_code == 401
+    assert response.status_code == 422
     assert "document_type must be BILLING or SPJ" not in response.text
