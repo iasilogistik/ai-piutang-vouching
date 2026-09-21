@@ -79,7 +79,7 @@ def _install_branch_policies() -> None:
         language sql
         stable
         set search_path = ''
-        as $
+        as $function$
           select coalesce(
             (
               select ur.role
@@ -89,7 +89,7 @@ def _install_branch_policies() -> None:
             ),
             'VIEWER'::public.app_role
           )
-        $;
+        $function$;
         """
     )
     op.execute(
@@ -104,7 +104,7 @@ def _install_branch_policies() -> None:
           from public.user_roles ur
           where ur.user_id::text = (select auth.uid())::text
             and coalesce(ur.is_active, true)
-        $;
+        $function$;
         """
     )
 
