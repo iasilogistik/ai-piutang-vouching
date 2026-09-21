@@ -11,7 +11,9 @@ from app.services.control_evidence_store import evidence_payload
 VALID_REVIEW_STATUSES = {"PASS", "REVIEW", "EXCEPTION"}
 
 
-def _system_status(row: DocumentControlEvidence) -> str:
+def _effective_status(row: DocumentControlEvidence) -> str:
+    if row.review_status:
+        return row.review_status
     return "REVIEW" if row.review_required else "PASS"
 
 
@@ -34,6 +36,7 @@ def review_control_evidence(
     if row is None:
         raise ValueError("Control evidence result not found")
 
+    previous_status = _effective_status(row)
     normalized_status = status.upper().strip()
     if normalized_status not in VALID_REVIEW_STATUSES:
         raise ValueError("status must be PASS, REVIEW, or EXCEPTION")
@@ -46,5 +49,5 @@ def review_control_evidence(
     db.flush()
 
     payload = evidence_payload(row) or {}
-    payload["previous_review_status"] = _system_status(row)
+    payload["previous_review_status"] = previous_status
     return payload
