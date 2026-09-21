@@ -33,18 +33,18 @@ def drive_import_html() -> str:
 <body>
 <header>
   <h1>Google Drive / Share Link Import</h1>
-  <p>Import dokumen dari share link publik, termasuk file PDF/JPG/PNG/ZIP Google Drive.</p>
+  <p>Import dokumen dari share link file, ZIP, atau folder Google Drive.</p>
 </header>
 <main>
   <section class="panel">
     <h2>Import dari link</h2>
     <p class="notice">
-      Gunakan link file Google Drive yang permission-nya <strong>Anyone with the link</strong>. Untuk banyak dokumen, unggah satu file ZIP di Google Drive lalu paste link ZIP di sini. Folder link Google Drive membutuhkan integrasi API/connector dan belum diproses langsung oleh endpoint ini.
+      Gunakan link file atau folder Google Drive yang permission-nya <strong>Anyone with the link</strong>. Import folder membutuhkan environment variable <strong>GOOGLE_DRIVE_API_KEY</strong> di Vercel. Untuk banyak dokumen tanpa API key, unggah satu file ZIP ke Google Drive lalu gunakan tombol <strong>Import File/ZIP Link</strong>.
     </p>
     <label for="token">Bearer Token</label>
     <input id="token" type="password" placeholder="Paste access token production" autocomplete="off" />
     <label for="url">Share Link</label>
-    <input id="url" type="url" placeholder="https://drive.google.com/file/d/.../view atau direct PDF/ZIP URL" />
+    <input id="url" type="url" placeholder="https://drive.google.com/file/d/... atau https://drive.google.com/drive/folders/..." />
     <label for="mode">Mode import</label>
     <select id="mode">
       <option value="AUTO">AUTO - klasifikasi dari nama file/folder ZIP</option>
@@ -53,7 +53,8 @@ def drive_import_html() -> str:
       <option value="COMBINED">Sebagai Billing + SPJ gabungan</option>
     </select>
     <div class="actions">
-      <button type="button" id="importBtn">Import Link</button>
+      <button type="button" id="importFileBtn">Import File/ZIP Link</button>
+      <button type="button" id="importFolderBtn">Import Folder Link</button>
       <a class="button-link secondary" href="/ui/bulk-upload" target="_blank" rel="noopener">Bulk ZIP Upload</a>
       <a class="button-link secondary" href="/ui/combined-upload" target="_blank" rel="noopener">Combined Upload</a>
       <a class="button-link secondary" href="/ui/control-evidence" target="_blank" rel="noopener">Control Evidence</a>
@@ -93,15 +94,15 @@ function renderRows() {
   if (!rows.length) { resultRows.innerHTML = '<tr><td colspan="5">Belum ada import.</td></tr>'; return; }
   resultRows.innerHTML = rows.map(row => `<tr><td>${row.file}</td><td>${row.mode || '-'}</td><td>${row.billing || '-'}</td><td>${row.spj || '-'}</td><td class="${row.cls}">${row.status}</td></tr>`).join('');
 }
-async function importLink() {
+async function importTo(endpoint, label) {
   try {
     const url = urlInput.value.trim();
-    if (!url) { appendLog('Import Link', 'Share link wajib diisi.', false); return; }
-    appendLog('Import Link', `Importing ${url}...`);
+    if (!url) { appendLog(label, 'Share link wajib diisi.', false); return; }
+    appendLog(label, `Importing ${url}...`);
     const form = new FormData();
     form.append('url', url);
     form.append('mode', modeInput.value);
-    const response = await fetch('/documents/drive-import', { method:'POST', headers:authHeaders(), body:form });
+    const response = await fetch(endpoint, { method:'POST', headers:authHeaders(), body:form });
     const text = await response.text();
     let body;
     try { body = JSON.parse(text); } catch { body = text; }
@@ -115,14 +116,15 @@ async function importLink() {
       cls: item.status === 'SUCCESS' ? 'ok' : (item.status === 'SKIPPED' ? 'skip' : 'err')
     }));
     renderRows();
-    appendLog('Import Link', body);
+    appendLog(label, body);
   } catch (error) {
     rows.unshift({ file: urlInput.value.trim() || '-', mode: modeInput.value, billing: null, spj: null, status: error.message, cls: 'err' });
     renderRows();
-    appendLog('Import Link', error.message, false);
+    appendLog(label, error.message, false);
   }
 }
-document.getElementById('importBtn').addEventListener('click', importLink);
+document.getElementById('importFileBtn').addEventListener('click', () => importTo('/documents/drive-import', 'Import File/ZIP Link'));
+document.getElementById('importFolderBtn').addEventListener('click', () => importTo('/documents/drive-folder-import', 'Import Folder Link'));
 renderRows();
 </script>
 </body>
