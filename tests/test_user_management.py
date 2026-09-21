@@ -19,8 +19,7 @@ def test_login_page_links_user_management():
     assert "/ui/users" in response.text
 
 
-def test_user_management_ui_shell_loads_after_login_bootstrap():
-    _bootstrap_user_routes()
+def test_user_management_ui_shell_loads_without_login_bootstrap():
     response = client.get("/ui/users")
 
     assert response.status_code == 200
