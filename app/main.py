@@ -12,6 +12,7 @@ from app.database import SessionLocal, engine
 from app.models import BillingReconciliation, Document, DocumentControlEvidence, ImportBatch, PhysicalBilling, SPJ, VouchingResult
 from app.services.reports import build_control_evidence_report, build_report
 from app.config import settings
+from app.services.combined_upload_ui import combined_upload_html
 from app.services.control_evidence_dashboard import build_control_evidence_dashboard
 from app.services.control_evidence_review import review_control_evidence
 from app.services.control_evidence_store import analyze_and_persist_control_evidence, evidence_payload
@@ -48,6 +49,11 @@ def control_evidence_ui():
     return HTMLResponse(control_evidence_dashboard_html())
 
 
+@app.get("/ui/combined-upload", response_class=HTMLResponse)
+def combined_upload_ui():
+    return HTMLResponse(combined_upload_html())
+
+
 @app.get("/ui/uat-pasuruan", response_class=HTMLResponse)
 def uat_pasuruan_ui():
     return HTMLResponse(uat_pasuruan_html())
@@ -72,6 +78,54 @@ def sap_import(file: UploadFile = File(...), period: date | None = None,
 def sap_validate(batch_id: int, db: Session = Depends(get_db), user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER", "VIEWER"))):
     try: return validate_sap_batch(db, batch_id)
     except ValueError as exc: raise handle_error(exc) from exc
+
+
+@app.post("/documents/combined")
+def upload_combined_document(file: UploadFile = File(...), db: Session = Depends(get_db),
+                             user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR"))):
+    """Upload one file that contains both Billing and SPJ evidence.
+
+    The same uploaded PDF/image is registered twice: once as BILLING and once as
+    SPJ. This supports scanned packages where invoice/billing pages and SPJ
+    pages are merged into one file. Field matching still uses deterministic
+    billing and SPJ rules; unclear OCR remains REVIEW/manual check.
+    """
+    try:
+        uploaded_by = user.user_id
+        billing_doc = save_document(db, file, document_type="BILLING", uploaded_by=uploaded_by)
+        record_audit(db, entity_type="DOCUMENT", entity_id=billing_doc.id, action="UPLOAD", actor=uploaded_by,
+                     status_to="UPLOADED", metadata={"document_type": "BILLING", "file_name": billing_doc.file_name,
+                                                     "file_hash": billing_doc.file_hash, "source_mode": "COMBINED"})
+        billing_analysis = ocr_document(db, billing_doc.id)
+        record_audit(db, entity_type="DOCUMENT", entity_id=billing_doc.id, action="AUTO_EXTRACT",
+                     actor=uploaded_by, status_to="EXTRACTED",
+                     metadata={"engine": billing_analysis.get("engine"), "confidence": billing_analysis.get("confidence"),
+                               "source_mode": "COMBINED"})
+
+        file.file.seek(0)
+        spj_doc = save_document(db, file, document_type="SPJ", uploaded_by=uploaded_by)
+        record_audit(db, entity_type="DOCUMENT", entity_id=spj_doc.id, action="UPLOAD", actor=uploaded_by,
+                     status_to="UPLOADED", metadata={"document_type": "SPJ", "file_name": spj_doc.file_name,
+                                                     "file_hash": spj_doc.file_hash, "source_mode": "COMBINED",
+                                                     "billing_document_id": billing_doc.id})
+        spj_analysis = ocr_document(db, spj_doc.id)
+        control_evidence = analyze_and_persist_control_evidence(db, spj_doc.id)
+        record_audit(db, entity_type="DOCUMENT", entity_id=spj_doc.id, action="AUTO_EXTRACT",
+                     actor=uploaded_by, status_to="EXTRACTED",
+                     metadata={"engine": spj_analysis.get("engine"), "confidence": spj_analysis.get("confidence"),
+                               "source_mode": "COMBINED", "billing_document_id": billing_doc.id,
+                               "control_evidence_review_required": bool(control_evidence and control_evidence.get("review_required"))})
+        db.commit()
+    except ValueError as exc:
+        db.rollback(); raise handle_error(exc) from exc
+    return {
+        "mode": "COMBINED_BILLING_SPJ",
+        "file_name": billing_doc.file_name,
+        "billing_document": {"document_id": billing_doc.id, "file_hash": billing_doc.file_hash,
+                             "analysis": billing_analysis},
+        "spj_document": {"document_id": spj_doc.id, "file_hash": spj_doc.file_hash,
+                         "analysis": spj_analysis, "control_evidence": control_evidence},
+    }
 
 
 @app.post("/documents/{document_type}")
