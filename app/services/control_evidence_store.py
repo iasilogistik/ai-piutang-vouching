@@ -46,6 +46,8 @@ def evidence_payload(row: DocumentControlEvidence | None) -> dict[str, Any] | No
         }
 
     return {
+        "control_evidence_id": row.id,
+        "document_id": row.document_id,
         "receiver_signature": signature_payload("receiver_signature"),
         "driver_signature": signature_payload("driver_signature"),
         "security_signature": signature_payload("security_signature"),
