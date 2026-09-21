@@ -163,4 +163,4 @@ class VouchingResult(Base):
     reviewer_id: Mapped[str | None] = mapped_column(String(100))
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     billing: Mapped["PhysicalBilling"] = relationship(back_populates="vouching_results")
-    spj: Mapped["SPJ | None"] = relationship(back_populates="spj")
+    spj: Mapped["SPJ | None"] = relationship(back_populates="vouching_results")
