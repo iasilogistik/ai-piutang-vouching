@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.auth import CurrentUser, require_roles
 from app.database import SessionLocal
+from app.services.branch_master import register_branch_master_routes
 
 _ALLOWED_ROLES = {"ADMIN", "AUDITOR", "REVIEWER", "VIEWER"}
 _REGISTERED = False
@@ -297,4 +298,5 @@ def register_user_management_routes(app) -> None:
     if _REGISTERED:
         return
     app.include_router(router)
+    register_branch_master_routes(app)
     _REGISTERED = True
