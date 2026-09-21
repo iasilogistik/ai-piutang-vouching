@@ -166,3 +166,26 @@ class VouchingResult(Base):
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     billing: Mapped["PhysicalBilling"] = relationship(back_populates="vouching_results")
     spj: Mapped["SPJ | None"] = relationship(back_populates="vouching_results")
+
+
+class AuditException(Base):
+    __tablename__ = "audit_exceptions"
+    __table_args__ = (
+        Index("ix_audit_exceptions_branch", "branch"),
+        Index("ix_audit_exceptions_status", "status"),
+        Index("ix_audit_exceptions_type", "type"),
+        Index("ix_audit_exceptions_due_date", "due_date"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    type: Mapped[str] = mapped_column(String(50), nullable=False)
+    branch: Mapped[str] = mapped_column(String(255), nullable=False)
+    severity: Mapped[str] = mapped_column(String(20), nullable=False, server_default="MEDIUM")
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="OPEN")
+    owner: Mapped[str | None] = mapped_column(String(100))
+    due_date: Mapped[date | None] = mapped_column(Date)
+    auditor_note: Mapped[str | None] = mapped_column(Text)
+    reviewer_note: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
