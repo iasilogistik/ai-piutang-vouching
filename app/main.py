@@ -10,9 +10,10 @@ from app.audit_service import list_audit_trail, record_audit
 from app.auth import CurrentUser, require_roles
 from app.database import SessionLocal, engine
 from app.models import BillingReconciliation, Document, DocumentControlEvidence, ImportBatch, PhysicalBilling, SPJ, VouchingResult
-from app.services.reports import build_report
+from app.services.reports import build_control_evidence_report, build_report
 from app.config import settings
 from app.services.control_evidence_dashboard import build_control_evidence_dashboard
+from app.services.control_evidence_review import review_control_evidence
 from app.services.control_evidence_store import analyze_and_persist_control_evidence, evidence_payload
 from app.services.sap_import import import_sap_upload
 from app.services.storage import download_bytes
@@ -153,12 +154,24 @@ def exceptions(db: Session = Depends(get_db), user: CurrentUser = Depends(requir
     recs = db.scalars(select(BillingReconciliation).where(BillingReconciliation.status.in_(["EXCEPTION", "REVIEW"]))).all()
     vouches = db.scalars(select(VouchingResult).where(VouchingResult.status.in_(["EXCEPTION", "REVIEW"]))).all()
     control_rows = db.scalars(select(DocumentControlEvidence).where(DocumentControlEvidence.review_required == True)).all()  # noqa: E712
-    return {"total": len(recs) + len(vouches), "reconciliation": [{"id": r.id, "status": r.status, "code": r.exception_code,
+    return {"total": len(recs) + len(vouches) + len(control_rows), "reconciliation": [{"id": r.id, "status": r.status, "code": r.exception_code,
         "remarks": r.remarks, "sap_billing_id": r.sap_billing_id} for r in recs],
         "vouching": [{"id": r.id, "status": r.status, "code": r.rule_code, "remarks": r.remarks,
         "billing_id": r.billing_id, "reviewer_id": r.reviewer_id} for r in vouches],
         "control_evidence": [{"id": row.id, "document_id": row.document_id, "review_required": row.review_required,
+        "review_status": row.review_status, "reviewer_id": row.reviewer_id, "reviewer_remarks": row.reviewer_remarks,
         "review_reasons": [reason.strip() for reason in (row.review_reasons or "").split(";") if reason.strip()]} for row in control_rows]}
+
+
+@app.get("/dashboard/control-evidence/export")
+def export_control_evidence_dashboard(review_only: bool = False, limit: int = 500,
+                                      db: Session = Depends(get_db),
+                                      user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER", "VIEWER"))):
+    if limit < 1 or limit > 500:
+        raise HTTPException(status_code=400, detail="limit must be between 1 and 500")
+    path = build_control_evidence_report(db, review_only=review_only, limit=limit)
+    media = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    return FileResponse(path, filename=path.name, media_type=media)
 
 
 @app.get("/dashboard/control-evidence")
@@ -168,6 +181,29 @@ def control_evidence_dashboard(review_only: bool = False, limit: int = 200,
     if limit < 1 or limit > 500:
         raise HTTPException(status_code=400, detail="limit must be between 1 and 500")
     return build_control_evidence_dashboard(db, review_only=review_only, limit=limit)
+
+
+@app.post("/reviews/control-evidence/{evidence_id}")
+def review_control_evidence_result(evidence_id: int, status: str, remarks: str | None = None,
+                                   db: Session = Depends(get_db),
+                                   user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER"))):
+    try:
+        result = review_control_evidence(db, evidence_id, status=status, reviewer_id=user.user_id, remarks=remarks)
+        record_audit(
+            db,
+            entity_type="DOCUMENT_CONTROL_EVIDENCE",
+            entity_id=evidence_id,
+            action="REVIEW",
+            actor=user.user_id,
+            status_from=result.get("previous_review_status"),
+            status_to=result.get("review_status"),
+            remarks=remarks,
+            metadata={"document_id": result.get("document_id"), "review_required": result.get("review_required")},
+        )
+        db.commit()
+        return result
+    except ValueError as exc:
+        db.rollback(); raise handle_error(exc) from exc
 
 
 @app.post("/reviews/vouching/{result_id}")
