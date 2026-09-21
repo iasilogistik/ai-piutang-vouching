@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from fastapi import HTTPException
+from sqlalchemy import text
+from sqlalchemy.orm import Session
 
 from app.auth import CurrentUser
 
@@ -29,3 +31,13 @@ def ensure_branch_access(user: CurrentUser, resource_branch: str | None) -> None
     expected = scoped_branch(user)
     if normalize_branch(resource_branch) != expected:
         raise HTTPException(status_code=404, detail="Resource not found")
+
+
+def branch_for_actor(db: Session, user_id: str | None) -> str | None:
+    if not user_id:
+        return None
+    value = db.execute(
+        text("select branch from public.user_roles where user_id = :user_id"),
+        {"user_id": user_id},
+    ).scalar_one_or_none()
+    return normalize_branch(value)
