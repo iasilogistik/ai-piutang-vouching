@@ -64,3 +64,20 @@ def test_admin_rejects_invalid_role():
 
     assert response.status_code == 400
     assert "role must be" in response.text
+
+
+def test_non_admin_user_requires_branch_assignment():
+    _bootstrap_user_routes()
+    response = client.post(
+        "/admin/users",
+        data={
+            "user_id": "branchless-user",
+            "email": "branchless@example.com",
+            "role": "VIEWER",
+            "branch": "",
+            "is_active": "true",
+        },
+    )
+
+    assert response.status_code == 400
+    assert "branch is required" in response.text

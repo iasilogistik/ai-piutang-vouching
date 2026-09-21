@@ -11,6 +11,7 @@ from fastapi import UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.branch_access import branch_for_actor, normalize_branch
 from app.config import settings
 from app.models import BillingReconciliation, Document, ImportBatch, PhysicalBilling, SAPBilling, SPJ, VouchingResult
 from app.services.storage import materialize, upload_bytes
@@ -149,7 +150,8 @@ def save_document(db: Session, upload: UploadFile, *, document_type: str, upload
         target.write_bytes(content)
         storage_path = str(target)
     doc = Document(file_name=filename, file_type=suffix[1:].upper(), document_type=document_type,
-                   file_hash=digest, storage_path=storage_path, uploaded_by=uploaded_by)
+                   file_hash=digest, storage_path=storage_path, uploaded_by=uploaded_by,
+                   branch=branch_for_actor(db, uploaded_by))
     db.add(doc)
     db.commit()
     db.refresh(doc)
@@ -162,9 +164,9 @@ def save_document(db: Session, upload: UploadFile, *, document_type: str, upload
     return doc
 
 
-def validate_sap_batch(db: Session, batch_id: int) -> dict[str, Any]:
+def validate_sap_batch(db: Session, batch_id: int, *, branch: str | None = None) -> dict[str, Any]:
     batch = db.get(ImportBatch, batch_id)
-    if not batch:
+    if not batch or (branch is not None and normalize_branch(batch.branch) != normalize_branch(branch)):
         raise ValueError("SAP import batch not found")
     rows = db.scalars(select(SAPBilling).where(SAPBilling.import_batch_id == batch_id)).all()
     problems: list[str] = []
@@ -318,14 +320,22 @@ def ocr_document(db: Session, document_id: int) -> dict[str, Any]:
             "fields": result_fields, "confidence": str(confidence)}
 
 
-def reconcile_batch(db: Session, batch_id: int) -> list[BillingReconciliation]:
-    validation = validate_sap_batch(db, batch_id)
+def reconcile_batch(db: Session, batch_id: int, *, branch: str | None = None) -> list[BillingReconciliation]:
+    validation = validate_sap_batch(db, batch_id, branch=branch)
     if not validation["valid"]:
         raise ValueError("SAP batch validation failed: " + "; ".join(validation["problems"]))
+    batch = db.get(ImportBatch, batch_id)
+    batch_branch = normalize_branch(batch.branch if batch else None)
     sap_rows = db.scalars(select(SAPBilling).where(SAPBilling.import_batch_id == batch_id)).all()
     results: list[BillingReconciliation] = []
     for sap in sap_rows:
-        candidates = db.scalars(select(PhysicalBilling).where(PhysicalBilling.billing_document == _norm_key(sap.billing_document))).all()
+        candidate_query = select(PhysicalBilling).join(PhysicalBilling.document).where(
+            PhysicalBilling.billing_document == _norm_key(sap.billing_document)
+        )
+        candidate_query = candidate_query.where(
+            Document.branch == batch_branch if batch_branch is not None else Document.branch.is_(None)
+        )
+        candidates = db.scalars(candidate_query).all()
         existing = db.scalar(select(BillingReconciliation).where(BillingReconciliation.sap_billing_id == sap.id))
         if existing:
             db.delete(existing)
@@ -345,7 +355,11 @@ def reconcile_batch(db: Session, batch_id: int) -> list[BillingReconciliation]:
             spj_partial = Decimal("0.00")
             partial_note: str | None = None
             if physical.no_spj:
-                spj_matches = db.scalars(select(SPJ).where(SPJ.no_spj == _norm_key(physical.no_spj))).all()
+                spj_query = select(SPJ).join(SPJ.document).where(SPJ.no_spj == _norm_key(physical.no_spj))
+                spj_query = spj_query.where(
+                    Document.branch == batch_branch if batch_branch is not None else Document.branch.is_(None)
+                )
+                spj_matches = db.scalars(spj_query).all()
                 if len(spj_matches) == 1 and spj_matches[0].partial_payment is not None:
                     spj_partial = spj_matches[0].partial_payment
             billing_partial = physical.partial_payment or Decimal("0.00")
@@ -373,8 +387,11 @@ def reconcile_batch(db: Session, batch_id: int) -> list[BillingReconciliation]:
     return results
 
 
-def vouch_spj(db: Session) -> list[VouchingResult]:
-    billings = db.scalars(select(PhysicalBilling)).all()
+def vouch_spj(db: Session, *, branch: str | None = None) -> list[VouchingResult]:
+    billing_query = select(PhysicalBilling).join(PhysicalBilling.document)
+    if branch is not None:
+        billing_query = billing_query.where(Document.branch == normalize_branch(branch))
+    billings = db.scalars(billing_query).all()
     results: list[VouchingResult] = []
     for billing in billings:
         old = db.scalar(select(VouchingResult).where(VouchingResult.billing_id == billing.id))
@@ -385,7 +402,12 @@ def vouch_spj(db: Session) -> list[VouchingResult]:
             result = VouchingResult(billing_id=billing.id, spj_id=None, no_spj_billing=billing.no_spj,
                 no_spj_document=None, spj_match=False, status="EXCEPTION", rule_code="BILLING_WITHOUT_SPJ")
         else:
-            matches = db.scalars(select(SPJ).where(SPJ.no_spj == no_spj)).all()
+            billing_branch = normalize_branch(billing.document.branch)
+            match_query = select(SPJ).join(SPJ.document).where(SPJ.no_spj == no_spj)
+            match_query = match_query.where(
+                Document.branch == billing_branch if billing_branch is not None else Document.branch.is_(None)
+            )
+            matches = db.scalars(match_query).all()
             if not matches:
                 result = VouchingResult(billing_id=billing.id, spj_id=None, no_spj_billing=billing.no_spj,
                     no_spj_document=None, spj_match=False, status="EXCEPTION", rule_code="SPJ_NOT_FOUND")
@@ -401,8 +423,11 @@ def vouch_spj(db: Session) -> list[VouchingResult]:
     return results
 
 
-def overall_result(db: Session, billing_id: int) -> dict[str, Any]:
-    billing = db.get(PhysicalBilling, billing_id)
+def overall_result(db: Session, billing_id: int, *, branch: str | None = None) -> dict[str, Any]:
+    billing_query = select(PhysicalBilling).join(PhysicalBilling.document).where(PhysicalBilling.id == billing_id)
+    if branch is not None:
+        billing_query = billing_query.where(Document.branch == normalize_branch(branch))
+    billing = db.scalar(billing_query)
     if not billing:
         raise ValueError("Billing not found")
     rec = db.scalar(select(BillingReconciliation).where(BillingReconciliation.physical_billing_id == billing_id))

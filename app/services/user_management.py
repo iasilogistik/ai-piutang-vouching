@@ -234,6 +234,9 @@ def upsert_user_role(
     if not user_id:
         raise HTTPException(status_code=400, detail="user_id is required")
     role = _require_valid_role(role)
+    branch = _clean(branch)
+    if role != "ADMIN" and not branch:
+        raise HTTPException(status_code=400, detail="branch is required for non-ADMIN users")
     db.execute(
         text(
             """
@@ -253,7 +256,7 @@ def upsert_user_role(
             "email": _clean(email),
             "display_name": _clean(display_name),
             "role": role,
-            "branch": _clean(branch),
+            "branch": branch,
             "is_active": is_active,
         },
     )
