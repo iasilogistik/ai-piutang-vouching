@@ -34,26 +34,42 @@ def _norm_key(value: str | None) -> str | None:
 
 
 def _parse_amount(value: str | None) -> Decimal | None:
+    """Parse OCR amount text into Decimal.
+
+    Pasuruan scan evidence produced OCR tokens such as ``2:350 000`` and
+    ``2.637280``. Those are Indonesian thousand separators corrupted by OCR,
+    not decimal values. This parser removes whitespace, treats colon as a
+    separator, and only treats the last separator as decimal when it is clearly
+    followed by exactly two decimal digits and the whole token is not a standard
+    thousand-grouped value.
+    """
     if not value:
         return None
-    raw = re.sub(r"\\s+", "", value)
+    raw = re.sub(r"\s+", "", value)
     raw = raw.replace(":", ".")
     raw = re.sub(r"[^0-9,.-]", "", raw)
     if not raw:
         return None
-    if "," in raw and "." in raw:
-        if raw.rfind(",") > raw.rfind("."):
-            raw = raw.replace(".", "").replace(",", ".")
+
+    negative = raw.startswith("-")
+    if negative:
+        raw = raw[1:]
+    if not raw:
+        return None
+
+    if "," in raw or "." in raw:
+        separators = [idx for idx, char in enumerate(raw) if char in {",", "."}]
+        last_sep = separators[-1]
+        fraction = raw[last_sep + 1:]
+        integer_part = raw[:last_sep]
+        thousand_grouped = re.fullmatch(r"\d{1,3}(?:[,.]\d{3})+", raw) is not None
+        if len(fraction) == 2 and not thousand_grouped:
+            raw = re.sub(r"[,.]", "", integer_part) + "." + fraction
         else:
-            raw = raw.replace(",", "")
-    elif "," in raw:
-        if re.fullmatch(r"-?\d{1,3}(?:,\d{3})+", raw):
-            raw = raw.replace(",", "")
-        else:
-            raw = raw.replace(",", ".")
-    elif "." in raw:
-        if re.fullmatch(r"-?\d{1,3}(?:\.\d{3})+", raw):
-            raw = raw.replace(".", "")
+            raw = re.sub(r"[,.]", "", raw)
+
+    if negative:
+        raw = "-" + raw
     try:
         return Decimal(raw).quantize(Decimal("0.01"))
     except Exception:
@@ -91,7 +107,7 @@ def _parse_date(value: str | None) -> date | None:
 
 def _extract_partial_payments(text: str) -> tuple[Decimal | None, str | None]:
     patterns = [
-        r"(?:Pembayaran\s+(?:Partial|Parsial)|(?:Partial|Parsial)\s+Payment|Bayar\s+(?:Partial|Parsial)|Partial)\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9][0-9.,]*)",
+        r"(?:Pembayaran\s+(?:Partial|Parsial)|(?:Partial|Parsial)\s+Payment|Bayar\s+(?:Partial|Parsial)|Partial)\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9][0-9.,:\s-]*)",
     ]
     amounts: list[Decimal] = []
     raw_matches: list[str] = []
@@ -218,17 +234,12 @@ def parse_document_fields(text: str) -> dict[str, Any]:
                 return _norm(match.group(group))
         return None
 
-    # Physical billing PDFs use "Nomor Faktur", while some exports/screenshots
-    # use "Billing Document". Support both labels.
     billing = grab([
         r"Billing\s*(?:Document|No\.?)\s*[:#-]?\s*([A-Z0-9./-]+)",
         r"No\.?\s*Billing\s*[:#-]?\s*([A-Z0-9./-]+)",
         r"Nomor\s+Faktur\s*[:#-]?\s*([0-9]+)",
     ])
 
-    # Billing pages carry the SPJ number without the "SPJ/" prefix. For a
-    # scanned SPJ header, keep only the final numeric identifier so both
-    # documents normalize to the same key.
     no_spj = grab([
         r"No\.?\s*SPJ\s*[:#-]?\s*([A-Z0-9./-]+)",
         r"Nomor\s+SPJ\s*[:#-]?\s*([A-Z0-9./-]+)",
@@ -241,20 +252,16 @@ def parse_document_fields(text: str) -> dict[str, Any]:
         if spj_header:
             no_spj = spj_header.rstrip(".").split("/")[-1]
 
-    # Invoice date must take priority over the earlier delivery date when a
-    # PDF contains both SPJ and Billing pages.
     date_raw = grab([
         r"(?:Doc\.?\s*Date|Tanggal\s+Faktur)\s*[:#-]?\s*([0-9A-Za-z./-]+(?:\s+[A-Za-z]+\s+\d{4})?)",
         r"(?:Tanggal)\s*[:#-]?\s*([0-9A-Za-z./-]+(?:\s+[A-Za-z]+\s+\d{4})?)",
     ])
 
-    # Prefer Grand Total explicitly. A generic "Total" search can accidentally
-    # capture the Sub Total line before Grand Total.
     nominal_raw = grab([
-        r"Grand\s*Total\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9][0-9.,:\\s-]*)",
-        r"Total\s*Bayar\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9][0-9.,:\\s-]*)",
-        r"(?:^|\n)\s*Total\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9][0-9.,:\\s-]*)",
-        r"Nominal\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9][0-9.,:\\s-]*)",
+        r"Grand\s*Total\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9][0-9.,:\s-]*)",
+        r"Total\s*Bayar\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9][0-9.,:\s-]*)",
+        r"(?:^|\n)\s*Total\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9][0-9.,:\s-]*)",
+        r"Nominal\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9][0-9.,:\s-]*)",
     ])
     partial_payment, partial_payment_raw = _extract_partial_payments(text)
     return {
