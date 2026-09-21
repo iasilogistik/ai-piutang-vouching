@@ -4,7 +4,7 @@ from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import HTMLResponse
-from sqlalchemy import func, select
+from sqlalchemy import Integer, func, select
 from sqlalchemy.orm import Session
 
 from app.auth import CurrentUser, require_roles
@@ -50,7 +50,7 @@ def build_branch_dashboard(
     vouch_q = select(VouchingResult.status, func.count(VouchingResult.id)).join(PhysicalBilling).join(Document).group_by(VouchingResult.status)
     control_q = select(
         func.count(DocumentControlEvidence.id),
-        func.sum(func.cast(DocumentControlEvidence.review_required, int)),
+        func.sum(func.cast(DocumentControlEvidence.review_required, Integer)),
     ).join(Document)
 
     for condition in batch_filters:
