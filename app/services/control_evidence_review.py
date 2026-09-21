@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models import DocumentControlEvidence
@@ -44,7 +44,7 @@ def review_control_evidence(
     row.review_status = normalized_status
     row.reviewer_id = reviewer_id
     row.reviewer_remarks = remarks
-    row.reviewed_at = func.now()
+    row.reviewed_at = datetime.now(timezone.utc)
     row.review_required = normalized_status != "PASS"
     db.flush()
 
