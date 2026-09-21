@@ -10,6 +10,7 @@ EXPECTED_TABLES = {
     "billing_reconciliation",
     "spj",
     "vouching_result",
+    "document_control_evidence",
 }
 
 
@@ -29,6 +30,19 @@ def test_schema_relationship_columns_exist() -> None:
     assert {"billing_id", "spj_id", "no_spj_billing", "no_spj_document", "status"}.issubset(
         {column["name"] for column in inspector.get_columns("vouching_result")}
     )
+    assert {
+        "document_id",
+        "receiver_signature_status",
+        "driver_signature_status",
+        "security_signature_status",
+        "bm_signature_status",
+        "checker_signature_status",
+        "receiver_stamp_status",
+        "stamp_text_raw",
+        "stamp_customer_match_status",
+        "review_required",
+        "review_reasons",
+    }.issubset({column["name"] for column in inspector.get_columns("document_control_evidence")})
 
 
 def test_one_to_one_constraints_are_declared() -> None:
@@ -52,6 +66,12 @@ def test_one_to_one_constraints_are_declared() -> None:
         for constraint in inspector.get_unique_constraints("spj")
     }
     assert ("document_id",) in spj_unique
+
+    control_unique = {
+        tuple(constraint["column_names"])
+        for constraint in inspector.get_unique_constraints("document_control_evidence")
+    }
+    assert ("document_id",) in control_unique
 
     vouching_unique = {
         tuple(constraint["column_names"])
