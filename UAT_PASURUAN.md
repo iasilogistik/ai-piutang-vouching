@@ -12,3 +12,4 @@ Verified evidence cases:
 No explicit partial payment was identified in the available extracted evidence for either case, so the partial-payment deduction is zero.
 
 Eight additional Pasuruan rows remain pending because their source scan/extraction evidence is not available in the repository/file evidence used for this UAT. They must not be assigned a final audit result without evidence.
+\n## SPJ Evidence Structure\n\nUntuk setiap SPJ, UAT juga mencatat: tanda tangan penerima, stempel penerima, tanda tangan driver, tanda tangan satpam, dan tanda tangan BM. Status masing-masing: `PRESENT`, `NOT_DETECTED`, atau `REVIEW`. Evidence yang tidak jelas tidak ditebak dan saat ini tidak mengubah hasil deterministic vouching.\n
