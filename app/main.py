@@ -16,6 +16,7 @@ from app.services.branch_dashboard import register_branch_dashboard_routes
 from app.services.bulk_upload_ui import bulk_upload_html
 from app.services.bulk_zip import classify_entry, iter_bulk_zip_entries, make_upload
 from app.services.reports import build_control_evidence_report, build_report
+from app.services.review_workflow import register_review_workflow_routes
 from app.config import settings
 from app.services.combined_upload_ui import combined_upload_html
 from app.services.control_evidence_dashboard import build_control_evidence_dashboard
@@ -41,6 +42,7 @@ register_navigation_routes(app)
 register_branch_dashboard_routes(app)
 register_upload_center_routes(app)
 register_exception_management_routes(app)
+register_review_workflow_routes(app)
 
 
 def get_db():
