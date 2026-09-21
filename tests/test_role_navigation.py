@@ -1,0 +1,49 @@
+from fastapi.testclient import TestClient
+
+from app.auth import CurrentUser, current_user
+from app.main import app
+from app.services.navigation import menu_for_role
+
+client = TestClient(app)
+
+
+def _labels(role: str):
+    return [item["label"] for item in menu_for_role(role)]
+
+
+def test_admin_navigation_contains_administration_links():
+    labels = _labels("ADMIN")
+    assert "Users" in labels
+    assert "Branches" in labels
+    assert "Upload" in labels
+    assert "Audit Trail" in labels
+
+
+def test_non_admin_navigation_hides_administration_links():
+    for role in ("AUDITOR", "REVIEWER", "VIEWER"):
+        labels = _labels(role)
+        assert "Users" not in labels
+        assert "Branches" not in labels
+
+
+def test_viewer_navigation_is_read_focused():
+    labels = _labels("VIEWER")
+    assert labels == ["Dashboard", "Reports", "Evidence"]
+    assert "Upload" not in labels
+    assert "Vouching" not in labels
+
+
+def test_navigation_fragment_uses_authenticated_role_and_branch():
+    app.dependency_overrides[current_user] = lambda: CurrentUser(
+        user_id="reviewer-nav", role="REVIEWER", branch="PASURUAN"
+    )
+    try:
+        response = client.get("/ui/navigation")
+        assert response.status_code == 200
+        assert 'data-role="REVIEWER"' in response.text
+        assert 'data-branch="PASURUAN"' in response.text
+        assert "Review Queue" in response.text
+        assert "User Management" not in response.text
+        assert ">Users<" not in response.text
+    finally:
+        app.dependency_overrides.pop(current_user, None)
