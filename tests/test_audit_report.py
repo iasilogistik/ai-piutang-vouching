@@ -1,6 +1,8 @@
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
+from fastapi.testclient import TestClient
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
@@ -187,8 +189,11 @@ def test_list_audit_reports_filters_branch():
         assert rows[0].branch == "PASURUAN"
 
 
-def test_audit_report_ui_route_registered():
-    paths = {getattr(route, "path", None) for route in app.routes if getattr(route, "path", None)}
-    assert "/ui/audit-reports" in paths
-    assert "/audit-reports" in paths
-    assert "/audit-reports/{report_id}/approve" in paths
+def test_audit_report_routes_are_served_and_protected():
+    client = TestClient(app)
+    ui = client.get("/ui/audit-reports")
+    assert ui.status_code == 200
+    assert "Audit Reports" in ui.text
+
+    api = client.get("/audit-reports")
+    assert api.status_code == 401
