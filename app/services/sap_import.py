@@ -8,6 +8,7 @@ import pandas as pd
 from fastapi import UploadFile
 from sqlalchemy.orm import Session
 
+from app.branch_access import branch_for_actor
 from app.models import ImportBatch, SAPBilling
 
 
@@ -169,6 +170,7 @@ def import_sap_excel(
         file_name=filename,
         period=period,
         uploaded_by=uploaded_by,
+        branch=branch_for_actor(db, uploaded_by),
         total_records=len(rows),
         status="IMPORTED",
     )
