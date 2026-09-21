@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import select
@@ -43,6 +44,10 @@ def list_audit_trail(
     *,
     entity_type: str | None = None,
     entity_id: int | None = None,
+    actor: str | None = None,
+    action: str | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
     limit: int = 100,
     branch: str | None = None,
 ) -> list[AuditTrail]:
@@ -51,6 +56,16 @@ def list_audit_trail(
         query = query.where(AuditTrail.entity_type == entity_type.upper())
     if entity_id is not None:
         query = query.where(AuditTrail.entity_id == entity_id)
+    if actor:
+        query = query.where(AuditTrail.actor == actor.strip())
+    if action:
+        query = query.where(AuditTrail.action == action.strip().upper())
+    if date_from:
+        start = datetime.combine(date_from, time.min, tzinfo=timezone.utc)
+        query = query.where(AuditTrail.created_at >= start)
+    if date_to:
+        end = datetime.combine(date_to + timedelta(days=1), time.min, tzinfo=timezone.utc)
+        query = query.where(AuditTrail.created_at < end)
     if branch is not None:
         query = query.where(AuditTrail.branch == normalize_branch(branch))
     return list(db.scalars(query).all())
