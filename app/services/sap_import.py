@@ -8,7 +8,7 @@ import pandas as pd
 from fastapi import UploadFile
 from sqlalchemy.orm import Session
 
-from app.branch_access import branch_for_actor
+from app.branch_access import branch_for_actor, normalize_branch
 from app.models import ImportBatch, SAPBilling
 
 
@@ -150,6 +150,7 @@ def import_sap_excel(
     content: bytes,
     uploaded_by: str | None = None,
     period: date | None = None,
+    branch: str | None = None,
 ) -> ImportBatch:
     if not filename.lower().endswith((".xlsx", ".xls")):
         raise ValueError("SAP import file must be Excel (.xlsx or .xls)")
@@ -170,7 +171,7 @@ def import_sap_excel(
         file_name=filename,
         period=period,
         uploaded_by=uploaded_by,
-        branch=branch_for_actor(db, uploaded_by),
+        branch=normalize_branch(branch) or branch_for_actor(db, uploaded_by),
         total_records=len(rows),
         status="IMPORTED",
     )
@@ -191,6 +192,7 @@ def import_sap_upload(
     *,
     uploaded_by: str | None = None,
     period: date | None = None,
+    branch: str | None = None,
 ) -> ImportBatch:
     content = upload.file.read()
     return import_sap_excel(
@@ -199,4 +201,5 @@ def import_sap_upload(
         content=content,
         uploaded_by=uploaded_by,
         period=period,
+        branch=branch,
     )

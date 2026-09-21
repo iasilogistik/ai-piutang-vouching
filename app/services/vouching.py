@@ -131,7 +131,14 @@ def _net_document_amount(nominal: Decimal | int | float | None, billing_partial:
     return (nominal - Decimal(str(billing_partial or 0)) - Decimal(str(spj_partial or 0))).quantize(Decimal("0.01"))
 
 
-def save_document(db: Session, upload: UploadFile, *, document_type: str, uploaded_by: str | None = None) -> Document:
+def save_document(
+    db: Session,
+    upload: UploadFile,
+    *,
+    document_type: str,
+    uploaded_by: str | None = None,
+    branch: str | None = None,
+) -> Document:
     filename = Path(upload.filename or "document").name
     suffix = Path(filename).suffix.lower()
     if suffix not in ALLOWED_DOC_EXTENSIONS:
@@ -151,7 +158,7 @@ def save_document(db: Session, upload: UploadFile, *, document_type: str, upload
         storage_path = str(target)
     doc = Document(file_name=filename, file_type=suffix[1:].upper(), document_type=document_type,
                    file_hash=digest, storage_path=storage_path, uploaded_by=uploaded_by,
-                   branch=branch_for_actor(db, uploaded_by))
+                   branch=normalize_branch(branch) or branch_for_actor(db, uploaded_by))
     db.add(doc)
     db.commit()
     db.refresh(doc)
