@@ -188,7 +188,7 @@ def test_list_audit_reports_filters_branch():
 
 
 def test_audit_report_ui_route_registered():
-    paths = {route.path for route in app.routes}
+    paths = {getattr(route, "path", None) for route in app.routes if getattr(route, "path", None)}
     assert "/ui/audit-reports" in paths
     assert "/audit-reports" in paths
     assert "/audit-reports/{report_id}/approve" in paths
