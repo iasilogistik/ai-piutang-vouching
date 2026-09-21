@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -19,6 +19,7 @@ class Document(Base):
     uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     physical_billing: Mapped["PhysicalBilling | None"] = relationship(back_populates="document", uselist=False)
     spj: Mapped["SPJ | None"] = relationship(back_populates="document", uselist=False)
+    control_evidence: Mapped["DocumentControlEvidence | None"] = relationship(back_populates="document", uselist=False)
 
 
 class ImportBatch(Base):
@@ -99,6 +100,45 @@ class SPJ(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     document: Mapped["Document"] = relationship(back_populates="spj")
     vouching_results: Mapped[list["VouchingResult"]] = relationship(back_populates="spj")
+
+
+class DocumentControlEvidence(Base):
+    __tablename__ = "document_control_evidence"
+    __table_args__ = (Index("ix_document_control_evidence_review_required", "review_required"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    document_id: Mapped[int] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, unique=True)
+
+    receiver_signature_status: Mapped[str | None] = mapped_column(String(20))
+    receiver_signature_confidence: Mapped[Decimal | None] = mapped_column(Numeric(5, 4))
+    receiver_signature_remarks: Mapped[str | None] = mapped_column(Text)
+    driver_signature_status: Mapped[str | None] = mapped_column(String(20))
+    driver_signature_confidence: Mapped[Decimal | None] = mapped_column(Numeric(5, 4))
+    driver_signature_remarks: Mapped[str | None] = mapped_column(Text)
+    security_signature_status: Mapped[str | None] = mapped_column(String(20))
+    security_signature_confidence: Mapped[Decimal | None] = mapped_column(Numeric(5, 4))
+    security_signature_remarks: Mapped[str | None] = mapped_column(Text)
+    bm_signature_status: Mapped[str | None] = mapped_column(String(20))
+    bm_signature_confidence: Mapped[Decimal | None] = mapped_column(Numeric(5, 4))
+    bm_signature_remarks: Mapped[str | None] = mapped_column(Text)
+    checker_signature_status: Mapped[str | None] = mapped_column(String(20))
+    checker_signature_confidence: Mapped[Decimal | None] = mapped_column(Numeric(5, 4))
+    checker_signature_remarks: Mapped[str | None] = mapped_column(Text)
+
+    receiver_stamp_status: Mapped[str | None] = mapped_column(String(20))
+    receiver_stamp_confidence: Mapped[Decimal | None] = mapped_column(Numeric(5, 4))
+    receiver_stamp_remarks: Mapped[str | None] = mapped_column(Text)
+    stamp_text_raw: Mapped[str | None] = mapped_column(Text)
+    stamp_text_normalized: Mapped[str | None] = mapped_column(String(255))
+    stamp_customer_match_status: Mapped[str | None] = mapped_column(String(20))
+    stamp_customer_match_confidence: Mapped[Decimal | None] = mapped_column(Numeric(5, 4))
+    stamp_customer_match_remarks: Mapped[str | None] = mapped_column(Text)
+
+    review_required: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    review_reasons: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    document: Mapped["Document"] = relationship(back_populates="control_evidence")
 
 
 class VouchingResult(Base):
