@@ -47,3 +47,33 @@ def test_navigation_fragment_uses_authenticated_role_and_branch():
         assert ">Users<" not in response.text
     finally:
         app.dependency_overrides.pop(current_user, None)
+
+
+def _hrefs(role: str):
+    return {item["label"]: item["href"] for item in menu_for_role(role)}
+
+
+def test_wave2_navigation_uses_new_primary_routes():
+    admin = _hrefs("ADMIN")
+    auditor = _hrefs("AUDITOR")
+    reviewer = _hrefs("REVIEWER")
+    viewer = _hrefs("VIEWER")
+
+    assert admin["Dashboard"] == "/ui/dashboard"
+    assert admin["Upload"] == "/ui/upload"
+    assert admin["Exceptions"] == "/ui/exceptions"
+    assert admin["Review Queue"] == "/ui/review-queue"
+
+    assert auditor["Dashboard"] == "/ui/dashboard"
+    assert auditor["Upload"] == "/ui/upload"
+    assert auditor["Exceptions"] == "/ui/exceptions"
+    assert auditor["Review Queue"] == "/ui/review-queue"
+
+    assert reviewer["Dashboard"] == "/ui/dashboard"
+    assert reviewer["Review Queue"] == "/ui/review-queue"
+    assert reviewer["Exceptions"] == "/ui/exceptions"
+
+    assert viewer["Dashboard"] == "/ui/dashboard"
+    assert "Upload" not in viewer
+    assert "Exceptions" not in viewer
+    assert "Review Queue" not in viewer
