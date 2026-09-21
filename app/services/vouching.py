@@ -36,7 +36,7 @@ def _norm_key(value: str | None) -> str | None:
 def _parse_amount(value: str | None) -> Decimal | None:
     if not value:
         return None
-    raw = re.sub(r"[^0-9,.-]", "", value)
+    raw = re.sub(r"\\s+", "", value)\n    raw = raw.replace(":", ".")\n    raw = re.sub(r"[^0-9,.-]", "", raw)
     if not raw:
         return None
     if "," in raw and "." in raw:
@@ -249,10 +249,10 @@ def parse_document_fields(text: str) -> dict[str, Any]:
     # Prefer Grand Total explicitly. A generic "Total" search can accidentally
     # capture the Sub Total line before Grand Total.
     nominal_raw = grab([
-        r"Grand\s*Total\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9][0-9.,-]*)",
-        r"Total\s*Bayar\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9][0-9.,-]*)",
-        r"(?:^|\n)\s*Total\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9][0-9.,-]*)",
-        r"Nominal\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9][0-9.,-]*)",
+        r"Grand\s*Total\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9][0-9.,:\\s-]*)",
+        r"Total\s*Bayar\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9][0-9.,:\\s-]*)",
+        r"(?:^|\n)\s*Total\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9][0-9.,:\\s-]*)",
+        r"Nominal\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9][0-9.,:\\s-]*)",
     ])
     partial_payment, partial_payment_raw = _extract_partial_payments(text)
     return {
