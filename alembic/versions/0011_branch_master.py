@@ -70,14 +70,19 @@ def upgrade() -> None:
 
     op.execute("alter table public.branches enable row level security")
     if _supabase_authenticated_available():
+        op.execute("revoke all on public.branches from anon, authenticated")
+        op.execute("revoke all on sequence public.branches_id_seq from anon, authenticated")
         op.execute("grant select, insert, update on public.branches to authenticated")
         op.execute("grant usage, select on sequence public.branches_id_seq to authenticated")
         op.execute("""
             create policy "app_read_branches" on public.branches
             for select to authenticated
             using (
-                active = true
-                or (select public.current_app_role()) = 'ADMIN'::public.app_role
+                (select public.current_app_role()) = 'ADMIN'::public.app_role
+                or (
+                    active = true
+                    and branch_code = (select public.current_app_branch())
+                )
             )
         """)
         op.execute("""
