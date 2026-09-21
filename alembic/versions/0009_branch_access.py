@@ -70,6 +70,28 @@ def _drop_branch_policies() -> None:
 
 
 def _install_branch_policies() -> None:
+    # Keep database-side authorization aligned with FastAPI: inactive users
+    # must not retain access through an already-issued Supabase access token.
+    op.execute(
+        """
+        create or replace function public.current_app_role()
+        returns public.app_role
+        language sql
+        stable
+        set search_path = ''
+        as $
+          select coalesce(
+            (
+              select ur.role
+              from public.user_roles ur
+              where ur.user_id::text = (select auth.uid())::text
+                and coalesce(ur.is_active, true)
+            ),
+            'VIEWER'::public.app_role
+          )
+        $;
+        """
+    )
     op.execute(
         """
         create or replace function public.current_app_branch()
@@ -81,7 +103,8 @@ def _install_branch_policies() -> None:
           select upper(trim(ur.branch))
           from public.user_roles ur
           where ur.user_id::text = (select auth.uid())::text
-        $$;
+            and coalesce(ur.is_active, true)
+        $;
         """
     )
 
