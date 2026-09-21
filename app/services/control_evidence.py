@@ -10,6 +10,8 @@ STATUS_REVIEW = "REVIEW"
 STATUS_MATCH = "MATCH"
 STATUS_NOT_EVALUATED = "NOT_EVALUATED"
 
+_STAMP_PRESENCE_WORDS = {"ADA", "YES", "TERTERA", "LENGKAP", "V", "✓"}
+
 
 def _norm(value: str | None) -> str | None:
     if value is None:
@@ -27,6 +29,11 @@ def _norm_name(value: str | None) -> str | None:
     value = re.sub(r"[^A-Z0-9 ]", " ", value)
     value = re.sub(r"\s+", " ", value).strip()
     return value or None
+
+
+def _is_presence_word(value: str | None) -> bool:
+    value = _norm(value)
+    return bool(value and value.upper() in _STAMP_PRESENCE_WORDS)
 
 
 def _contains_any(text: str, aliases: list[str]) -> bool:
@@ -75,7 +82,7 @@ def _extract_stamp_text(text: str) -> str | None:
     for index, line in enumerate(lines):
         if re.search(r"\b(stempel|cap|stamp)\b", line, re.IGNORECASE):
             after_label = re.sub(r".*?\b(?:stempel|cap|stamp)\b\s*[:=\-]?", "", line, flags=re.IGNORECASE).strip()
-            if len(after_label) >= 3:
+            if len(after_label) >= 3 and not _is_presence_word(after_label):
                 return after_label
             for next_line in lines[index + 1 : index + 4]:
                 if re.search(r"\b(TOKO|TK|TB|CV|PT|UD)\b", next_line, re.IGNORECASE):
