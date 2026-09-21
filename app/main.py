@@ -25,6 +25,7 @@ from app.services.control_evidence_ui import control_evidence_dashboard_html
 from app.services.drive_folder import download_drive_folder_file, is_supported_drive_folder_file, list_google_drive_folder_files
 from app.services.drive_import_ui import drive_import_html
 from app.services.drive_link import download_drive_link_file
+from app.services.exception_management import register_exception_management_routes
 from app.services.login_ui import login_html
 from app.services.navigation import register_navigation_routes
 from app.services.sap_import import import_sap_upload
@@ -39,6 +40,7 @@ register_user_management_routes(app)
 register_navigation_routes(app)
 register_branch_dashboard_routes(app)
 register_upload_center_routes(app)
+register_exception_management_routes(app)
 
 
 def get_db():
