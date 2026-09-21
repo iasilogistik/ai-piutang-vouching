@@ -239,3 +239,26 @@ class AuditReport(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class AuditClosing(Base):
+    __tablename__ = "audit_closings"
+    __table_args__ = (
+        UniqueConstraint("audit_report_id", name="uq_audit_closings_report"),
+        Index("ix_audit_closings_branch", "branch"),
+        Index("ix_audit_closings_status", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    audit_report_id: Mapped[int] = mapped_column(ForeignKey("audit_reports.id", ondelete="RESTRICT"), nullable=False)
+    branch: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, server_default="OPEN")
+    closing_note: Mapped[str | None] = mapped_column(Text)
+    auditor_signoff_by: Mapped[str | None] = mapped_column(String(100))
+    auditor_signed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reviewer_signoff_by: Mapped[str | None] = mapped_column(String(100))
+    reviewer_signed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    closed_by: Mapped[str | None] = mapped_column(String(100))
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
