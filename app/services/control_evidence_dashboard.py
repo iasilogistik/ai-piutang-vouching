@@ -5,7 +5,8 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import DocumentControlEvidence, VouchingResult
+from app.branch_access import normalize_branch
+from app.models import Document, DocumentControlEvidence, VouchingResult
 from app.services.control_evidence_store import evidence_payload
 
 
@@ -55,6 +56,7 @@ def _dashboard_row(db: Session, row: DocumentControlEvidence) -> dict[str, Any]:
         "document_id": row.document_id,
         "file_name": document.file_name if document else None,
         "document_type": document.document_type if document else None,
+        "branch": document.branch if document else None,
         "uploaded_at": document.uploaded_at if document else None,
         "document_url": f"/documents/{row.document_id}/content",
         "no_spj": spj.no_spj if spj else None,
@@ -84,7 +86,9 @@ def _dashboard_row(db: Session, row: DocumentControlEvidence) -> dict[str, Any]:
     }
 
 
-def build_control_evidence_dashboard(db: Session, *, review_only: bool = False, limit: int = 200) -> dict[str, Any]:
+def build_control_evidence_dashboard(
+    db: Session, *, review_only: bool = False, limit: int = 200, branch: str | None = None
+) -> dict[str, Any]:
     """Return auditor-facing SPJ control evidence dashboard data.
 
     This dashboard is intentionally evidence/status oriented. It does not judge
@@ -93,7 +97,10 @@ def build_control_evidence_dashboard(db: Session, *, review_only: bool = False, 
     which documents need manual review.
     """
 
-    all_rows = list(db.scalars(select(DocumentControlEvidence)).all())
+    query = select(DocumentControlEvidence).join(DocumentControlEvidence.document)
+    if branch is not None:
+        query = query.where(Document.branch == normalize_branch(branch))
+    all_rows = list(db.scalars(query).all())
     sorted_rows = sorted(all_rows, key=lambda row: ((row.updated_at or row.created_at), row.id), reverse=True)
     filtered_rows = [row for row in sorted_rows if row.review_required] if review_only else sorted_rows
     selected_rows = filtered_rows[:limit]
