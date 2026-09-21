@@ -21,11 +21,21 @@ def _status_counts(rows: list[DocumentControlEvidence], field_name: str) -> dict
     return counts
 
 
+def _control_status_counts(rows: list[DocumentControlEvidence]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in rows:
+        status = _control_status(row)
+        counts[status] = counts.get(status, 0) + 1
+    return counts
+
+
 def _stamp_match_counts(rows: list[DocumentControlEvidence]) -> dict[str, int]:
     return _status_counts(rows, "stamp_customer_match_status")
 
 
 def _control_status(row: DocumentControlEvidence) -> str:
+    if row.review_status:
+        return row.review_status
     return "REVIEW" if row.review_required else "PASS"
 
 
@@ -56,6 +66,10 @@ def _dashboard_row(db: Session, row: DocumentControlEvidence) -> dict[str, Any]:
         "overall_control_status": _control_status(row),
         "review_required": row.review_required,
         "review_reasons": _split_reasons(row.review_reasons),
+        "review_status": row.review_status,
+        "reviewer_id": row.reviewer_id,
+        "reviewer_remarks": row.reviewer_remarks,
+        "reviewed_at": row.reviewed_at,
         "receiver_signature_status": row.receiver_signature_status,
         "driver_signature_status": row.driver_signature_status,
         "security_signature_status": row.security_signature_status,
@@ -89,6 +103,7 @@ def build_control_evidence_dashboard(db: Session, *, review_only: bool = False, 
         "total_documents": len(all_rows),
         "pass_documents": sum(1 for row in all_rows if not row.review_required),
         "review_required_documents": len(review_rows),
+        "overall_control_status": _control_status_counts(all_rows),
         "receiver_signature": _status_counts(all_rows, "receiver_signature_status"),
         "driver_signature": _status_counts(all_rows, "driver_signature_status"),
         "security_signature": _status_counts(all_rows, "security_signature_status"),
