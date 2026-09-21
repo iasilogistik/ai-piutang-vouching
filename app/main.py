@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.audit_service import list_audit_trail, record_audit
 from app.auth import CurrentUser, require_roles
-from app.branch_access import ensure_branch_access, scoped_branch
+from app.branch_access import ensure_branch_access, scoped_branch, write_branch
 from app.database import SessionLocal, engine
 from app.models import BillingReconciliation, Document, DocumentControlEvidence, ImportBatch, PhysicalBilling, SAPBilling, SPJ, VouchingResult
 from app.services.auth_gateway import login_with_password, refresh_access_token
@@ -62,14 +62,15 @@ def _batch_for_user(db: Session, batch_id: int, user: CurrentUser) -> ImportBatc
 
 
 def _ingest_physical_document(db: Session, upload, *, document_type: str, uploaded_by: str | None,
-                              source_mode: str, metadata_extra: dict[str, object] | None = None) -> dict[str, object]:
-    doc = save_document(db, upload, document_type=document_type, uploaded_by=uploaded_by)
+                              source_mode: str, branch: str | None = None,
+                              metadata_extra: dict[str, object] | None = None) -> dict[str, object]:
+    doc = save_document(db, upload, document_type=document_type, uploaded_by=uploaded_by, branch=branch)
     metadata = {"document_type": document_type, "file_name": doc.file_name, "file_hash": doc.file_hash,
                 "source_mode": source_mode}
     if metadata_extra:
         metadata.update(metadata_extra)
     record_audit(db, entity_type="DOCUMENT", entity_id=doc.id, action="UPLOAD", actor=uploaded_by,
-                 status_to="UPLOADED", metadata=metadata)
+                 status_to="UPLOADED", metadata=metadata, branch=doc.branch)
     analysis = ocr_document(db, doc.id)
     control_evidence = None
     if document_type == "SPJ":
@@ -79,16 +80,17 @@ def _ingest_physical_document(db: Session, upload, *, document_type: str, upload
                  metadata={"engine": analysis.get("engine"), "confidence": analysis.get("confidence"),
                            "source_mode": source_mode,
                            "control_evidence_review_required": bool(control_evidence and control_evidence.get("review_required")),
-                           **(metadata_extra or {})})
+                           **(metadata_extra or {})}, branch=doc.branch)
     return {"document_id": doc.id, "file_name": doc.file_name, "file_hash": doc.file_hash,
             "document_type": document_type, "analysis": analysis, "control_evidence": control_evidence}
 
 
 def _ingest_classified_upload(db: Session, upload, *, document_types: list[str], uploaded_by: str | None,
-                              source_mode: str, metadata_extra: dict[str, object] | None = None) -> dict[str, object]:
+                              source_mode: str, branch: str | None = None,
+                              metadata_extra: dict[str, object] | None = None) -> dict[str, object]:
     if document_types == ["BILLING", "SPJ"]:
         billing = _ingest_physical_document(db, upload, document_type="BILLING", uploaded_by=uploaded_by,
-                                            source_mode=source_mode,
+                                            source_mode=source_mode, branch=branch,
                                             metadata_extra=metadata_extra)
         upload.file.seek(0)
         spj_meta = {**(metadata_extra or {}), "billing_document_id": billing["document_id"]}
@@ -101,7 +103,7 @@ def _ingest_classified_upload(db: Session, upload, *, document_types: list[str],
 
     document_type = document_types[0]
     payload = _ingest_physical_document(db, upload, document_type=document_type, uploaded_by=uploaded_by,
-                                        source_mode=source_mode,
+                                        source_mode=source_mode, branch=branch,
                                         metadata_extra=metadata_extra)
     return {"mode": document_type, "status": "SUCCESS",
             "billing_document_id": payload["document_id"] if document_type == "BILLING" else None,
@@ -110,7 +112,8 @@ def _ingest_classified_upload(db: Session, upload, *, document_types: list[str],
 
 
 def _process_upload_or_zip(db: Session, upload, *, mode: str, uploaded_by: str | None,
-                           source_mode: str, metadata_extra: dict[str, object] | None = None) -> tuple[int, list[dict[str, object]]]:
+                           source_mode: str, branch: str | None = None,
+                           metadata_extra: dict[str, object] | None = None) -> tuple[int, list[dict[str, object]]]:
     suffix = Path(upload.filename).suffix.lower()
     if suffix == ".zip":
         entries = iter_bulk_zip_entries(upload)
@@ -123,7 +126,7 @@ def _process_upload_or_zip(db: Session, upload, *, mode: str, uploaded_by: str |
                 continue
             try:
                 payload = _ingest_classified_upload(db, make_upload(entry), document_types=document_types,
-                                                    uploaded_by=uploaded_by, source_mode=source_mode,
+                                                    uploaded_by=uploaded_by, source_mode=source_mode, branch=branch,
                                                     metadata_extra={**(metadata_extra or {}), "zip_source_path": entry.source_path})
                 db.commit()
                 results.append({"source_path": entry.source_path, "file_name": entry.filename, **payload})
@@ -137,7 +140,7 @@ def _process_upload_or_zip(db: Session, upload, *, mode: str, uploaded_by: str |
     if not document_types:
         raise ValueError("Unable to classify downloaded file as BILLING, SPJ, or COMBINED. Use mode BILLING, SPJ, or COMBINED.")
     payload = _ingest_classified_upload(db, upload, document_types=document_types, uploaded_by=uploaded_by,
-                                        source_mode=source_mode, metadata_extra=metadata_extra)
+                                        source_mode=source_mode, branch=branch, metadata_extra=metadata_extra)
     db.commit()
     return 1, [{"source_path": upload.filename, "file_name": upload.filename, **payload}]
 
@@ -208,18 +211,20 @@ def uat_pasuruan_ui():
 
 
 @app.post("/sap/import")
-def sap_import(file: UploadFile = File(...), period: date | None = None,
+def sap_import(file: UploadFile = File(...), period: date | None = None, branch: str | None = None,
                db: Session = Depends(get_db), user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR"))) -> dict[str, object]:
     try:
         uploaded_by = user.user_id
-        batch = import_sap_upload(db, file, uploaded_by=uploaded_by, period=period)
+        target_branch = write_branch(user, branch)
+        batch = import_sap_upload(db, file, uploaded_by=uploaded_by, period=period, branch=target_branch)
         record_audit(db, entity_type="IMPORT_BATCH", entity_id=batch.id, action="SAP_IMPORT",
-                     actor=uploaded_by, status_to=batch.status, metadata={"file_name": batch.file_name, "total_records": batch.total_records})
+                     actor=uploaded_by, status_to=batch.status, metadata={"file_name": batch.file_name, "total_records": batch.total_records},
+                     branch=batch.branch)
         db.commit()
     except ValueError as exc:
         db.rollback(); raise handle_error(exc) from exc
     return {"batch_id": batch.id, "file_name": batch.file_name, "period": batch.period.isoformat() if batch.period else None,
-            "total_records": batch.total_records, "status": batch.status}
+            "total_records": batch.total_records, "status": batch.status, "branch": batch.branch}
 
 
 @app.get("/sap/validate/{batch_id}")
@@ -229,10 +234,12 @@ def sap_validate(batch_id: int, db: Session = Depends(get_db), user: CurrentUser
 
 
 @app.post("/documents/drive-folder-import")
-def import_drive_folder(url: str = Form(...), mode: str = Form("AUTO"), db: Session = Depends(get_db),
+def import_drive_folder(url: str = Form(...), mode: str = Form("AUTO"), branch: str | None = Form(None),
+                        db: Session = Depends(get_db),
                         user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR"))):
     try:
         uploaded_by = user.user_id
+        target_branch = write_branch(user, branch)
         files = list_google_drive_folder_files(url)
         results: list[dict[str, object]] = []
         for item in files:
@@ -247,6 +254,7 @@ def import_drive_folder(url: str = Form(...), mode: str = Form("AUTO"), db: Sess
                     upload,
                     mode=mode,
                     uploaded_by=uploaded_by,
+                    branch=target_branch,
                     source_mode="DRIVE_FOLDER_ZIP" if Path(upload.filename).suffix.lower() == ".zip" else "DRIVE_FOLDER",
                     metadata_extra={"drive_folder_url": url, "drive_file_id": item.file_id, "drive_file_name": item.name},
                 )
@@ -265,12 +273,14 @@ def import_drive_folder(url: str = Form(...), mode: str = Form("AUTO"), db: Sess
 
 
 @app.post("/documents/drive-import")
-def import_drive_link(url: str = Form(...), mode: str = Form("AUTO"), db: Session = Depends(get_db),
+def import_drive_link(url: str = Form(...), mode: str = Form("AUTO"), branch: str | None = Form(None),
+                      db: Session = Depends(get_db),
                       user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR"))):
     try:
         uploaded_by = user.user_id
+        target_branch = write_branch(user, branch)
         upload = download_drive_link_file(url)
-        total, results = _process_upload_or_zip(db, upload, mode=mode, uploaded_by=uploaded_by,
+        total, results = _process_upload_or_zip(db, upload, mode=mode, uploaded_by=uploaded_by, branch=target_branch,
                                                 source_mode="DRIVE_ZIP" if Path(upload.filename).suffix.lower() == ".zip" else "DRIVE_LINK",
                                                 metadata_extra={"drive_source_url": url})
         return {"source": "SHARE_LINK", "file_name": upload.filename, "mode": mode.upper(),
@@ -280,10 +290,12 @@ def import_drive_link(url: str = Form(...), mode: str = Form("AUTO"), db: Sessio
 
 
 @app.post("/documents/bulk-zip")
-def upload_bulk_zip(file: UploadFile = File(...), mode: str = "AUTO", db: Session = Depends(get_db),
+def upload_bulk_zip(file: UploadFile = File(...), mode: str = "AUTO", branch: str | None = None,
+                    db: Session = Depends(get_db),
                     user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR"))):
     try:
         uploaded_by = user.user_id
+        target_branch = write_branch(user, branch)
         entries = iter_bulk_zip_entries(file)
         results = []
         for entry in entries:
@@ -294,7 +306,7 @@ def upload_bulk_zip(file: UploadFile = File(...), mode: str = "AUTO", db: Sessio
                 continue
             try:
                 payload = _ingest_classified_upload(db, make_upload(entry), document_types=document_types,
-                                                    uploaded_by=uploaded_by,
+                                                    uploaded_by=uploaded_by, branch=target_branch,
                                                     source_mode="BULK_ZIP_COMBINED" if document_types == ["BILLING", "SPJ"] else "BULK_ZIP",
                                                     metadata_extra={"zip_source_path": entry.source_path})
                 db.commit()
@@ -309,7 +321,8 @@ def upload_bulk_zip(file: UploadFile = File(...), mode: str = "AUTO", db: Sessio
 
 
 @app.post("/documents/combined")
-def upload_combined_document(file: UploadFile = File(...), db: Session = Depends(get_db),
+def upload_combined_document(file: UploadFile = File(...), branch: str | None = None,
+                             db: Session = Depends(get_db),
                              user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR"))):
     """Upload one file that contains both Billing and SPJ evidence.
 
@@ -320,7 +333,8 @@ def upload_combined_document(file: UploadFile = File(...), db: Session = Depends
     """
     try:
         uploaded_by = user.user_id
-        billing_doc = save_document(db, file, document_type="BILLING", uploaded_by=uploaded_by)
+        target_branch = write_branch(user, branch)
+        billing_doc = save_document(db, file, document_type="BILLING", uploaded_by=uploaded_by, branch=target_branch)
         record_audit(db, entity_type="DOCUMENT", entity_id=billing_doc.id, action="UPLOAD", actor=uploaded_by,
                      status_to="UPLOADED", metadata={"document_type": "BILLING", "file_name": billing_doc.file_name,
                                                      "file_hash": billing_doc.file_hash, "source_mode": "COMBINED"})
@@ -331,7 +345,7 @@ def upload_combined_document(file: UploadFile = File(...), db: Session = Depends
                                "source_mode": "COMBINED"})
 
         file.file.seek(0)
-        spj_doc = save_document(db, file, document_type="SPJ", uploaded_by=uploaded_by)
+        spj_doc = save_document(db, file, document_type="SPJ", uploaded_by=uploaded_by, branch=target_branch)
         record_audit(db, entity_type="DOCUMENT", entity_id=spj_doc.id, action="UPLOAD", actor=uploaded_by,
                      status_to="UPLOADED", metadata={"document_type": "SPJ", "file_name": spj_doc.file_name,
                                                      "file_hash": spj_doc.file_hash, "source_mode": "COMBINED",
@@ -357,7 +371,7 @@ def upload_combined_document(file: UploadFile = File(...), db: Session = Depends
 
 
 @app.post("/documents/{document_type}")
-def upload_document(document_type: str, file: UploadFile = File(...),
+def upload_document(document_type: str, file: UploadFile = File(...), branch: str | None = None,
                     db: Session = Depends(get_db),
                     user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR"))):
     document_type = document_type.upper()
@@ -365,7 +379,8 @@ def upload_document(document_type: str, file: UploadFile = File(...),
         raise HTTPException(status_code=400, detail="document_type must be BILLING or SPJ")
     try:
         uploaded_by = user.user_id
-        doc = save_document(db, file, document_type=document_type, uploaded_by=uploaded_by)
+        target_branch = write_branch(user, branch)
+        doc = save_document(db, file, document_type=document_type, uploaded_by=uploaded_by, branch=target_branch)
         record_audit(db, entity_type="DOCUMENT", entity_id=doc.id, action="UPLOAD", actor=uploaded_by,
                      status_to="UPLOADED", metadata={"document_type": document_type, "file_name": doc.file_name, "file_hash": doc.file_hash})
         analysis = ocr_document(db, doc.id)
@@ -428,9 +443,9 @@ def reconciliation_dashboard(batch_id: int, db: Session = Depends(get_db), user:
 
 
 @app.post("/spj/vouch")
-def run_spj_vouching(db: Session = Depends(get_db),
+def run_spj_vouching(branch: str | None = None, db: Session = Depends(get_db),
                      user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR"))):
-    rows = vouch_spj(db, branch=scoped_branch(user))
+    rows = vouch_spj(db, branch=scoped_branch(user, branch))
     record_audit(db, entity_type="VOUCHING", entity_id=None, action="SPJ_VOUCHING_RUN",
                  status_to="COMPLETED", metadata={"total": len(rows)})
     db.commit()
@@ -445,8 +460,8 @@ def get_overall_result(billing_id: int, db: Session = Depends(get_db), user: Cur
 
 
 @app.get("/exceptions")
-def exceptions(db: Session = Depends(get_db), user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER", "VIEWER"))):
-    branch = scoped_branch(user)
+def exceptions(branch: str | None = None, db: Session = Depends(get_db), user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER", "VIEWER"))):
+    branch = scoped_branch(user, branch)
     rec_query = (
         select(BillingReconciliation)
         .join(BillingReconciliation.sap_billing)
@@ -481,23 +496,23 @@ def exceptions(db: Session = Depends(get_db), user: CurrentUser = Depends(requir
 
 
 @app.get("/dashboard/control-evidence/export")
-def export_control_evidence_dashboard(review_only: bool = False, limit: int = 500,
+def export_control_evidence_dashboard(review_only: bool = False, limit: int = 500, branch: str | None = None,
                                       db: Session = Depends(get_db),
                                       user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER", "VIEWER"))):
     if limit < 1 or limit > 500:
         raise HTTPException(status_code=400, detail="limit must be between 1 and 500")
-    path = build_control_evidence_report(db, review_only=review_only, limit=limit, branch=scoped_branch(user))
+    path = build_control_evidence_report(db, review_only=review_only, limit=limit, branch=scoped_branch(user, branch))
     media = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     return FileResponse(path, filename=path.name, media_type=media)
 
 
 @app.get("/dashboard/control-evidence")
-def control_evidence_dashboard(review_only: bool = False, limit: int = 200,
+def control_evidence_dashboard(review_only: bool = False, limit: int = 200, branch: str | None = None,
                                db: Session = Depends(get_db),
                                user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER", "VIEWER"))):
     if limit < 1 or limit > 500:
         raise HTTPException(status_code=400, detail="limit must be between 1 and 500")
-    return build_control_evidence_dashboard(db, review_only=review_only, limit=limit, branch=scoped_branch(user))
+    return build_control_evidence_dashboard(db, review_only=review_only, limit=limit, branch=scoped_branch(user, branch))
 
 
 @app.post("/reviews/control-evidence/{evidence_id}")
@@ -588,10 +603,10 @@ def document_content(document_id: int, db: Session = Depends(get_db), user: Curr
 
 @app.get("/audit-trail")
 def audit_trail(entity_type: str | None = None, entity_id: int | None = None,
-                limit: int = 100, db: Session = Depends(get_db), user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER", "VIEWER"))):
+                limit: int = 100, branch: str | None = None, db: Session = Depends(get_db), user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER", "VIEWER"))):
     if limit < 1 or limit > 500:
         raise HTTPException(status_code=400, detail="limit must be between 1 and 500")
-    rows = list_audit_trail(db, entity_type=entity_type, entity_id=entity_id, limit=limit, branch=scoped_branch(user))
+    rows = list_audit_trail(db, entity_type=entity_type, entity_id=entity_id, limit=limit, branch=scoped_branch(user, branch))
     return {"total": len(rows), "entries": [{
         "id": row.id, "entity_type": row.entity_type, "entity_id": row.entity_id,
         "action": row.action, "status_from": row.status_from, "status_to": row.status_to,

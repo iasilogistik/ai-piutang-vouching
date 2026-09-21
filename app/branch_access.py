@@ -14,14 +14,38 @@ def normalize_branch(value: str | None) -> str | None:
     return normalized or None
 
 
-def scoped_branch(user: CurrentUser) -> str | None:
-    """Return the branch filter for reads. ADMIN has global read scope."""
+def scoped_branch(user: CurrentUser, requested_branch: str | None = None) -> str | None:
+    """Return the effective branch for reads.
+
+    ADMIN may read all branches when no filter is requested, or explicitly
+    narrow a read to one branch. Scoped roles are always pinned to their
+    assigned branch and cannot request another branch.
+    """
+    requested = normalize_branch(requested_branch)
     if user.role == "ADMIN":
-        return None
+        return requested
     branch = normalize_branch(user.branch)
     if not branch:
         raise HTTPException(status_code=403, detail="Application user has no branch assignment")
+    if requested is not None and requested != branch:
+        raise HTTPException(status_code=403, detail="Requested branch is outside application scope")
     return branch
+
+
+def write_branch(user: CurrentUser, requested_branch: str | None = None) -> str:
+    """Return the branch that must own newly-created data."""
+    requested = normalize_branch(requested_branch)
+    assigned = normalize_branch(user.branch)
+    if user.role == "ADMIN":
+        branch = requested or assigned
+        if not branch:
+            raise HTTPException(status_code=400, detail="branch is required for ADMIN write operations")
+        return branch
+    if not assigned:
+        raise HTTPException(status_code=403, detail="Application user has no branch assignment")
+    if requested is not None and requested != assigned:
+        raise HTTPException(status_code=403, detail="Requested branch is outside application scope")
+    return assigned
 
 
 def ensure_branch_access(user: CurrentUser, resource_branch: str | None) -> None:

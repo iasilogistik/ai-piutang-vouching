@@ -24,7 +24,7 @@ def control_evidence_dashboard_html() -> str:
     header p { margin: 6px 0 0; color: #cbd5e1; }
     main { padding: 20px 24px 40px; }
     .toolbar, .filterbar, .card, .table-wrap { background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 1px 3px rgba(15, 23, 42, .06); }
-    .toolbar { padding: 16px; display: grid; gap: 12px; grid-template-columns: 1.5fr .7fr .5fr auto auto; align-items: end; }
+    .toolbar { padding: 16px; display: grid; gap: 12px; grid-template-columns: 1.5fr .8fr .7fr .5fr auto auto; align-items: end; }
     .filterbar { margin-top: 12px; padding: 16px; display: grid; gap: 12px; grid-template-columns: 1.3fr .7fr .7fr .7fr auto; align-items: end; }
     label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
     input, select, textarea { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; font: inherit; background: white; }
@@ -67,6 +67,10 @@ def control_evidence_dashboard_html() -> str:
     <div>
       <label for="token">Bearer Token</label>
       <input id="token" type="password" placeholder="Paste access token Supabase/production" autocomplete="off" />
+    </div>
+    <div>
+      <label for="branchFilter">Cabang</label>
+      <input id="branchFilter" type="text" placeholder="ADMIN: kosong = semua cabang" />
     </div>
     <div>
       <label for="reviewOnly">Filter API</label>
@@ -114,10 +118,10 @@ def control_evidence_dashboard_html() -> str:
     <table>
       <thead>
         <tr>
-          <th>Document</th><th>No SPJ</th><th>Overall</th><th>Review</th><th>TTD Penerima</th><th>TTD Driver</th><th>TTD Satpam</th><th>TTD BM</th><th>TTD Checker</th><th>Stempel</th><th>Nama Stempel</th><th>Match</th><th>Alasan Review</th><th>Aksi</th>
+          <th>Cabang</th><th>Document</th><th>No SPJ</th><th>Overall</th><th>Review</th><th>TTD Penerima</th><th>TTD Driver</th><th>TTD Satpam</th><th>TTD BM</th><th>TTD Checker</th><th>Stempel</th><th>Nama Stempel</th><th>Match</th><th>Alasan Review</th><th>Aksi</th>
         </tr>
       </thead>
-      <tbody id="rows"><tr><td colspan="14">Belum ada data.</td></tr></tbody>
+      <tbody id="rows"><tr><td colspan="15">Belum ada data.</td></tr></tbody>
     </table>
   </section>
 </main>
@@ -134,6 +138,7 @@ def control_evidence_dashboard_html() -> str:
 
 <script>
 const tokenInput = document.getElementById('token');
+const branchFilter = document.getElementById('branchFilter');
 const reviewOnly = document.getElementById('reviewOnly');
 const limitInput = document.getElementById('limit');
 const searchText = document.getElementById('searchText');
@@ -146,6 +151,7 @@ const dialog = document.getElementById('reviewDialog');
 let dashboardData = null;
 
 tokenInput.value = localStorage.getItem('auditToken') || '';
+branchFilter.value = localStorage.getItem('controlEvidenceBranch') || '';
 reviewOnly.value = localStorage.getItem('reviewOnly') || 'false';
 limitInput.value = localStorage.getItem('dashboardLimit') || '200';
 searchText.value = localStorage.getItem('controlEvidenceSearch') || '';
@@ -172,7 +178,7 @@ function escapeHtml(value) {
 
 function rowSearchBlob(row) {
   return [
-    row.file_name, row.document_id, row.no_spj, row.no_spj_raw, row.billing_id,
+    row.branch, row.file_name, row.document_id, row.no_spj, row.no_spj_raw, row.billing_id,
     row.stamp_text_raw, row.stamp_text_normalized, row.stamp_customer_match_status,
     row.overall_control_status, row.review_status, row.reviewer_remarks,
     ...(row.review_reasons || [])
@@ -218,6 +224,7 @@ function renderRows() {
     const reasons = (row.review_reasons || []).map(escapeHtml).join('<br>');
     const evidenceId = Number(row.control_evidence_id || 0);
     return `<tr>
+      <td>${escapeHtml(row.branch || '-')}</td>
       <td><strong>${escapeHtml(row.file_name || row.document_id)}</strong><br><a href="${escapeHtml(row.document_url)}" target="_blank" rel="noopener">Buka dokumen</a></td>
       <td>${escapeHtml(row.no_spj || row.no_spj_raw || '-')}</td>
       <td>${badge(row.overall_control_status)}</td>
@@ -241,7 +248,10 @@ async function loadDashboard() {
     message.textContent = 'Memuat dashboard...';
     localStorage.setItem('reviewOnly', reviewOnly.value);
     localStorage.setItem('dashboardLimit', limitInput.value);
-    const url = `/dashboard/control-evidence?review_only=${reviewOnly.value}&limit=${limitInput.value || 200}`;
+    const branch = branchFilter.value.trim();
+    localStorage.setItem('controlEvidenceBranch', branch);
+    const branchParam = branch ? `&branch=${encodeURIComponent(branch)}` : '';
+    const url = `/dashboard/control-evidence?review_only=${reviewOnly.value}&limit=${limitInput.value || 200}${branchParam}`;
     const response = await fetch(url, { headers: authHeaders() });
     if (!response.ok) throw new Error(`Gagal memuat dashboard (${response.status})`);
     dashboardData = await response.json();
@@ -277,7 +287,9 @@ async function submitReview(event) {
 
 async function exportExcel() {
   try {
-    const url = `/dashboard/control-evidence/export?review_only=${reviewOnly.value}&limit=${limitInput.value || 500}`;
+    const branch = branchFilter.value.trim();
+    const branchParam = branch ? `&branch=${encodeURIComponent(branch)}` : '';
+    const url = `/dashboard/control-evidence/export?review_only=${reviewOnly.value}&limit=${limitInput.value || 500}${branchParam}`;
     const response = await fetch(url, { headers: authHeaders() });
     if (!response.ok) throw new Error(`Gagal export (${response.status})`);
     const blob = await response.blob();
