@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, time, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Form, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -11,6 +11,7 @@ from app.audit_service import record_audit
 from app.auth import CurrentUser, require_roles
 from app.branch_access import ensure_branch_access, normalize_branch, scoped_branch, write_branch
 from app.database import SessionLocal
+from app.services.audit_report_export import build_audit_report_export
 from app.models import (
     AuditException,
     AuditReport,
@@ -197,6 +198,12 @@ th,td{padding:8px;border-bottom:1px solid #e2e8f0;text-align:left;font-size:12px
 <div><button id="approve" style="margin-top:18px">Approve Report</button></div>
 </div></section>
 
+<section class="panel"><h2>Export</h2><div class="grid">
+<div><label>Report ID</label><input id="exportId" type="number" min="1"></div>
+<div><label>Format</label><select id="exportFormat"><option value="xlsx">Excel (.xlsx)</option><option value="pdf">PDF</option></select></div>
+<div><button id="export" style="margin-top:18px">Download Export</button></div>
+</div></section>
+
 <section class="panel"><table><thead><tr><th>ID</th><th>Cabang</th><th>Periode</th><th>Status</th><th>Population</th><th>Sample</th><th>Match</th><th>Exception</th><th>Unresolved</th></tr></thead>
 <tbody id="rows"><tr><td colspan="9">Belum dimuat.</td></tr></tbody></table></section>
 <section class="panel"><pre id="log">Belum ada aktivitas.</pre></section>
@@ -206,9 +213,11 @@ function headers(){const t=tokenEl.value.trim();if(!t)throw new Error('Bearer to
 async function load(){const p=new URLSearchParams();const b=document.getElementById('branch').value.trim();const s=document.getElementById('filterStatus').value;if(b)p.set('branch',b);if(s)p.set('status',s);const r=await fetch('/audit-reports?'+p.toString(),{headers:headers()});const x=await r.json();if(!r.ok)throw new Error(x.detail||JSON.stringify(x));const rows=x.reports||[];document.getElementById('rows').innerHTML=rows.length?rows.map(v=>'<tr><td>'+v.id+'</td><td>'+v.branch+'</td><td>'+v.period_start+' s/d '+v.period_end+'</td><td>'+v.status+'</td><td>'+v.population_count+'</td><td>'+v.sampled_count+'</td><td>'+v.matched_count+'</td><td>'+v.exception_count+'</td><td>'+v.unresolved_exception_count+'</td></tr>').join(''):'<tr><td colspan="9">Tidak ada report.</td></tr>';document.getElementById('log').textContent=JSON.stringify(x,null,2)}
 async function create(){const fd=new FormData();for(const [id,key] of [['createBranch','branch'],['periodStart','period_start'],['periodEnd','period_end'],['finding','finding_summary'],['conclusion','conclusion']]){const v=document.getElementById(id).value.trim();if(v)fd.append(key,v)}const r=await fetch('/audit-reports',{method:'POST',headers:headers(),body:fd});const x=await r.json();if(!r.ok)throw new Error(x.detail||JSON.stringify(x));document.getElementById('log').textContent=JSON.stringify(x,null,2);await load()}
 async function approve(){const id=document.getElementById('approveId').value;const r=await fetch('/audit-reports/'+encodeURIComponent(id)+'/approve',{method:'POST',headers:headers()});const x=await r.json();if(!r.ok)throw new Error(x.detail||JSON.stringify(x));document.getElementById('log').textContent=JSON.stringify(x,null,2);await load()}
+async function exportReport(){const id=document.getElementById('exportId').value;const fmt=document.getElementById('exportFormat').value;const r=await fetch('/audit-reports/'+encodeURIComponent(id)+'/export?format='+encodeURIComponent(fmt),{headers:headers()});if(!r.ok){const x=await r.json();throw new Error(x.detail||JSON.stringify(x))}const blob=await r.blob();const cd=r.headers.get('content-disposition')||'';const m=cd.match(/filename="?([^";]+)"?/i);const name=m?m[1]:'audit-report.'+fmt;const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(a.href)}
 document.getElementById('load').onclick=()=>load().catch(e=>document.getElementById('log').textContent='ERROR: '+e.message);
 document.getElementById('create').onclick=()=>create().catch(e=>document.getElementById('log').textContent='ERROR: '+e.message);
 document.getElementById('approve').onclick=()=>approve().catch(e=>document.getElementById('log').textContent='ERROR: '+e.message);
+document.getElementById('export').onclick=()=>exportReport().catch(e=>document.getElementById('log').textContent='ERROR: '+e.message);
 </script></body></html>"""
 
 
@@ -344,6 +353,42 @@ def approve_audit_report(
     db.commit()
     db.refresh(row)
     return report_payload(row)
+
+
+
+@router.get("/audit-reports/{report_id}/export")
+def export_audit_report(
+    report_id: int,
+    format: str = "xlsx",
+    db: Session = Depends(_db),
+    user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER", "VIEWER")),
+):
+    row = db.get(AuditReport, report_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Audit report not found")
+    ensure_branch_access(user, row.branch)
+    try:
+        path = build_audit_report_export(row, format)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    record_audit(
+        db,
+        entity_type="AUDIT_REPORT",
+        entity_id=row.id,
+        action="EXPORT",
+        actor=user.user_id,
+        status_from=row.status,
+        status_to=row.status,
+        branch=row.branch,
+        metadata={"format": format.lower()},
+    )
+    db.commit()
+    media = (
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        if path.suffix == ".xlsx"
+        else "application/pdf"
+    )
+    return FileResponse(path, filename=path.name, media_type=media)
 
 
 def register_audit_report_routes(app) -> None:

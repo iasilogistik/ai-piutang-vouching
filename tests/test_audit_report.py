@@ -19,6 +19,7 @@ from app.models import (
     SAPBilling,
 )
 from app.services.audit_report import build_audit_snapshot, default_finding_summary, list_audit_reports
+from app.services import audit_report_export
 
 
 def _engine():
@@ -199,3 +200,56 @@ def test_audit_report_routes_are_served_and_protected(monkeypatch):
     monkeypatch.setattr(settings, "auth_required", True)
     api = client.get("/audit-reports")
     assert api.status_code == 401
+
+    export = client.get("/audit-reports/1/export")
+    assert export.status_code == 401
+
+
+
+def test_audit_report_export_generates_excel_and_pdf(tmp_path, monkeypatch):
+    monkeypatch.setattr(audit_report_export, "REPORT_ROOT", tmp_path)
+    report = AuditReport(
+        id=7,
+        branch="PASURUAN",
+        period_start=date(2026, 9, 1),
+        period_end=date(2026, 9, 30),
+        status="APPROVED",
+        population_count=10,
+        sampled_count=4,
+        matched_count=3,
+        exception_count=2,
+        unresolved_exception_count=1,
+        resolved_exception_count=1,
+        finding_summary="Exception <sample> & follow-up required",
+        conclusion="Approved for closing.",
+        created_by="auditor-1",
+        approved_by="reviewer-1",
+        approved_at=datetime(2026, 9, 21, tzinfo=timezone.utc),
+    )
+
+    xlsx = audit_report_export.build_audit_report_export(report, "xlsx")
+    pdf = audit_report_export.build_audit_report_export(report, "pdf")
+
+    assert xlsx.exists()
+    assert xlsx.suffix == ".xlsx"
+    assert xlsx.read_bytes()[:2] == b"PK"
+    assert pdf.exists()
+    assert pdf.suffix == ".pdf"
+    assert pdf.read_bytes()[:4] == b"%PDF"
+
+
+def test_audit_report_export_rejects_unknown_format(tmp_path, monkeypatch):
+    monkeypatch.setattr(audit_report_export, "REPORT_ROOT", tmp_path)
+    report = AuditReport(
+        id=8,
+        branch="PASURUAN",
+        period_start=date(2026, 9, 1),
+        period_end=date(2026, 9, 30),
+        status="DRAFT",
+    )
+    try:
+        audit_report_export.build_audit_report_export(report, "csv")
+    except ValueError as exc:
+        assert "xlsx or pdf" in str(exc)
+    else:
+        raise AssertionError("unknown format must fail")
