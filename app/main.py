@@ -18,6 +18,7 @@ from app.services.control_evidence_store import analyze_and_persist_control_evid
 from app.services.control_evidence_ui import control_evidence_dashboard_html
 from app.services.sap_import import import_sap_upload
 from app.services.storage import download_bytes
+from app.services.uat_pasuruan_ui import uat_pasuruan_html
 from app.services.vouching import ocr_document, overall_result, reconcile_batch, save_document, validate_sap_batch, vouch_spj
 
 app = FastAPI(title="AI Piutang Vouching")
@@ -45,6 +46,11 @@ def health() -> dict[str, str]:
 @app.get("/ui/control-evidence", response_class=HTMLResponse)
 def control_evidence_ui():
     return HTMLResponse(control_evidence_dashboard_html())
+
+
+@app.get("/ui/uat-pasuruan", response_class=HTMLResponse)
+def uat_pasuruan_ui():
+    return HTMLResponse(uat_pasuruan_html())
 
 
 @app.post("/sap/import")
