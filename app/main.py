@@ -337,26 +337,28 @@ def upload_combined_document(file: UploadFile = File(...), branch: str | None = 
         billing_doc = save_document(db, file, document_type="BILLING", uploaded_by=uploaded_by, branch=target_branch)
         record_audit(db, entity_type="DOCUMENT", entity_id=billing_doc.id, action="UPLOAD", actor=uploaded_by,
                      status_to="UPLOADED", metadata={"document_type": "BILLING", "file_name": billing_doc.file_name,
-                                                     "file_hash": billing_doc.file_hash, "source_mode": "COMBINED"})
+                                                     "file_hash": billing_doc.file_hash, "source_mode": "COMBINED"},
+                     branch=billing_doc.branch)
         billing_analysis = ocr_document(db, billing_doc.id)
         record_audit(db, entity_type="DOCUMENT", entity_id=billing_doc.id, action="AUTO_EXTRACT",
                      actor=uploaded_by, status_to="EXTRACTED",
                      metadata={"engine": billing_analysis.get("engine"), "confidence": billing_analysis.get("confidence"),
-                               "source_mode": "COMBINED"})
+                               "source_mode": "COMBINED"}, branch=billing_doc.branch)
 
         file.file.seek(0)
         spj_doc = save_document(db, file, document_type="SPJ", uploaded_by=uploaded_by, branch=target_branch)
         record_audit(db, entity_type="DOCUMENT", entity_id=spj_doc.id, action="UPLOAD", actor=uploaded_by,
                      status_to="UPLOADED", metadata={"document_type": "SPJ", "file_name": spj_doc.file_name,
                                                      "file_hash": spj_doc.file_hash, "source_mode": "COMBINED",
-                                                     "billing_document_id": billing_doc.id})
+                                                     "billing_document_id": billing_doc.id}, branch=spj_doc.branch)
         spj_analysis = ocr_document(db, spj_doc.id)
         control_evidence = analyze_and_persist_control_evidence(db, spj_doc.id)
         record_audit(db, entity_type="DOCUMENT", entity_id=spj_doc.id, action="AUTO_EXTRACT",
                      actor=uploaded_by, status_to="EXTRACTED",
                      metadata={"engine": spj_analysis.get("engine"), "confidence": spj_analysis.get("confidence"),
                                "source_mode": "COMBINED", "billing_document_id": billing_doc.id,
-                               "control_evidence_review_required": bool(control_evidence and control_evidence.get("review_required"))})
+                               "control_evidence_review_required": bool(control_evidence and control_evidence.get("review_required"))},
+                     branch=spj_doc.branch)
         db.commit()
     except ValueError as exc:
         db.rollback(); raise handle_error(exc) from exc
@@ -382,7 +384,8 @@ def upload_document(document_type: str, file: UploadFile = File(...), branch: st
         target_branch = write_branch(user, branch)
         doc = save_document(db, file, document_type=document_type, uploaded_by=uploaded_by, branch=target_branch)
         record_audit(db, entity_type="DOCUMENT", entity_id=doc.id, action="UPLOAD", actor=uploaded_by,
-                     status_to="UPLOADED", metadata={"document_type": document_type, "file_name": doc.file_name, "file_hash": doc.file_hash})
+                     status_to="UPLOADED", metadata={"document_type": document_type, "file_name": doc.file_name, "file_hash": doc.file_hash},
+                     branch=doc.branch)
         analysis = ocr_document(db, doc.id)
         control_evidence = None
         if doc.document_type == "SPJ":
@@ -390,7 +393,8 @@ def upload_document(document_type: str, file: UploadFile = File(...), branch: st
         record_audit(db, entity_type="DOCUMENT", entity_id=doc.id, action="AUTO_EXTRACT",
                      actor=uploaded_by, status_to="EXTRACTED",
                      metadata={"engine": analysis.get("engine"), "confidence": analysis.get("confidence"),
-                               "control_evidence_review_required": bool(control_evidence and control_evidence.get("review_required"))})
+                               "control_evidence_review_required": bool(control_evidence and control_evidence.get("review_required"))},
+                     branch=doc.branch)
         db.commit()
     except ValueError as exc:
         db.rollback(); raise handle_error(exc) from exc
@@ -407,9 +411,10 @@ def run_ocr(document_id: int, db: Session = Depends(get_db),
         control_evidence = None
         if doc and doc.document_type == "SPJ":
             control_evidence = analyze_and_persist_control_evidence(db, document_id)
-        record_audit(db, entity_type="DOCUMENT", entity_id=document_id, action="OCR",
+        record_audit(db, entity_type="DOCUMENT", entity_id=document_id, action="OCR", actor=user.user_id,
                      status_to="OCR_PROCESSED", metadata={"engine": result.get("engine"), "confidence": result.get("confidence"),
-                                                           "control_evidence_review_required": bool(control_evidence and control_evidence.get("review_required"))})
+                                                           "control_evidence_review_required": bool(control_evidence and control_evidence.get("review_required"))},
+                     branch=doc.branch)
         db.commit()
         if control_evidence is not None:
             result["control_evidence"] = control_evidence
@@ -421,9 +426,11 @@ def run_ocr(document_id: int, db: Session = Depends(get_db),
 def run_reconciliation(batch_id: int, db: Session = Depends(get_db),
                        user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR"))):
     try:
+        batch = _batch_for_user(db, batch_id, user)
         rows = reconcile_batch(db, batch_id, branch=scoped_branch(user))
         record_audit(db, entity_type="IMPORT_BATCH", entity_id=batch_id, action="RECONCILIATION_RUN",
-                     status_to="COMPLETED", metadata={"total": len(rows)})
+                     actor=user.user_id, status_to="COMPLETED", metadata={"total": len(rows)},
+                     branch=batch.branch)
         db.commit()
     except ValueError as exc: raise handle_error(exc) from exc
     return {"batch_id": batch_id, "total": len(rows), "results": [{"id": r.id, "status": r.status,
@@ -445,9 +452,11 @@ def reconciliation_dashboard(batch_id: int, db: Session = Depends(get_db), user:
 @app.post("/spj/vouch")
 def run_spj_vouching(branch: str | None = None, db: Session = Depends(get_db),
                      user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR"))):
-    rows = vouch_spj(db, branch=scoped_branch(user, branch))
+    effective_branch = scoped_branch(user, branch)
+    rows = vouch_spj(db, branch=effective_branch)
     record_audit(db, entity_type="VOUCHING", entity_id=None, action="SPJ_VOUCHING_RUN",
-                 status_to="COMPLETED", metadata={"total": len(rows)})
+                 actor=user.user_id, status_to="COMPLETED", metadata={"total": len(rows)},
+                 branch=effective_branch)
     db.commit()
     return {"total": len(rows), "results": [{"id": r.id, "billing_id": r.billing_id, "spj_id": r.spj_id,
         "status": r.status, "rule_code": r.rule_code} for r in rows]}
@@ -524,6 +533,7 @@ def review_control_evidence_result(evidence_id: int, status: str, remarks: str |
             db, evidence_id, status=status, reviewer_id=user.user_id, remarks=remarks,
             branch=scoped_branch(user),
         )
+        reviewed_document = db.get(Document, result.get("document_id")) if result.get("document_id") else None
         record_audit(
             db,
             entity_type="DOCUMENT_CONTROL_EVIDENCE",
@@ -534,6 +544,7 @@ def review_control_evidence_result(evidence_id: int, status: str, remarks: str |
             status_to=result.get("review_status"),
             remarks=remarks,
             metadata={"document_id": result.get("document_id"), "review_required": result.get("review_required")},
+            branch=reviewed_document.branch if reviewed_document else scoped_branch(user),
         )
         db.commit()
         return result
@@ -554,7 +565,8 @@ def review_vouching(result_id: int, status: str, remarks: str | None = None,
     old_status = result.status
     result.status = status; result.reviewer_id = reviewer_id; result.reviewed_at = func.now(); result.remarks = remarks
     record_audit(db, entity_type="VOUCHING_RESULT", entity_id=result.id, action="REVIEW",
-                 actor=reviewer_id, status_from=old_status, status_to=status, remarks=remarks)
+                 actor=reviewer_id, status_from=old_status, status_to=status, remarks=remarks,
+                 branch=result.billing.document.branch)
     db.commit(); db.refresh(result)
     return {"id": result.id, "status": result.status, "reviewer_id": result.reviewer_id, "remarks": result.remarks}
 
