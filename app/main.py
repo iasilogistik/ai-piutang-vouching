@@ -13,6 +13,7 @@ from app.database import SessionLocal, engine
 from app.models import BillingReconciliation, Document, DocumentControlEvidence, ImportBatch, PhysicalBilling, SAPBilling, SPJ, VouchingResult
 from app.services.auth_gateway import login_with_password, refresh_access_token
 from app.services.audit_trail_ui import register_audit_trail_ui_routes
+from app.services.audit_workflow import register_audit_workflow_routes
 from app.services.audit_report import register_audit_report_routes
 from app.services.audit_closing import register_audit_closing_routes
 from app.services.branch_dashboard import register_branch_dashboard_routes
@@ -49,6 +50,7 @@ register_review_workflow_routes(app)
 register_audit_trail_ui_routes(app)
 register_audit_report_routes(app)
 register_audit_closing_routes(app)
+register_audit_workflow_routes(app)
 
 
 def get_db():
