@@ -38,6 +38,12 @@ def release_branch() -> str:
     )
 
 
+def release_environment() -> str:
+    # Vercel sets VERCEL_ENV automatically for production/preview deployments.
+    # Outside Vercel, keep the application's configured APP_ENV behavior.
+    return os.getenv("VERCEL_ENV") or settings.app_env
+
+
 def _expected_heads() -> set[str]:
     root = Path(__file__).resolve().parents[2]
     config = Config(str(root / "alembic.ini"))
@@ -125,7 +131,7 @@ def version_info():
     return {
         "commit": release_commit_sha(),
         "branch": release_branch(),
-        "environment": settings.app_env,
+        "environment": release_environment(),
     }
 
 

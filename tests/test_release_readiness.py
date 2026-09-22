@@ -41,6 +41,7 @@ class _FakeConnection:
 def test_version_exposes_release_identity_without_secrets(monkeypatch):
     monkeypatch.setattr(release_readiness, "release_commit_sha", lambda: "abc123")
     monkeypatch.setattr(release_readiness, "release_branch", lambda: "main")
+    monkeypatch.setattr(release_readiness, "release_environment", lambda: "production")
 
     response = client.get("/version")
 
@@ -48,9 +49,23 @@ def test_version_exposes_release_identity_without_secrets(monkeypatch):
     payload = response.json()
     assert payload["commit"] == "abc123"
     assert payload["branch"] == "main"
-    assert "environment" in payload
+    assert payload["environment"] == "production"
     assert "database_url" not in payload
     assert "supabase_secret_key" not in payload
+
+
+def test_release_environment_prefers_vercel_runtime_metadata(monkeypatch):
+    monkeypatch.setenv("VERCEL_ENV", "production")
+    monkeypatch.setattr(release_readiness.settings, "app_env", "development")
+
+    assert release_readiness.release_environment() == "production"
+
+
+def test_release_environment_falls_back_to_app_env(monkeypatch):
+    monkeypatch.delenv("VERCEL_ENV", raising=False)
+    monkeypatch.setattr(release_readiness.settings, "app_env", "test")
+
+    assert release_readiness.release_environment() == "test"
 
 
 def test_tracker_reads_alembic_heads_when_available(monkeypatch):
