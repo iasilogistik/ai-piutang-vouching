@@ -61,6 +61,27 @@ def _relation_exists(connection, relation: str) -> bool:
     )
 
 
+def _function_exists(connection, signature: str) -> bool:
+    return bool(
+        connection.execute(
+            text("select to_regprocedure(:signature) is not null"),
+            {"signature": signature},
+        ).scalar()
+    )
+
+
+def _protected_schema_revision(connection) -> str | None:
+    try:
+        if not _function_exists(connection, "app_private.current_app_schema_revision()"):
+            return None
+        value = connection.execute(
+            text("select app_private.current_app_schema_revision()")
+        ).scalar_one_or_none()
+        return str(value) if value else None
+    except Exception:
+        return None
+
+
 def _tracked_heads(connection) -> set[str]:
     if _relation_exists(connection, "public.alembic_version"):
         rows = connection.execute(
@@ -68,18 +89,29 @@ def _tracked_heads(connection) -> set[str]:
         ).scalars().all()
         return {str(value) for value in rows}
 
-    if _relation_exists(connection, "supabase_migrations.schema_migrations"):
-        latest_name = connection.execute(
-            text(
-                """
-                select name
-                from supabase_migrations.schema_migrations
-                order by version desc
-                limit 1
-                """
-            )
-        ).scalar_one_or_none()
-        return {str(latest_name)} if latest_name else set()
+    # Hosted Supabase keeps its own migration tracker in an internal schema.
+    # Direct access is attempted first when the database role is allowed to read it.
+    try:
+        if _relation_exists(connection, "supabase_migrations.schema_migrations"):
+            latest_name = connection.execute(
+                text(
+                    """
+                    select name
+                    from supabase_migrations.schema_migrations
+                    order by version desc
+                    limit 1
+                    """
+                )
+            ).scalar_one_or_none()
+            if latest_name:
+                return {str(latest_name)}
+    except Exception:
+        # Do not open the internal schema to application roles just for readiness.
+        pass
+
+    public_revision = _protected_schema_revision(connection)
+    if public_revision:
+        return {public_revision}
 
     raise MigrationMetadataUnavailable("migration tracker not found")
 
