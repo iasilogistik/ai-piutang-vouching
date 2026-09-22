@@ -757,11 +757,12 @@ input,select,button{{width:100%;padding:8px;border:1px solid #cbd5e1;border-radi
 <section class="panel"><div id="summary" class="muted"></div><table><thead><tr><th>Type</th><th>Reference</th><th>Title</th><th>Branch</th><th>Status</th><th>Owner</th><th>Date</th><th>Open</th></tr></thead><tbody id="rows"><tr><td colspan="8">Belum dimuat.</td></tr></tbody></table></section></main>
 <script>
 const token=document.getElementById('token');token.value=localStorage.getItem('auditToken')||'';
+const initial=new URLSearchParams(window.location.search);if(initial.get('q'))document.getElementById('q').value=initial.get('q');
 function headers(){{const v=token.value.trim();if(!v)throw new Error('Bearer token wajib diisi');localStorage.setItem('auditToken',v);return {{Authorization:'Bearer '+v}}}}
 function params(){{const p=new URLSearchParams();for(const [id,key] of [['q','q'],['branch','branch'],['engagement','engagement_id'],['type','resource_type'],['status','status'],['owner','owner'],['from','date_from'],['to','date_to']]){{const v=document.getElementById(id).value.trim();if(v)p.set(key,v)}}return p}}
 async function load(){{const r=await fetch('/search?'+params(),{{headers:headers()}});const x=await r.json();if(!r.ok)throw new Error(x.detail||JSON.stringify(x));document.getElementById('summary').textContent='Total '+x.total+(x.truncated?' (capped)':'');document.getElementById('rows').innerHTML=(x.results||[]).map(v=>'<tr><td>'+v.resource_type+(v.subtype?' / '+v.subtype:'')+'</td><td>'+v.reference+'</td><td>'+v.title+'</td><td>'+(v.branch||'-')+'</td><td>'+(v.status||'-')+'</td><td>'+(v.owner||'-')+'</td><td>'+(v.event_at||'-')+'</td><td><a href="'+v.target_url+'">Open</a></td></tr>').join('')||'<tr><td colspan="8">Tidak ada hasil.</td></tr>'}}
 async function exp(fmt){{const p=params();p.set('format',fmt);const r=await fetch('/search/export?'+p,{{headers:headers()}});if(!r.ok){{const x=await r.json();throw new Error(x.detail||JSON.stringify(x))}}const b=await r.blob();const u=URL.createObjectURL(b);const a=document.createElement('a');a.href=u;a.download='audit_search.'+fmt;a.click();URL.revokeObjectURL(u)}}
-document.getElementById('load').onclick=()=>load().catch(e=>alert(e.message));document.getElementById('csv').onclick=()=>exp('csv').catch(e=>alert(e.message));document.getElementById('xlsx').onclick=()=>exp('xlsx').catch(e=>alert(e.message));
+document.getElementById('load').onclick=()=>load().catch(e=>alert(e.message));document.getElementById('csv').onclick=()=>exp('csv').catch(e=>alert(e.message));document.getElementById('xlsx').onclick=()=>exp('xlsx').catch(e=>alert(e.message));if(initial.get('q')&&token.value)load().catch(()=>{});
 </script></body></html>"""
 
 
