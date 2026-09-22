@@ -39,6 +39,7 @@ from app.services.drive_import_ui import drive_import_html
 from app.services.drive_link import download_drive_link_file
 from app.services.exception_management import register_exception_management_routes
 from app.services.evidence_repository import register_evidence_repository_routes
+from app.services.global_search import register_global_search_routes
 from app.services.login_ui import login_html
 from app.services.navigation import register_navigation_routes
 from app.services.notifications import register_notification_routes
@@ -58,6 +59,7 @@ register_audit_management_dashboard_routes(app)
 register_upload_center_routes(app)
 register_exception_management_routes(app)
 register_evidence_repository_routes(app)
+register_global_search_routes(app)
 register_review_workflow_routes(app)
 register_audit_trail_ui_routes(app)
 register_audit_report_routes(app)
