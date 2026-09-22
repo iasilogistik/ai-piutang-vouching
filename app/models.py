@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, JSON, Numeric, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, JSON, Numeric, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -216,6 +216,110 @@ class VouchingResult(Base):
     billing: Mapped["PhysicalBilling"] = relationship(back_populates="vouching_results")
     spj: Mapped["SPJ | None"] = relationship(back_populates="vouching_results")
     control_evidence: Mapped["DocumentControlEvidence | None"] = relationship()
+
+
+class AuditWorkingPaper(Base):
+    __tablename__ = "audit_working_papers"
+    __table_args__ = (
+        UniqueConstraint("engagement_id", "reference", name="uq_audit_working_paper_reference"),
+        Index("ix_audit_working_papers_engagement", "engagement_id"),
+        Index("ix_audit_working_papers_branch", "branch"),
+        Index("ix_audit_working_papers_status", "status"),
+        Index("ix_audit_working_papers_sample", "sample_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    engagement_id: Mapped[int] = mapped_column(
+        ForeignKey("audit_engagements.id", ondelete="CASCADE"), nullable=False
+    )
+    branch: Mapped[str] = mapped_column(String(255), nullable=False)
+    reference: Mapped[str] = mapped_column(String(80), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    audit_objective: Mapped[str] = mapped_column(Text, nullable=False)
+    procedure_performed: Mapped[str] = mapped_column(Text, nullable=False)
+    result_observation: Mapped[str | None] = mapped_column(Text)
+    conclusion: Mapped[str | None] = mapped_column(Text)
+    preparer_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    prepared_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reviewer_id: Mapped[str | None] = mapped_column(String(100))
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(30), nullable=False, server_default="DRAFT")
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    sample_id: Mapped[int | None] = mapped_column(
+        ForeignKey("audit_samples.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class AuditWorkingPaperVersion(Base):
+    __tablename__ = "audit_working_paper_versions"
+    __table_args__ = (
+        UniqueConstraint("working_paper_id", "version_number", name="uq_working_paper_version"),
+        Index("ix_working_paper_versions_paper", "working_paper_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    working_paper_id: Mapped[int] = mapped_column(
+        ForeignKey("audit_working_papers.id", ondelete="CASCADE"), nullable=False
+    )
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    audit_objective: Mapped[str] = mapped_column(Text, nullable=False)
+    procedure_performed: Mapped[str] = mapped_column(Text, nullable=False)
+    result_observation: Mapped[str | None] = mapped_column(Text)
+    conclusion: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(30), nullable=False)
+    changed_by: Mapped[str | None] = mapped_column(String(100))
+    change_reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class AuditWorkingPaperEvidence(Base):
+    __tablename__ = "audit_working_paper_evidence"
+    __table_args__ = (
+        CheckConstraint(
+            "(document_id is not null and control_evidence_id is null) or "
+            "(document_id is null and control_evidence_id is not null)",
+            name="ck_working_paper_evidence_one_source",
+        ),
+        UniqueConstraint("working_paper_id", "document_id", name="uq_working_paper_document"),
+        UniqueConstraint("working_paper_id", "control_evidence_id", name="uq_working_paper_control_evidence"),
+        Index("ix_working_paper_evidence_paper", "working_paper_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    working_paper_id: Mapped[int] = mapped_column(
+        ForeignKey("audit_working_papers.id", ondelete="CASCADE"), nullable=False
+    )
+    document_id: Mapped[int | None] = mapped_column(
+        ForeignKey("documents.id", ondelete="RESTRICT")
+    )
+    control_evidence_id: Mapped[int | None] = mapped_column(
+        ForeignKey("document_control_evidence.id", ondelete="RESTRICT")
+    )
+    linked_by: Mapped[str | None] = mapped_column(String(100))
+    linked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class AuditWorkingPaperException(Base):
+    __tablename__ = "audit_working_paper_exceptions"
+    __table_args__ = (
+        UniqueConstraint("working_paper_id", "audit_exception_id", name="uq_working_paper_exception"),
+        Index("ix_working_paper_exceptions_paper", "working_paper_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    working_paper_id: Mapped[int] = mapped_column(
+        ForeignKey("audit_working_papers.id", ondelete="CASCADE"), nullable=False
+    )
+    audit_exception_id: Mapped[int] = mapped_column(
+        ForeignKey("audit_exceptions.id", ondelete="RESTRICT"), nullable=False
+    )
+    linked_by: Mapped[str | None] = mapped_column(String(100))
+    linked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
 class AuditException(Base):
