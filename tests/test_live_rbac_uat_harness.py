@@ -1,4 +1,5 @@
 import importlib.util
+import sys
 from pathlib import Path
 
 
@@ -10,6 +11,7 @@ def _module():
     spec = importlib.util.spec_from_file_location("live_rbac_uat", SCRIPT)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
