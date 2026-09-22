@@ -16,6 +16,10 @@ router = APIRouter()
 _REGISTERED = False
 
 
+class MigrationMetadataUnavailable(RuntimeError):
+    pass
+
+
 def release_commit_sha() -> str:
     return (
         os.getenv("VERCEL_GIT_COMMIT_SHA")
@@ -42,16 +46,53 @@ def _expected_heads() -> set[str]:
     return set(scripts.get_heads())
 
 
+def _relation_exists(connection, relation: str) -> bool:
+    return bool(
+        connection.execute(
+            text("select to_regclass(:relation) is not null"),
+            {"relation": relation},
+        ).scalar()
+    )
+
+
+def _tracked_heads(connection) -> set[str]:
+    if _relation_exists(connection, "public.alembic_version"):
+        rows = connection.execute(
+            text("select version_num from public.alembic_version")
+        ).scalars().all()
+        return {str(value) for value in rows}
+
+    if _relation_exists(connection, "supabase_migrations.schema_migrations"):
+        latest_name = connection.execute(
+            text(
+                """
+                select name
+                from supabase_migrations.schema_migrations
+                order by version desc
+                limit 1
+                """
+            )
+        ).scalar_one_or_none()
+        return {str(latest_name)} if latest_name else set()
+
+    raise MigrationMetadataUnavailable("migration tracker not found")
+
+
 def _database_heads() -> set[str]:
     with engine.connect() as connection:
         connection.execute(text("select 1"))
-        rows = connection.execute(text("select version_num from alembic_version")).scalars().all()
-    return {str(value) for value in rows}
+        return _tracked_heads(connection)
 
 
 def readiness_payload() -> tuple[int, dict[str, object]]:
     try:
         database_heads = _database_heads()
+    except MigrationMetadataUnavailable:
+        return 503, {
+            "status": "not_ready",
+            "database": "healthy",
+            "schema_current": False,
+        }
     except Exception:
         return 503, {
             "status": "not_ready",
