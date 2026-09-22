@@ -322,6 +322,145 @@ class AuditWorkingPaperException(Base):
     linked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
+
+class AuditFinding(Base):
+    __tablename__ = "audit_findings"
+    __table_args__ = (
+        UniqueConstraint("engagement_id", "reference", name="uq_audit_finding_reference"),
+        Index("ix_audit_findings_engagement", "engagement_id"),
+        Index("ix_audit_findings_branch", "branch"),
+        Index("ix_audit_findings_status", "status"),
+        Index("ix_audit_findings_severity", "severity"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    engagement_id: Mapped[int] = mapped_column(
+        ForeignKey("audit_engagements.id", ondelete="CASCADE"), nullable=False
+    )
+    branch: Mapped[str] = mapped_column(String(255), nullable=False)
+    reference: Mapped[str] = mapped_column(String(80), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    condition: Mapped[str | None] = mapped_column(Text)
+    criteria: Mapped[str | None] = mapped_column(Text)
+    cause: Mapped[str | None] = mapped_column(Text)
+    effect_risk: Mapped[str | None] = mapped_column(Text)
+    recommendation: Mapped[str | None] = mapped_column(Text)
+    severity: Mapped[str] = mapped_column(String(20), nullable=False, server_default="MEDIUM")
+    status: Mapped[str] = mapped_column(String(30), nullable=False, server_default="DRAFT")
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    preparer_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    reviewer_id: Mapped[str | None] = mapped_column(String(100))
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    issued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class AuditFindingVersion(Base):
+    __tablename__ = "audit_finding_versions"
+    __table_args__ = (
+        UniqueConstraint("finding_id", "version_number", name="uq_audit_finding_version"),
+        Index("ix_audit_finding_versions_finding", "finding_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    finding_id: Mapped[int] = mapped_column(
+        ForeignKey("audit_findings.id", ondelete="CASCADE"), nullable=False
+    )
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    condition: Mapped[str | None] = mapped_column(Text)
+    criteria: Mapped[str | None] = mapped_column(Text)
+    cause: Mapped[str | None] = mapped_column(Text)
+    effect_risk: Mapped[str | None] = mapped_column(Text)
+    recommendation: Mapped[str | None] = mapped_column(Text)
+    severity: Mapped[str] = mapped_column(String(20), nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False)
+    changed_by: Mapped[str | None] = mapped_column(String(100))
+    change_reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class AuditFindingWorkingPaper(Base):
+    __tablename__ = "audit_finding_working_papers"
+    __table_args__ = (
+        UniqueConstraint("finding_id", "working_paper_id", name="uq_audit_finding_working_paper"),
+        Index("ix_audit_finding_working_papers_finding", "finding_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    finding_id: Mapped[int] = mapped_column(
+        ForeignKey("audit_findings.id", ondelete="CASCADE"), nullable=False
+    )
+    working_paper_id: Mapped[int] = mapped_column(
+        ForeignKey("audit_working_papers.id", ondelete="RESTRICT"), nullable=False
+    )
+    linked_by: Mapped[str | None] = mapped_column(String(100))
+    linked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class AuditFindingEvidence(Base):
+    __tablename__ = "audit_finding_evidence"
+    __table_args__ = (
+        CheckConstraint(
+            "(document_id is not null and control_evidence_id is null) or "
+            "(document_id is null and control_evidence_id is not null)",
+            name="ck_audit_finding_evidence_one_source",
+        ),
+        UniqueConstraint("finding_id", "document_id", name="uq_audit_finding_document"),
+        UniqueConstraint("finding_id", "control_evidence_id", name="uq_audit_finding_control_evidence"),
+        Index("ix_audit_finding_evidence_finding", "finding_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    finding_id: Mapped[int] = mapped_column(
+        ForeignKey("audit_findings.id", ondelete="CASCADE"), nullable=False
+    )
+    document_id: Mapped[int | None] = mapped_column(ForeignKey("documents.id", ondelete="RESTRICT"))
+    control_evidence_id: Mapped[int | None] = mapped_column(
+        ForeignKey("document_control_evidence.id", ondelete="RESTRICT")
+    )
+    linked_by: Mapped[str | None] = mapped_column(String(100))
+    linked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class AuditFindingException(Base):
+    __tablename__ = "audit_finding_exceptions"
+    __table_args__ = (
+        UniqueConstraint("finding_id", "audit_exception_id", name="uq_audit_finding_exception"),
+        Index("ix_audit_finding_exceptions_finding", "finding_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    finding_id: Mapped[int] = mapped_column(
+        ForeignKey("audit_findings.id", ondelete="CASCADE"), nullable=False
+    )
+    audit_exception_id: Mapped[int] = mapped_column(
+        ForeignKey("audit_exceptions.id", ondelete="RESTRICT"), nullable=False
+    )
+    linked_by: Mapped[str | None] = mapped_column(String(100))
+    linked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class AuditFindingSample(Base):
+    __tablename__ = "audit_finding_samples"
+    __table_args__ = (
+        UniqueConstraint("finding_id", "sample_id", name="uq_audit_finding_sample"),
+        Index("ix_audit_finding_samples_finding", "finding_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    finding_id: Mapped[int] = mapped_column(
+        ForeignKey("audit_findings.id", ondelete="CASCADE"), nullable=False
+    )
+    sample_id: Mapped[int] = mapped_column(
+        ForeignKey("audit_samples.id", ondelete="RESTRICT"), nullable=False
+    )
+    linked_by: Mapped[str | None] = mapped_column(String(100))
+    linked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
 class AuditException(Base):
     __tablename__ = "audit_exceptions"
     __table_args__ = (
