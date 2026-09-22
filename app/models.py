@@ -403,3 +403,60 @@ class AuditEngagementAssignment(Base):
     assignment_role: Mapped[str] = mapped_column(String(20), nullable=False)
     assigned_by: Mapped[str | None] = mapped_column(String(100))
     assigned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class AuditPopulation(Base):
+    __tablename__ = "audit_populations"
+    __table_args__ = (
+        Index("ix_audit_populations_engagement", "engagement_id"),
+        Index("ix_audit_populations_branch", "branch"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    engagement_id: Mapped[int] = mapped_column(
+        ForeignKey("audit_engagements.id", ondelete="CASCADE"), nullable=False
+    )
+    branch: Mapped[str] = mapped_column(String(255), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    population_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    source_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    source_reference: Mapped[str | None] = mapped_column(String(255))
+    total_records: Mapped[int] = mapped_column(Integer, nullable=False)
+    total_value: Mapped[Decimal | None] = mapped_column(Numeric(20, 2))
+    snapshot_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    created_by: Mapped[str | None] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class AuditSample(Base):
+    __tablename__ = "audit_samples"
+    __table_args__ = (
+        UniqueConstraint("population_id", "source_record_ref", name="uq_audit_sample_population_record"),
+        Index("ix_audit_samples_engagement", "engagement_id"),
+        Index("ix_audit_samples_population", "population_id"),
+        Index("ix_audit_samples_branch", "branch"),
+        Index("ix_audit_samples_status", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    engagement_id: Mapped[int] = mapped_column(
+        ForeignKey("audit_engagements.id", ondelete="CASCADE"), nullable=False
+    )
+    population_id: Mapped[int] = mapped_column(
+        ForeignKey("audit_populations.id", ondelete="CASCADE"), nullable=False
+    )
+    branch: Mapped[str] = mapped_column(String(255), nullable=False)
+    source_record_ref: Mapped[str] = mapped_column(String(255), nullable=False)
+    selection_method: Mapped[str] = mapped_column(String(30), nullable=False)
+    selection_reason: Mapped[str | None] = mapped_column(Text)
+    method_parameters: Mapped[dict | None] = mapped_column(JSON)
+    monetary_value: Mapped[Decimal | None] = mapped_column(Numeric(20, 2))
+    status: Mapped[str] = mapped_column(String(30), nullable=False, server_default="SELECTED")
+    selected_by: Mapped[str | None] = mapped_column(String(100))
+    selected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    vouching_result_id: Mapped[int | None] = mapped_column(
+        ForeignKey("vouching_result.id", ondelete="SET NULL")
+    )
+    control_evidence_id: Mapped[int | None] = mapped_column(
+        ForeignKey("document_control_evidence.id", ondelete="SET NULL")
+    )
