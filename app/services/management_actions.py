@@ -5,7 +5,7 @@ from html import escape
 
 from fastapi import APIRouter, Depends, Form, HTTPException
 from fastapi.responses import HTMLResponse
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.audit_service import record_audit
@@ -13,7 +13,6 @@ from app.auth import CurrentUser, require_roles
 from app.branch_access import ensure_branch_access, scoped_branch
 from app.database import SessionLocal
 from app.models import (
-    ApplicationUser,
     AuditFinding,
     CorrectiveActionPlan,
     CorrectiveActionPlanHistory,
@@ -307,10 +306,13 @@ def create_action_plan(
     if (internal is None) == (external is None):
         raise HTTPException(status_code=400, detail="Provide exactly one PIC")
     if internal is not None:
-        pic = db.scalar(select(ApplicationUser).where(ApplicationUser.user_id == internal))
-        if pic is None or not pic.active:
+        pic = db.execute(
+            text("select user_id, branch, is_active from public.user_roles where user_id=:user_id"),
+            {"user_id": internal},
+        ).mappings().one_or_none()
+        if pic is None or not pic["is_active"]:
             raise HTTPException(status_code=400, detail="PIC user must be active")
-        if pic.branch and pic.branch.strip().upper() != response.branch.strip().upper() and user.role != "ADMIN":
+        if pic["branch"] and pic["branch"].strip().upper() != response.branch.strip().upper() and user.role != "ADMIN":
             raise HTTPException(status_code=404, detail="PIC user not found")
     row = CorrectiveActionPlan(
         finding_id=response.finding_id,
@@ -367,8 +369,11 @@ def update_action_plan(
         if (internal is None) == (external is None):
             raise HTTPException(status_code=400, detail="Provide exactly one PIC")
         if internal:
-            pic = db.scalar(select(ApplicationUser).where(ApplicationUser.user_id == internal))
-            if pic is None or not pic.active:
+            pic = db.execute(
+                text("select user_id, is_active from public.user_roles where user_id=:user_id"),
+                {"user_id": internal},
+            ).mappings().one_or_none()
+            if pic is None or not pic["is_active"]:
                 raise HTTPException(status_code=400, detail="PIC user must be active")
         row.pic_user_id = internal
         row.external_pic_name = external
