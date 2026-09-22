@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, JSON, Numeric, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -21,6 +21,7 @@ class Document(Base):
     physical_billing: Mapped["PhysicalBilling | None"] = relationship(back_populates="document", uselist=False)
     spj: Mapped["SPJ | None"] = relationship(back_populates="document", uselist=False)
     control_evidence: Mapped["DocumentControlEvidence | None"] = relationship(back_populates="document", uselist=False)
+    control_evidence_detections: Mapped[list["ControlEvidenceDetection"]] = relationship(back_populates="document")
 
 
 class ImportBatch(Base):
@@ -148,6 +149,44 @@ class DocumentControlEvidence(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     document: Mapped["Document"] = relationship(back_populates="control_evidence")
+
+
+class ControlEvidenceDetection(Base):
+    __tablename__ = "control_evidence_detections"
+    __table_args__ = (
+        UniqueConstraint(
+            "document_id",
+            "detection_type",
+            "source_file_hash",
+            "detector_name",
+            "detector_version",
+            name="uq_control_evidence_detection_idempotency",
+        ),
+        Index("ix_control_evidence_detections_branch", "branch"),
+        Index("ix_control_evidence_detections_type", "detection_type"),
+        Index("ix_control_evidence_detections_processed_at", "processed_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    document_id: Mapped[int] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), nullable=False)
+    branch: Mapped[str | None] = mapped_column(String(255))
+    detection_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    confidence: Mapped[Decimal | None] = mapped_column(Numeric(5, 4))
+    remarks: Mapped[str | None] = mapped_column(Text)
+    page_number: Mapped[int | None] = mapped_column(Integer)
+    reference_json: Mapped[dict | None] = mapped_column(JSON)
+    source_file_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    detector_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    detector_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    extraction_engine: Mapped[str | None] = mapped_column(String(100))
+    processing_status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="SUCCESS")
+    error_message: Mapped[str | None] = mapped_column(Text)
+    processed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    document: Mapped["Document"] = relationship(back_populates="control_evidence_detections")
 
 
 class VouchingResult(Base):

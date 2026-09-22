@@ -1,13 +1,26 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Document, DocumentControlEvidence
+from app.models import ControlEvidenceDetection, Document, DocumentControlEvidence
 from app.services.control_evidence import analyze_spj_control_evidence
+
+DETECTOR_NAME = "spj_control_evidence"
+DETECTOR_VERSION = "1.0"
+_DETECTION_TYPES = (
+    "receiver_signature",
+    "driver_signature",
+    "security_signature",
+    "bm_signature",
+    "checker_signature",
+    "receiver_stamp",
+    "stamp_customer_match",
+)
 
 
 _SIGNATURE_FIELDS = {
@@ -32,6 +45,61 @@ def _join_reasons(reasons: list[str] | None) -> str | None:
     if not reasons:
         return None
     return "; ".join(reason for reason in reasons if reason)
+
+
+def _detection_values(evidence: dict[str, Any], detection_type: str) -> dict[str, Any]:
+    if detection_type == "stamp_customer_match":
+        return dict(evidence.get("receiver_stamp", {}).get("customer_match", {}) or {})
+    return dict(evidence.get(detection_type, {}) or {})
+
+
+def persist_detection_records(
+    db: Session,
+    document: Document,
+    evidence: dict[str, Any],
+    *,
+    extraction_engine: str | None = None,
+    detector_name: str = DETECTOR_NAME,
+    detector_version: str = DETECTOR_VERSION,
+) -> list[ControlEvidenceDetection]:
+    rows: list[ControlEvidenceDetection] = []
+    now = datetime.now(timezone.utc)
+    for detection_type in _DETECTION_TYPES:
+        value = _detection_values(evidence, detection_type)
+        status = str(value.get("status") or "UNKNOWN").upper()
+        processing_status = str(value.get("processing_status") or ("FAILED" if status == "ERROR" else "SUCCESS")).upper()
+        row = db.scalar(
+            select(ControlEvidenceDetection).where(
+                ControlEvidenceDetection.document_id == document.id,
+                ControlEvidenceDetection.detection_type == detection_type,
+                ControlEvidenceDetection.source_file_hash == document.file_hash,
+                ControlEvidenceDetection.detector_name == detector_name,
+                ControlEvidenceDetection.detector_version == detector_version,
+            )
+        )
+        if row is None:
+            row = ControlEvidenceDetection(
+                document_id=document.id,
+                branch=document.branch,
+                detection_type=detection_type,
+                source_file_hash=document.file_hash,
+                detector_name=detector_name,
+                detector_version=detector_version,
+            )
+            db.add(row)
+        row.branch = document.branch
+        row.status = status
+        row.confidence = _confidence(value.get("confidence"))
+        row.remarks = value.get("remarks")
+        row.page_number = value.get("page_number")
+        row.reference_json = value.get("reference")
+        row.extraction_engine = extraction_engine
+        row.processing_status = processing_status
+        row.error_message = value.get("error_message")
+        row.processed_at = now
+        rows.append(row)
+    db.flush()
+    return rows
 
 
 def evidence_payload(row: DocumentControlEvidence | None) -> dict[str, Any] | None:
@@ -71,10 +139,34 @@ def evidence_payload(row: DocumentControlEvidence | None) -> dict[str, Any] | No
         "reviewer_id": row.reviewer_id,
         "reviewer_remarks": row.reviewer_remarks,
         "reviewed_at": row.reviewed_at,
+        "detection_records": [
+            {
+                "id": detection.id,
+                "detection_type": detection.detection_type,
+                "status": detection.status,
+                "confidence": str(detection.confidence) if detection.confidence is not None else None,
+                "page_number": detection.page_number,
+                "reference": detection.reference_json,
+                "source_file_hash": detection.source_file_hash,
+                "detector_name": detection.detector_name,
+                "detector_version": detection.detector_version,
+                "extraction_engine": detection.extraction_engine,
+                "processing_status": detection.processing_status,
+                "error_message": detection.error_message,
+                "processed_at": detection.processed_at,
+            }
+            for detection in sorted(
+                getattr(row.document, "control_evidence_detections", []),
+                key=lambda item: (item.detection_type, item.id or 0),
+            )
+        ],
     }
 
 
-def persist_control_evidence(db: Session, document_id: int, evidence: dict[str, Any]) -> DocumentControlEvidence:
+def persist_control_evidence(db: Session, document_id: int, evidence: dict[str, Any], *, extraction_engine: str | None = None) -> DocumentControlEvidence:
+    document = db.get(Document, document_id)
+    if document is None:
+        raise ValueError("Document not found")
     row = db.scalar(select(DocumentControlEvidence).where(DocumentControlEvidence.document_id == document_id))
     if row is None:
         row = DocumentControlEvidence(document_id=document_id)
@@ -98,6 +190,7 @@ def persist_control_evidence(db: Session, document_id: int, evidence: dict[str, 
     row.stamp_customer_match_remarks = match.get("remarks")
     row.review_required = bool(evidence.get("review_required"))
     row.review_reasons = _join_reasons(evidence.get("review_reasons"))
+    persist_detection_records(db, document, evidence, extraction_engine=extraction_engine)
     db.flush()
     return row
 
@@ -133,7 +226,7 @@ def analyze_and_persist_control_evidence(db: Session, document_id: int, *, expec
             Path(temporary_path).unlink(missing_ok=True)
 
     evidence = analyze_spj_control_evidence(text, expected_customer=expected_customer)
-    row = persist_control_evidence(db, document_id, evidence)
+    row = persist_control_evidence(db, document_id, evidence, extraction_engine=engine)
     payload = evidence_payload(row) or {}
     payload["engine"] = engine
     return payload
