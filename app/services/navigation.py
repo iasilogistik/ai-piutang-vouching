@@ -13,6 +13,7 @@ _REGISTERED = False
 _MENU = {
     "ADMIN": [
         ("Dashboard", "/ui/dashboard"),
+        ("Engagements", "/ui/audit-engagements"),
         ("Upload", "/ui/upload"),
         ("Vouching", "/ui/uat-pasuruan"),
         ("Workflow", "/ui/audit-workflow"),
@@ -27,6 +28,7 @@ _MENU = {
     ],
     "AUDITOR": [
         ("Dashboard", "/ui/dashboard"),
+        ("Engagements", "/ui/audit-engagements"),
         ("Upload", "/ui/upload"),
         ("Vouching", "/ui/uat-pasuruan"),
         ("Workflow", "/ui/audit-workflow"),
@@ -39,6 +41,7 @@ _MENU = {
     ],
     "REVIEWER": [
         ("Dashboard", "/ui/dashboard"),
+        ("Engagements", "/ui/audit-engagements"),
         ("Workflow", "/ui/audit-workflow"),
         ("Review Queue", "/ui/review-queue"),
         ("Evidence", "/ui/control-evidence"),
@@ -48,6 +51,7 @@ _MENU = {
     ],
     "VIEWER": [
         ("Dashboard", "/ui/dashboard"),
+        ("Engagements", "/ui/audit-engagements"),
         ("Workflow", "/ui/audit-workflow"),
         ("Reports", "/ui/audit-reports"),
         ("Evidence", "/ui/control-evidence"),
