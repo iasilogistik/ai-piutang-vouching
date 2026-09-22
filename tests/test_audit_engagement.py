@@ -118,6 +118,8 @@ def test_audit_engagement_routes_are_served_and_protected(monkeypatch):
     ui = client.get("/ui/audit-engagements")
     assert ui.status_code == 200
     assert "Audit Engagement" in ui.text
+    assert "document.getElementById('load').onclick" in ui.text
+    assert "load.onclick=()=>load()" not in ui.text
 
     monkeypatch.setattr(settings, "auth_required", True)
     assert client.get("/audit-engagements").status_code == 401
