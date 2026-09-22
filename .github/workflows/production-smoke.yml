@@ -23,4 +23,5 @@ jobs:
       - name: Run production smoke checks
         env:
           PRODUCTION_BASE_URL: ${{ inputs.base_url }}
+          EXPECTED_COMMIT_SHA: ${{ github.sha }}
         run: python scripts/production_smoke.py
