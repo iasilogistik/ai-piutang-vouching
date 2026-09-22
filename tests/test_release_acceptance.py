@@ -11,11 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _route_paths() -> set[str]:
-    return {
-        route.path
-        for route in app.routes
-        if isinstance(getattr(route, "path", None), str)
-    }
+    return set(app.openapi().get("paths", {}))
 
 
 def test_release_has_single_alembic_head():
