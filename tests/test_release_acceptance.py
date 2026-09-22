@@ -19,7 +19,7 @@ def test_release_has_single_alembic_head():
     config.set_main_option("script_location", str(ROOT / "alembic"))
     heads = ScriptDirectory.from_config(config).get_heads()
     assert len(heads) == 1
-    assert heads[0] == "0027_release_schema_revision"
+    assert heads[0] == "0028_performance_hardening"
 
 
 def test_release_identity_and_readiness_routes_registered():
