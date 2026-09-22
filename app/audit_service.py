@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 
@@ -8,6 +10,8 @@ from sqlalchemy.orm import Session
 
 from app.audit import AuditTrail
 from app.branch_access import branch_for_actor, normalize_branch
+
+logger = logging.getLogger(__name__)
 
 
 def record_audit(
@@ -36,6 +40,17 @@ def record_audit(
     )
     db.add(entry)
     db.flush()
+
+    # Notifications are supplemental. A notification failure is isolated in a
+    # savepoint and must never roll back the audit business transaction.
+    try:
+        from app.services.notifications import emit_from_audit_event
+
+        with db.begin_nested():
+            emit_from_audit_event(db, entry)
+    except Exception:
+        logger.exception("notification delivery failed for audit trail id=%s", entry.id)
+
     return entry
 
 
