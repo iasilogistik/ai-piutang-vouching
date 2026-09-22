@@ -15,6 +15,7 @@ _MENU = {
         ("Dashboard", "/ui/dashboard"),
         ("Upload", "/ui/upload"),
         ("Vouching", "/ui/uat-pasuruan"),
+        ("Workflow", "/ui/audit-workflow"),
         ("Control Evidence", "/ui/control-evidence"),
         ("Exceptions", "/ui/exceptions"),
         ("Review Queue", "/ui/review-queue"),
@@ -28,6 +29,7 @@ _MENU = {
         ("Dashboard", "/ui/dashboard"),
         ("Upload", "/ui/upload"),
         ("Vouching", "/ui/uat-pasuruan"),
+        ("Workflow", "/ui/audit-workflow"),
         ("Evidence", "/ui/control-evidence"),
         ("Exceptions", "/ui/exceptions"),
         ("Review Queue", "/ui/review-queue"),
@@ -37,6 +39,7 @@ _MENU = {
     ],
     "REVIEWER": [
         ("Dashboard", "/ui/dashboard"),
+        ("Workflow", "/ui/audit-workflow"),
         ("Review Queue", "/ui/review-queue"),
         ("Evidence", "/ui/control-evidence"),
         ("Exceptions", "/ui/exceptions"),
@@ -45,6 +48,7 @@ _MENU = {
     ],
     "VIEWER": [
         ("Dashboard", "/ui/dashboard"),
+        ("Workflow", "/ui/audit-workflow"),
         ("Reports", "/ui/audit-reports"),
         ("Evidence", "/ui/control-evidence"),
     ],
