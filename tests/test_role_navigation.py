@@ -28,7 +28,7 @@ def test_non_admin_navigation_hides_administration_links():
 
 def test_viewer_navigation_is_read_focused():
     labels = _labels("VIEWER")
-    assert labels == ["Dashboard", "Reports", "Evidence"]
+    assert labels == ["Dashboard", "Workflow", "Reports", "Evidence"]
     assert "Upload" not in labels
     assert "Vouching" not in labels
 
@@ -63,17 +63,21 @@ def test_wave2_navigation_uses_new_primary_routes():
     assert admin["Upload"] == "/ui/upload"
     assert admin["Exceptions"] == "/ui/exceptions"
     assert admin["Review Queue"] == "/ui/review-queue"
+    assert admin["Workflow"] == "/ui/audit-workflow"
 
     assert auditor["Dashboard"] == "/ui/dashboard"
     assert auditor["Upload"] == "/ui/upload"
     assert auditor["Exceptions"] == "/ui/exceptions"
     assert auditor["Review Queue"] == "/ui/review-queue"
+    assert auditor["Workflow"] == "/ui/audit-workflow"
 
     assert reviewer["Dashboard"] == "/ui/dashboard"
     assert reviewer["Review Queue"] == "/ui/review-queue"
     assert reviewer["Exceptions"] == "/ui/exceptions"
+    assert reviewer["Workflow"] == "/ui/audit-workflow"
 
     assert viewer["Dashboard"] == "/ui/dashboard"
+    assert viewer["Workflow"] == "/ui/audit-workflow"
     assert "Upload" not in viewer
     assert "Exceptions" not in viewer
     assert "Review Queue" not in viewer

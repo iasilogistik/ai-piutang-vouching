@@ -312,3 +312,40 @@ class AuditClosing(Base):
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class AuditWorkflowCase(Base):
+    __tablename__ = "audit_workflow_cases"
+    __table_args__ = (
+        UniqueConstraint("vouching_result_id", name="uq_audit_workflow_cases_vouching"),
+        Index("ix_audit_workflow_cases_branch", "branch"),
+        Index("ix_audit_workflow_cases_stage", "stage"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    branch: Mapped[str] = mapped_column(String(255), nullable=False)
+    vouching_result_id: Mapped[int] = mapped_column(
+        ForeignKey("vouching_result.id", ondelete="RESTRICT"), nullable=False
+    )
+    control_evidence_id: Mapped[int | None] = mapped_column(
+        ForeignKey("document_control_evidence.id", ondelete="RESTRICT")
+    )
+    audit_exception_id: Mapped[int | None] = mapped_column(
+        ForeignKey("audit_exceptions.id", ondelete="RESTRICT")
+    )
+    review_workflow_id: Mapped[int | None] = mapped_column(
+        ForeignKey("review_workflows.id", ondelete="RESTRICT")
+    )
+    audit_report_id: Mapped[int | None] = mapped_column(
+        ForeignKey("audit_reports.id", ondelete="RESTRICT")
+    )
+    audit_closing_id: Mapped[int | None] = mapped_column(
+        ForeignKey("audit_closings.id", ondelete="RESTRICT")
+    )
+    stage: Mapped[str] = mapped_column(String(30), nullable=False, server_default="VOUCHING")
+    created_by: Mapped[str | None] = mapped_column(String(100))
+    updated_by: Mapped[str | None] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
