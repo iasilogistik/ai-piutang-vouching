@@ -4,11 +4,23 @@ from html import escape
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import HTMLResponse
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
 
 from app.auth import CurrentUser, require_roles
+from app.database import SessionLocal
+from app.models import AuditNotification
 
 router = APIRouter()
 _REGISTERED = False
+
+
+def _db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 _MENU = {
     "ADMIN": [
@@ -88,7 +100,7 @@ def menu_for_role(role: str) -> list[dict[str, str]]:
     return [{"label": label, "href": href} for label, href in _MENU.get(normalized, [])]
 
 
-def navigation_html(user: CurrentUser) -> str:
+def navigation_html(user: CurrentUser, unread_count: int = 0) -> str:
     links = "".join(
         f'<a href="{escape(item["href"])}">{escape(item["label"])}</a>'
         for item in menu_for_role(user.role)
@@ -97,15 +109,27 @@ def navigation_html(user: CurrentUser) -> str:
     role = escape(user.role)
     return (
         f'<nav class="role-nav" data-role="{role}" data-branch="{branch}">'
-        f'<span class="role-context">{role} · {branch}</span>{links}</nav>'
+        f'<span class="role-context">{role} · {branch}</span>'
+        f'<a href="/ui/notifications" class="notification-link">Notifications ({unread_count})</a>'
+        f'{links}</nav>'
     )
 
 
 @router.get("/ui/navigation", response_class=HTMLResponse)
 def role_navigation(
+    db: Session = Depends(_db),
     user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER", "VIEWER")),
 ):
-    return HTMLResponse(navigation_html(user))
+    count = int(
+        db.scalar(
+            select(func.count(AuditNotification.id)).where(
+                AuditNotification.user_id == user.user_id,
+                AuditNotification.is_read.is_(False),
+            )
+        )
+        or 0
+    )
+    return HTMLResponse(navigation_html(user, count))
 
 
 def register_navigation_routes(app) -> None:
