@@ -104,6 +104,7 @@ def create_population(
     total_value: Decimal | None,
     user: CurrentUser,
 ) -> AuditPopulation:
+    ensure_branch_access(user, engagement.branch)
     if engagement.status == "CLOSED":
         raise HTTPException(status_code=409, detail="Closed engagement cannot receive a new population")
     if total_records < 0:
