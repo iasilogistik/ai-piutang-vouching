@@ -89,8 +89,16 @@ def _tracked_heads(connection) -> set[str]:
         ).scalars().all()
         return {str(value) for value in rows}
 
-    # Hosted Supabase keeps its own migration tracker in an internal schema.
-    # Direct access is attempted first when the database role is allowed to read it.
+    # Hosted Supabase can restrict direct reads from its internal migration schema.
+    # Prefer the narrow SECURITY DEFINER helper before trying that internal table:
+    # a permission error on the direct read aborts the PostgreSQL transaction and
+    # would otherwise make the protected fallback unusable on the same connection.
+    protected_revision = _protected_schema_revision(connection)
+    if protected_revision:
+        return {protected_revision}
+
+    # Last fallback for environments where the internal tracker is readable but
+    # the protected helper has not been installed.
     try:
         if _relation_exists(connection, "supabase_migrations.schema_migrations"):
             latest_name = connection.execute(
@@ -106,12 +114,7 @@ def _tracked_heads(connection) -> set[str]:
             if latest_name:
                 return {str(latest_name)}
     except Exception:
-        # Do not open the internal schema to application roles just for readiness.
         pass
-
-    public_revision = _protected_schema_revision(connection)
-    if public_revision:
-        return {public_revision}
 
     raise MigrationMetadataUnavailable("migration tracker not found")
 

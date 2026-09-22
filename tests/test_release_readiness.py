@@ -81,30 +81,31 @@ def test_release_environment_falls_back_to_app_env(monkeypatch):
 
 
 def test_tracker_reads_alembic_heads_when_available(monkeypatch):
-    connection = _FakeConnection(alembic_rows=["0027_release_schema_revision"])
+    connection = _FakeConnection(alembic_rows=["0028_performance_hardening"])
     monkeypatch.setattr(
         release_readiness,
         "_relation_exists",
         lambda _connection, relation: relation == "public.alembic_version",
     )
 
-    assert release_readiness._tracked_heads(connection) == {"0027_release_schema_revision"}
+    assert release_readiness._tracked_heads(connection) == {"0028_performance_hardening"}
 
 
 def test_tracker_reads_supabase_latest_migration_when_allowed(monkeypatch):
-    connection = _FakeConnection(supabase_latest="0027_release_schema_revision")
+    connection = _FakeConnection(supabase_latest="0028_performance_hardening")
     monkeypatch.setattr(
         release_readiness,
         "_relation_exists",
         lambda _connection, relation: relation == "supabase_migrations.schema_migrations",
     )
+    monkeypatch.setattr(release_readiness, "_function_exists", lambda *_: False)
 
-    assert release_readiness._tracked_heads(connection) == {"0027_release_schema_revision"}
+    assert release_readiness._tracked_heads(connection) == {"0028_performance_hardening"}
 
 
-def test_tracker_uses_public_revision_function_when_internal_tracker_is_hidden(monkeypatch):
+def test_tracker_prefers_protected_revision_before_restricted_internal_tracker(monkeypatch):
     connection = _FakeConnection(
-        app_revision="0027_release_schema_revision",
+        app_revision="0028_performance_hardening",
         supabase_error=True,
     )
     monkeypatch.setattr(
@@ -114,7 +115,9 @@ def test_tracker_uses_public_revision_function_when_internal_tracker_is_hidden(m
     )
     monkeypatch.setattr(release_readiness, "_function_exists", lambda *_: True)
 
-    assert release_readiness._tracked_heads(connection) == {"0027_release_schema_revision"}
+    # This succeeds only if the helper is used before the direct internal read:
+    # the fake internal tracker raises exactly like a restricted hosted role.
+    assert release_readiness._tracked_heads(connection) == {"0028_performance_hardening"}
 
 
 def test_tracker_fails_closed_when_no_metadata_source_exists(monkeypatch):
@@ -131,8 +134,8 @@ def test_tracker_fails_closed_when_no_metadata_source_exists(monkeypatch):
 
 
 def test_readiness_ready_when_database_revision_matches_code(monkeypatch):
-    monkeypatch.setattr(release_readiness, "_database_heads", lambda: {"0027_release_schema_revision"})
-    monkeypatch.setattr(release_readiness, "_expected_heads", lambda: {"0027_release_schema_revision"})
+    monkeypatch.setattr(release_readiness, "_database_heads", lambda: {"0028_performance_hardening"})
+    monkeypatch.setattr(release_readiness, "_expected_heads", lambda: {"0028_performance_hardening"})
 
     response = client.get("/readiness")
 
@@ -145,8 +148,8 @@ def test_readiness_ready_when_database_revision_matches_code(monkeypatch):
 
 
 def test_readiness_fails_when_schema_is_not_current(monkeypatch):
-    monkeypatch.setattr(release_readiness, "_database_heads", lambda: {"0026_evidence_repository"})
-    monkeypatch.setattr(release_readiness, "_expected_heads", lambda: {"0027_release_schema_revision"})
+    monkeypatch.setattr(release_readiness, "_database_heads", lambda: {"0027_release_schema_revision"})
+    monkeypatch.setattr(release_readiness, "_expected_heads", lambda: {"0028_performance_hardening"})
 
     response = client.get("/readiness")
 
