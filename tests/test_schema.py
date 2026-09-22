@@ -28,9 +28,21 @@ def test_schema_relationship_columns_exist() -> None:
     assert {"document_id", "billing_document", "no_spj", "doc_date", "nominal"}.issubset(
         {column["name"] for column in inspector.get_columns("physical_billing")}
     )
-    assert {"billing_id", "spj_id", "no_spj_billing", "no_spj_document", "status"}.issubset(
-        {column["name"] for column in inspector.get_columns("vouching_result")}
-    )
+    assert {
+        "billing_id",
+        "spj_id",
+        "no_spj_billing",
+        "no_spj_document",
+        "status",
+        "automated_status",
+        "automated_rule_code",
+        "automated_remarks",
+        "manual_review_status",
+        "review_reason_code",
+        "reviewer_remarks",
+        "expected_customer_name",
+        "control_evidence_id",
+    }.issubset({column["name"] for column in inspector.get_columns("vouching_result")})
     assert {
         "document_id",
         "receiver_signature_status",
