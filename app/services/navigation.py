@@ -13,6 +13,7 @@ _REGISTERED = False
 _MENU = {
     "ADMIN": [
         ("Dashboard", "/ui/dashboard"),
+        ("Audit Management", "/ui/audit-management"),
         ("Engagements", "/ui/audit-engagements"),
         ("Sampling", "/ui/audit-sampling"),
         ("Working Papers", "/ui/audit-working-papers"),
@@ -33,6 +34,7 @@ _MENU = {
     ],
     "AUDITOR": [
         ("Dashboard", "/ui/dashboard"),
+        ("Audit Management", "/ui/audit-management"),
         ("Engagements", "/ui/audit-engagements"),
         ("Sampling", "/ui/audit-sampling"),
         ("Working Papers", "/ui/audit-working-papers"),
@@ -51,6 +53,7 @@ _MENU = {
     ],
     "REVIEWER": [
         ("Dashboard", "/ui/dashboard"),
+        ("Audit Management", "/ui/audit-management"),
         ("Engagements", "/ui/audit-engagements"),
         ("Sampling", "/ui/audit-sampling"),
         ("Working Papers", "/ui/audit-working-papers"),
@@ -66,6 +69,7 @@ _MENU = {
     ],
     "VIEWER": [
         ("Dashboard", "/ui/dashboard"),
+        ("Audit Management", "/ui/audit-management"),
         ("Engagements", "/ui/audit-engagements"),
         ("Sampling", "/ui/audit-sampling"),
         ("Working Papers", "/ui/audit-working-papers"),
