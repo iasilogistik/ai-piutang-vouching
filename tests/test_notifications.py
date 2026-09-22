@@ -3,13 +3,17 @@ from datetime import date, timedelta
 import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
+from fastapi.testclient import TestClient
 
 from app.audit import AuditTrail
 from app.audit_service import record_audit
 from app.auth import CurrentUser
+from app.config import settings
+from app.main import app
 from app.database import Base
 from app.models import (
     AuditEngagement,
+    AuditEngagementAssignment,
     AuditFinding,
     AuditNotification,
     CorrectiveActionPlan,
@@ -174,3 +178,74 @@ def test_notification_failure_does_not_rollback_audit_event(monkeypatch):
         stored = db.get(AuditTrail, row.id)
         assert stored is not None
         assert stored.action == "ASSIGN"
+
+
+def test_finding_issued_notifies_other_engagement_assignees():
+    with Session(_engine()) as db:
+        engagement = AuditEngagement(
+            code="AUD-NOTIF-2",
+            title="Audit",
+            branch="PASURUAN",
+            period_start=date(2026, 9, 1),
+            period_end=date(2026, 9, 30),
+            status="IN_PROGRESS",
+        )
+        db.add(engagement)
+        db.flush()
+        db.add_all([
+            AuditEngagementAssignment(
+                engagement_id=engagement.id,
+                user_id="auditor-1",
+                assignment_role="AUDITOR",
+                assigned_by="admin",
+            ),
+            AuditEngagementAssignment(
+                engagement_id=engagement.id,
+                user_id="reviewer-1",
+                assignment_role="REVIEWER",
+                assigned_by="admin",
+            ),
+        ])
+        finding = AuditFinding(
+            engagement_id=engagement.id,
+            branch="PASURUAN",
+            reference="F-02",
+            title="Finding",
+            condition="C",
+            criteria="C",
+            cause="C",
+            effect_risk="R",
+            recommendation="R",
+            severity="HIGH",
+            status="ISSUED",
+            preparer_id="auditor-1",
+            reviewer_id="reviewer-1",
+        )
+        db.add(finding)
+        db.flush()
+        entry = AuditTrail(
+            entity_type="AUDIT_FINDING",
+            entity_id=finding.id,
+            action="TRANSITION",
+            actor="reviewer-1",
+            status_from="APPROVED",
+            status_to="ISSUED",
+            branch="PASURUAN",
+        )
+        db.add(entry)
+        db.flush()
+
+        notification_service.emit_from_audit_event(db, entry)
+        rows = list(db.scalars(select(AuditNotification)).all())
+        assert [(x.user_id, x.event_type) for x in rows] == [("auditor-1", "FINDING_ISSUED")]
+
+
+def test_notification_routes_are_served_and_protected(monkeypatch):
+    client = TestClient(app)
+    ui = client.get("/ui/notifications")
+    assert ui.status_code == 200
+    assert "Notification Inbox" in ui.text
+
+    monkeypatch.setattr(settings, "auth_required", True)
+    assert client.get("/notifications").status_code == 401
+    assert client.get("/notifications/unread-count").status_code == 401
