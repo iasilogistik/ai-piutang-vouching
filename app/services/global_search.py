@@ -48,6 +48,7 @@ RESOURCE_TYPES = (
 MAX_PAGE_SIZE = 100
 MAX_CANDIDATES = 5000
 MAX_EXPORT_ROWS = 5000
+MAX_QUERY_ROWS = MAX_EXPORT_ROWS + 2
 
 
 def _db():
@@ -76,7 +77,9 @@ def _contains(columns, term: str | None):
 
 
 def _limit(query, limit: int):
-    return query.limit(min(max(limit, 1), MAX_CANDIDATES))
+    # Fetch one sentinel row beyond the requested candidate boundary so
+    # oversized single-resource result sets are detectable, not silently cut.
+    return query.limit(min(max(limit + 1, 2), MAX_QUERY_ROWS))
 
 
 def _result(
