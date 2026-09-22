@@ -211,6 +211,11 @@ class VouchingResult(Base):
     control_evidence_id: Mapped[int | None] = mapped_column(
         ForeignKey("document_control_evidence.id", ondelete="SET NULL")
     )
+    reviewer_id: Mapped[str | None] = mapped_column(String(100))
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    billing: Mapped["PhysicalBilling"] = relationship(back_populates="vouching_results")
+    spj: Mapped["SPJ | None"] = relationship(back_populates="vouching_results")
+    control_evidence: Mapped["DocumentControlEvidence | None"] = relationship()
 
 
 class AuditWorkingPaper(Base):
@@ -315,11 +320,6 @@ class AuditWorkingPaperException(Base):
     )
     linked_by: Mapped[str | None] = mapped_column(String(100))
     linked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    reviewer_id: Mapped[str | None] = mapped_column(String(100))
-    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    billing: Mapped["PhysicalBilling"] = relationship(back_populates="vouching_results")
-    spj: Mapped["SPJ | None"] = relationship(back_populates="vouching_results")
-    control_evidence: Mapped["DocumentControlEvidence | None"] = relationship()
 
 
 class AuditException(Base):
