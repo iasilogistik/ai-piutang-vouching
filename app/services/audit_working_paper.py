@@ -324,6 +324,7 @@ def reopen_working_paper(
 
     previous = row.status
     row.status = "DRAFT"
+    row.reviewer_id = None
     row.reviewed_at = None
     _snapshot(db, row, user=user, status="DRAFT", reason=clean_reason)
     record_audit(
