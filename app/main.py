@@ -37,7 +37,7 @@ from app.services.storage import download_bytes
 from app.services.uat_pasuruan_ui import uat_pasuruan_html
 from app.services.upload_center import register_upload_center_routes
 from app.services.user_management import register_user_management_routes
-from app.services.vouching import ocr_document, overall_result, reconcile_batch, save_document, validate_sap_batch, vouch_spj
+from app.services.vouching import ocr_document, overall_result, reconcile_batch, review_vouching_result, save_document, validate_sap_batch, vouch_spj
 
 app = FastAPI(title="AI Piutang Vouching")
 register_user_management_routes(app)
@@ -571,22 +571,45 @@ def review_control_evidence_result(evidence_id: int, status: str, remarks: str |
 
 
 @app.post("/reviews/vouching/{result_id}")
-def review_vouching(result_id: int, status: str, remarks: str | None = None,
+def review_vouching(result_id: int, status: str, reason_code: str | None = None, remarks: str | None = None,
                     db: Session = Depends(get_db),
                     user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER"))):
-    reviewer_id = user.user_id
-    result = db.get(VouchingResult, result_id)
-    if not result: raise HTTPException(status_code=404, detail="Vouching result not found")
-    ensure_branch_access(user, result.billing.document.branch)
-    status = status.upper()
-    if status not in {"PASS", "REVIEW", "EXCEPTION"}: raise HTTPException(status_code=400, detail="Invalid review status")
-    old_status = result.status
-    result.status = status; result.reviewer_id = reviewer_id; result.reviewed_at = func.now(); result.remarks = remarks
-    record_audit(db, entity_type="VOUCHING_RESULT", entity_id=result.id, action="REVIEW",
-                 actor=reviewer_id, status_from=old_status, status_to=status, remarks=remarks,
-                 branch=result.billing.document.branch)
-    db.commit(); db.refresh(result)
-    return {"id": result.id, "status": result.status, "reviewer_id": result.reviewer_id, "remarks": result.remarks}
+    try:
+        payload = review_vouching_result(
+            db,
+            result_id,
+            status=status,
+            reason_code=reason_code,
+            remarks=remarks,
+            reviewer_id=user.user_id,
+            branch=scoped_branch(user),
+        )
+        result = db.get(VouchingResult, result_id)
+        result_branch = result.billing.document.branch if result else scoped_branch(user)
+        record_audit(
+            db,
+            entity_type="VOUCHING_RESULT",
+            entity_id=result_id,
+            action="MANUAL_REVIEW",
+            actor=user.user_id,
+            status_from=payload.get("previous_status"),
+            status_to=payload.get("status"),
+            remarks=remarks,
+            metadata={
+                "reason_code": payload.get("reviewer_decision", {}).get("reason_code"),
+                "automated_status": payload.get("automated_result", {}).get("status"),
+                "control_evidence_id": payload.get("control_evidence_id"),
+                "linked_customer": payload.get("linked_customer"),
+            },
+            branch=result_branch,
+        )
+        db.commit()
+        return payload
+    except ValueError as exc:
+        db.rollback()
+        if "not found" in str(exc).lower():
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise handle_error(exc) from exc
 
 
 @app.get("/documents/{document_id}")

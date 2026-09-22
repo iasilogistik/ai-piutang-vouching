@@ -201,10 +201,21 @@ class VouchingResult(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False)
     rule_code: Mapped[str | None] = mapped_column(String(50))
     remarks: Mapped[str | None] = mapped_column(Text)
+    automated_status: Mapped[str | None] = mapped_column(String(20))
+    automated_rule_code: Mapped[str | None] = mapped_column(String(50))
+    automated_remarks: Mapped[str | None] = mapped_column(Text)
+    manual_review_status: Mapped[str | None] = mapped_column(String(20))
+    review_reason_code: Mapped[str | None] = mapped_column(String(50))
+    reviewer_remarks: Mapped[str | None] = mapped_column(Text)
+    expected_customer_name: Mapped[str | None] = mapped_column(String(255))
+    control_evidence_id: Mapped[int | None] = mapped_column(
+        ForeignKey("document_control_evidence.id", ondelete="SET NULL")
+    )
     reviewer_id: Mapped[str | None] = mapped_column(String(100))
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     billing: Mapped["PhysicalBilling"] = relationship(back_populates="vouching_results")
     spj: Mapped["SPJ | None"] = relationship(back_populates="vouching_results")
+    control_evidence: Mapped["DocumentControlEvidence | None"] = relationship()
 
 
 class AuditException(Base):

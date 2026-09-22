@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 import hashlib
 import re
@@ -13,11 +13,22 @@ from sqlalchemy.orm import Session
 
 from app.branch_access import branch_for_actor, normalize_branch
 from app.config import settings
-from app.models import BillingReconciliation, Document, ImportBatch, PhysicalBilling, SAPBilling, SPJ, VouchingResult
+from app.models import BillingReconciliation, Document, DocumentControlEvidence, ImportBatch, PhysicalBilling, SAPBilling, SPJ, VouchingResult
 from app.services.storage import materialize, upload_bytes
 
 STORAGE_ROOT = Path("storage/uploads")
 ALLOWED_DOC_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png"}
+VALID_VOUCHING_REVIEW_STATUSES = {"PASS", "REVIEW", "EXCEPTION"}
+VOUCHING_REVIEW_REASON_CODES = {
+    "EVIDENCE_CONFIRMED",
+    "EVIDENCE_MISSING",
+    "STAMP_CUSTOMER_MISMATCH",
+    "SIGNATURE_MISSING",
+    "OCR_OR_SCAN_UNCLEAR",
+    "DUPLICATE_SPJ",
+    "OTHER",
+}
+
 
 
 def _norm(value: str | None) -> str | None:
@@ -394,6 +405,70 @@ def reconcile_batch(db: Session, batch_id: int, *, branch: str | None = None) ->
     return results
 
 
+def _expected_customer_for_billing(db: Session, billing_id: int) -> str | None:
+    rec = db.scalar(
+        select(BillingReconciliation)
+        .where(BillingReconciliation.physical_billing_id == billing_id)
+        .order_by(BillingReconciliation.id.desc())
+    )
+    if rec is None:
+        return None
+    sap = db.get(SAPBilling, rec.sap_billing_id)
+    if sap is None:
+        return None
+    return _norm(sap.customer_account_name) or _norm(sap.customer)
+
+
+def _control_evidence_for_spj(db: Session, spj: SPJ | None) -> DocumentControlEvidence | None:
+    if spj is None:
+        return None
+    return db.scalar(
+        select(DocumentControlEvidence).where(DocumentControlEvidence.document_id == spj.document_id)
+    )
+
+
+def _upsert_vouching_result(
+    db: Session,
+    *,
+    billing: PhysicalBilling,
+    spj: SPJ | None,
+    spj_match: bool,
+    automated_status: str,
+    automated_rule_code: str | None,
+    automated_remarks: str | None = None,
+    control_evidence: DocumentControlEvidence | None = None,
+) -> VouchingResult:
+    result = db.scalar(select(VouchingResult).where(VouchingResult.billing_id == billing.id))
+    if result is None:
+        result = VouchingResult(
+            billing_id=billing.id,
+            spj_id=spj.id if spj else None,
+            no_spj_billing=billing.no_spj,
+            no_spj_document=spj.no_spj if spj else None,
+            spj_match=spj_match,
+            status=automated_status,
+        )
+        db.add(result)
+
+    result.spj_id = spj.id if spj else None
+    result.no_spj_billing = billing.no_spj
+    result.no_spj_document = spj.no_spj if spj else None
+    result.spj_match = spj_match
+    result.automated_status = automated_status
+    result.automated_rule_code = automated_rule_code
+    result.automated_remarks = automated_remarks
+    result.rule_code = automated_rule_code
+    result.expected_customer_name = _expected_customer_for_billing(db, billing.id)
+    result.control_evidence_id = control_evidence.id if control_evidence else None
+
+    # Keep the legacy effective fields stable for existing API consumers while
+    # preserving an explicit reviewer override across automated reprocessing.
+    result.status = result.manual_review_status or automated_status
+    result.remarks = result.reviewer_remarks if result.manual_review_status else automated_remarks
+    db.flush()
+    return result
+
+
 def vouch_spj(db: Session, *, branch: str | None = None) -> list[VouchingResult]:
     billing_query = select(PhysicalBilling).join(PhysicalBilling.document)
     if branch is not None:
@@ -401,13 +476,16 @@ def vouch_spj(db: Session, *, branch: str | None = None) -> list[VouchingResult]
     billings = db.scalars(billing_query).all()
     results: list[VouchingResult] = []
     for billing in billings:
-        old = db.scalar(select(VouchingResult).where(VouchingResult.billing_id == billing.id))
-        if old:
-            db.delete(old); db.flush()
         no_spj = _norm_key(billing.no_spj)
         if not no_spj:
-            result = VouchingResult(billing_id=billing.id, spj_id=None, no_spj_billing=billing.no_spj,
-                no_spj_document=None, spj_match=False, status="EXCEPTION", rule_code="BILLING_WITHOUT_SPJ")
+            result = _upsert_vouching_result(
+                db,
+                billing=billing,
+                spj=None,
+                spj_match=False,
+                automated_status="EXCEPTION",
+                automated_rule_code="BILLING_WITHOUT_SPJ",
+            )
         else:
             billing_branch = normalize_branch(billing.document.branch)
             match_query = select(SPJ).join(SPJ.document).where(SPJ.no_spj == no_spj)
@@ -416,18 +494,125 @@ def vouch_spj(db: Session, *, branch: str | None = None) -> list[VouchingResult]
             )
             matches = db.scalars(match_query).all()
             if not matches:
-                result = VouchingResult(billing_id=billing.id, spj_id=None, no_spj_billing=billing.no_spj,
-                    no_spj_document=None, spj_match=False, status="EXCEPTION", rule_code="SPJ_NOT_FOUND")
+                result = _upsert_vouching_result(
+                    db,
+                    billing=billing,
+                    spj=None,
+                    spj_match=False,
+                    automated_status="EXCEPTION",
+                    automated_rule_code="SPJ_NOT_FOUND",
+                )
             elif len(matches) > 1:
-                result = VouchingResult(billing_id=billing.id, spj_id=matches[0].id, no_spj_billing=billing.no_spj,
-                    no_spj_document=matches[0].no_spj, spj_match=False, status="REVIEW", rule_code="DUPLICATE_SPJ_NUMBER")
+                result = _upsert_vouching_result(
+                    db,
+                    billing=billing,
+                    spj=matches[0],
+                    spj_match=False,
+                    automated_status="REVIEW",
+                    automated_rule_code="DUPLICATE_SPJ_NUMBER",
+                    automated_remarks=f"Found {len(matches)} SPJ documents with the same number",
+                )
             else:
                 spj = matches[0]
-                result = VouchingResult(billing_id=billing.id, spj_id=spj.id, no_spj_billing=billing.no_spj,
-                    no_spj_document=spj.no_spj, spj_match=True, status="PASS")
-        db.add(result); db.flush(); results.append(result)
+                control_evidence = _control_evidence_for_spj(db, spj)
+                result = _upsert_vouching_result(
+                    db,
+                    billing=billing,
+                    spj=spj,
+                    spj_match=True,
+                    automated_status="PASS",
+                    automated_rule_code=None,
+                    control_evidence=control_evidence,
+                )
+        results.append(result)
     db.commit()
     return results
+
+
+def vouching_result_payload(row: VouchingResult) -> dict[str, Any]:
+    from app.services.control_evidence_store import evidence_payload
+
+    automated_status = row.automated_status or row.status
+    automated_rule_code = row.automated_rule_code if row.automated_status is not None else row.rule_code
+    automated_remarks = row.automated_remarks if row.automated_status is not None else (
+        row.remarks if row.manual_review_status is None else None
+    )
+    return {
+        "id": row.id,
+        "billing_id": row.billing_id,
+        "spj_id": row.spj_id,
+        "no_spj_billing": row.no_spj_billing,
+        "no_spj_document": row.no_spj_document,
+        "spj_match": row.spj_match,
+        "status": row.status,
+        "rule_code": row.rule_code,
+        "automated_result": {
+            "status": automated_status,
+            "rule_code": automated_rule_code,
+            "remarks": automated_remarks,
+        },
+        "reviewer_decision": {
+            "status": row.manual_review_status,
+            "reason_code": row.review_reason_code,
+            "remarks": row.reviewer_remarks,
+            "reviewer_id": row.reviewer_id,
+            "reviewed_at": row.reviewed_at,
+        },
+        "linked_customer": row.expected_customer_name,
+        "control_evidence_id": row.control_evidence_id,
+        "control_evidence": evidence_payload(row.control_evidence) if row.control_evidence else None,
+    }
+
+
+def review_vouching_result(
+    db: Session,
+    result_id: int,
+    *,
+    status: str,
+    reviewer_id: str,
+    reason_code: str | None = None,
+    remarks: str | None = None,
+    branch: str | None = None,
+) -> dict[str, Any]:
+    query = (
+        select(VouchingResult)
+        .join(VouchingResult.billing)
+        .join(PhysicalBilling.document)
+        .where(VouchingResult.id == result_id)
+    )
+    if branch is not None:
+        query = query.where(Document.branch == normalize_branch(branch))
+    row = db.scalar(query)
+    if row is None:
+        raise ValueError("Vouching result not found")
+
+    normalized_status = status.upper().strip()
+    if normalized_status not in VALID_VOUCHING_REVIEW_STATUSES:
+        raise ValueError("status must be PASS, REVIEW, or EXCEPTION")
+
+    automated_status = row.automated_status or row.status
+    normalized_reason = reason_code.upper().strip() if reason_code else None
+    if normalized_reason and normalized_reason not in VOUCHING_REVIEW_REASON_CODES:
+        raise ValueError(
+            "reason_code must be one of: " + ", ".join(sorted(VOUCHING_REVIEW_REASON_CODES))
+        )
+    requires_reason = normalized_status != automated_status or normalized_status in {"REVIEW", "EXCEPTION"}
+    if requires_reason and not normalized_reason:
+        raise ValueError("reason_code is required for override or reject/review decisions")
+
+    previous_status = row.status
+    row.manual_review_status = normalized_status
+    row.review_reason_code = normalized_reason
+    row.reviewer_remarks = _norm(remarks)
+    row.reviewer_id = reviewer_id
+    row.reviewed_at = datetime.now(timezone.utc)
+    row.status = normalized_status
+    row.remarks = row.reviewer_remarks
+    db.flush()
+
+    payload = vouching_result_payload(row)
+    payload["previous_status"] = previous_status
+    return payload
 
 
 def overall_result(db: Session, billing_id: int, *, branch: str | None = None) -> dict[str, Any]:
@@ -449,6 +634,12 @@ def overall_result(db: Session, billing_id: int, *, branch: str | None = None) -
         overall = "REVIEW"
     else:
         overall = "PASS"
-    return {"billing_id": billing_id, "sap_reconciliation_result": rec.status if rec else "NOT_FOUND",
-            "spj_vouching_result": vouch.status if vouch else "NOT_FOUND", "overall_result": overall,
-            "reconciliation_id": rec.id if rec else None, "vouching_id": vouch.id if vouch else None}
+    return {
+        "billing_id": billing_id,
+        "sap_reconciliation_result": rec.status if rec else "NOT_FOUND",
+        "spj_vouching_result": vouch.status if vouch else "NOT_FOUND",
+        "overall_result": overall,
+        "reconciliation_id": rec.id if rec else None,
+        "vouching_id": vouch.id if vouch else None,
+        "vouching": vouching_result_payload(vouch) if vouch else None,
+    }
