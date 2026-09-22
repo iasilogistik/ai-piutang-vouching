@@ -23,6 +23,7 @@ from app.services.follow_up import register_follow_up_routes
 from app.services.audit_report import register_audit_report_routes
 from app.services.audit_closing import register_audit_closing_routes
 from app.services.branch_dashboard import register_branch_dashboard_routes
+from app.services.audit_management_dashboard import register_audit_management_dashboard_routes
 from app.services.bulk_upload_ui import bulk_upload_html
 from app.services.bulk_zip import classify_entry, iter_bulk_zip_entries, make_upload
 from app.services.reports import build_control_evidence_report, build_report
@@ -50,6 +51,7 @@ app = FastAPI(title="AI Piutang Vouching")
 register_user_management_routes(app)
 register_navigation_routes(app)
 register_branch_dashboard_routes(app)
+register_audit_management_dashboard_routes(app)
 register_upload_center_routes(app)
 register_exception_management_routes(app)
 register_review_workflow_routes(app)
