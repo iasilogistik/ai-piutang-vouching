@@ -30,9 +30,14 @@ def upgrade() -> None:
         # Normal/local Alembic deployments keep using public.alembic_version.
         return
 
+    op.execute("create schema if not exists app_private")
+    op.execute("revoke all on schema app_private from public")
+    op.execute(
+        "grant usage on schema app_private to postgres, authenticator, service_role"
+    )
     op.execute(
         """
-        create or replace function public.current_app_schema_revision()
+        create or replace function app_private.current_app_schema_revision()
         returns text
         language sql
         stable
@@ -47,15 +52,15 @@ def upgrade() -> None:
         """
     )
     op.execute(
-        "revoke all on function public.current_app_schema_revision() from public"
+        "revoke all on function app_private.current_app_schema_revision() from public"
     )
     op.execute(
-        "grant execute on function public.current_app_schema_revision() "
-        "to postgres, authenticator, service_role, authenticated"
+        "grant execute on function app_private.current_app_schema_revision() "
+        "to postgres, authenticator, service_role"
     )
 
 
 def downgrade() -> None:
     bind = op.get_bind()
     if bind.dialect.name == "postgresql":
-        op.execute("drop function if exists public.current_app_schema_revision()")
+        op.execute("drop function if exists app_private.current_app_schema_revision()")
