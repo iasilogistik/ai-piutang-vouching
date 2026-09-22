@@ -121,6 +121,9 @@ def _database_heads() -> set[str]:
 
 
 def readiness_payload() -> tuple[int, dict[str, object]]:
+    expected_heads = _expected_heads()
+    expected_revision = sorted(expected_heads)
+
     try:
         database_heads = _database_heads()
     except MigrationMetadataUnavailable:
@@ -128,32 +131,34 @@ def readiness_payload() -> tuple[int, dict[str, object]]:
             "status": "not_ready",
             "database": "healthy",
             "schema_current": False,
+            "reason": "migration_metadata_unavailable",
+            "expected_revision": expected_revision,
         }
     except Exception:
         return 503, {
             "status": "not_ready",
             "database": "unavailable",
             "schema_current": False,
+            "reason": "database_unavailable",
+            "expected_revision": expected_revision,
         }
 
-    try:
-        expected_heads = _expected_heads()
-    except Exception:
+    schema_current = bool(expected_heads) and database_heads == expected_heads
+    if not schema_current:
         return 503, {
             "status": "not_ready",
             "database": "healthy",
             "schema_current": False,
+            "reason": "schema_revision_mismatch",
+            "expected_revision": expected_revision,
+            "database_revision": sorted(database_heads),
         }
 
-    schema_current = bool(expected_heads) and database_heads == expected_heads
-    return (
-        200 if schema_current else 503,
-        {
-            "status": "ready" if schema_current else "not_ready",
-            "database": "healthy",
-            "schema_current": schema_current,
-        },
-    )
+    return 200, {
+        "status": "ready",
+        "database": "healthy",
+        "schema_current": True,
+    }
 
 
 @router.get("/version")
