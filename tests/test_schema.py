@@ -11,6 +11,7 @@ EXPECTED_TABLES = {
     "spj",
     "vouching_result",
     "document_control_evidence",
+    "control_evidence_detections",
 }
 
 
@@ -43,6 +44,22 @@ def test_schema_relationship_columns_exist() -> None:
         "review_required",
         "review_reasons",
     }.issubset({column["name"] for column in inspector.get_columns("document_control_evidence")})
+    assert {
+        "document_id",
+        "branch",
+        "detection_type",
+        "status",
+        "confidence",
+        "page_number",
+        "reference_json",
+        "source_file_hash",
+        "detector_name",
+        "detector_version",
+        "extraction_engine",
+        "processing_status",
+        "error_message",
+        "processed_at",
+    }.issubset({column["name"] for column in inspector.get_columns("control_evidence_detections")})
 
 
 def test_one_to_one_constraints_are_declared() -> None:
@@ -78,3 +95,18 @@ def test_one_to_one_constraints_are_declared() -> None:
         for constraint in inspector.get_unique_constraints("vouching_result")
     }
     assert ("billing_id",) in vouching_unique
+
+
+def test_detection_idempotency_constraint_is_declared() -> None:
+    inspector = inspect(engine)
+    constraints = {
+        tuple(constraint["column_names"])
+        for constraint in inspector.get_unique_constraints("control_evidence_detections")
+    }
+    assert (
+        "document_id",
+        "detection_type",
+        "source_file_hash",
+        "detector_name",
+        "detector_version",
+    ) in constraints
