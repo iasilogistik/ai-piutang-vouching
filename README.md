@@ -57,3 +57,5 @@ The application image installs Tesseract OCR and runs database migrations before
 Every task must pass implementation tests, migration checks, and relevant end-to-end checks before release. The release gate is TASK-017/018 with green CI and a completed smoke test.
 
 See `PROJECT_CHARTER.md`, `REQUIREMENTS.md`, `VOUCHING_RULES.md`, `DATA_MODEL.md`, `CODEX_INSTRUCTIONS.md`, and `DEVELOPMENT_PLAN.md` for locked scope and task rules.
+
+<!-- production-redeploy: DEV-19 -->
