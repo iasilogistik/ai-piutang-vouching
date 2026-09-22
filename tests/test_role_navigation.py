@@ -28,7 +28,7 @@ def test_non_admin_navigation_hides_administration_links():
 
 def test_viewer_navigation_is_read_focused():
     labels = _labels("VIEWER")
-    assert labels == ["Dashboard", "Audit Management", "Engagements", "Sampling", "Working Papers", "Findings", "Management Actions", "Follow-up", "Workflow", "Reports", "Evidence"]
+    assert labels == ["Dashboard", "Audit Management", "Engagements", "Sampling", "Working Papers", "Findings", "Management Actions", "Follow-up", "Evidence Repository", "Workflow", "Reports", "Evidence"]
     assert "Upload" not in labels
     assert "Vouching" not in labels
 
@@ -67,6 +67,7 @@ def test_wave2_navigation_uses_new_primary_routes():
     assert admin["Findings"] == "/ui/audit-findings"
     assert admin["Management Actions"] == "/ui/management-actions"
     assert admin["Follow-up"] == "/ui/follow-up"
+    assert admin["Evidence Repository"] == "/ui/evidence-repository"
     assert admin["Upload"] == "/ui/upload"
     assert admin["Exceptions"] == "/ui/exceptions"
     assert admin["Review Queue"] == "/ui/review-queue"
@@ -80,6 +81,7 @@ def test_wave2_navigation_uses_new_primary_routes():
     assert auditor["Findings"] == "/ui/audit-findings"
     assert auditor["Management Actions"] == "/ui/management-actions"
     assert auditor["Follow-up"] == "/ui/follow-up"
+    assert auditor["Evidence Repository"] == "/ui/evidence-repository"
     assert auditor["Upload"] == "/ui/upload"
     assert auditor["Exceptions"] == "/ui/exceptions"
     assert auditor["Review Queue"] == "/ui/review-queue"
@@ -93,6 +95,7 @@ def test_wave2_navigation_uses_new_primary_routes():
     assert reviewer["Findings"] == "/ui/audit-findings"
     assert reviewer["Management Actions"] == "/ui/management-actions"
     assert reviewer["Follow-up"] == "/ui/follow-up"
+    assert reviewer["Evidence Repository"] == "/ui/evidence-repository"
     assert reviewer["Review Queue"] == "/ui/review-queue"
     assert reviewer["Exceptions"] == "/ui/exceptions"
     assert reviewer["Workflow"] == "/ui/audit-workflow"
@@ -105,6 +108,7 @@ def test_wave2_navigation_uses_new_primary_routes():
     assert viewer["Findings"] == "/ui/audit-findings"
     assert viewer["Management Actions"] == "/ui/management-actions"
     assert viewer["Follow-up"] == "/ui/follow-up"
+    assert viewer["Evidence Repository"] == "/ui/evidence-repository"
     assert viewer["Workflow"] == "/ui/audit-workflow"
     assert "Upload" not in viewer
     assert "Exceptions" not in viewer

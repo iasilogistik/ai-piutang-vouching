@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, JSON, Numeric, String, Text, UniqueConstraint, func
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, JSON, Numeric, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -18,11 +18,52 @@ class Document(Base):
     uploaded_by: Mapped[str | None] = mapped_column(String(100))
     branch: Mapped[str | None] = mapped_column(String(255), index=True)
     uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    engagement_id: Mapped[int | None] = mapped_column(ForeignKey("audit_engagements.id", ondelete="SET NULL"))
+    evidence_classification: Mapped[str | None] = mapped_column(String(50))
+    evidence_source: Mapped[str | None] = mapped_column(String(100))
+    description: Mapped[str | None] = mapped_column(Text)
+    file_size_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    mime_type: Mapped[str | None] = mapped_column(String(255))
+    evidence_version_number: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    supersedes_document_id: Mapped[int | None] = mapped_column(
+        ForeignKey("documents.id", ondelete="RESTRICT")
+    )
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    archived_by: Mapped[str | None] = mapped_column(String(100))
+    archive_reason: Mapped[str | None] = mapped_column(Text)
     physical_billing: Mapped["PhysicalBilling | None"] = relationship(back_populates="document", uselist=False)
     spj: Mapped["SPJ | None"] = relationship(back_populates="document", uselist=False)
     control_evidence: Mapped["DocumentControlEvidence | None"] = relationship(back_populates="document", uselist=False)
     control_evidence_detections: Mapped[list["ControlEvidenceDetection"]] = relationship(back_populates="document")
 
+
+
+class EvidenceResourceLink(Base):
+    __tablename__ = "evidence_resource_links"
+    __table_args__ = (
+        UniqueConstraint("document_id", "resource_type", "resource_id", name="uq_evidence_resource_link"),
+        CheckConstraint(
+            "resource_type in ('SAMPLE','WORKING_PAPER','FINDING','ACTION_PLAN','FOLLOW_UP','AUDIT_REPORT')",
+            name="ck_evidence_resource_type",
+        ),
+        Index("ix_evidence_resource_links_document", "document_id"),
+        Index("ix_evidence_resource_links_resource", "resource_type", "resource_id"),
+        Index("ix_evidence_resource_links_branch", "branch"),
+        Index("ix_evidence_resource_links_engagement", "engagement_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    document_id: Mapped[int] = mapped_column(
+        ForeignKey("documents.id", ondelete="RESTRICT"), nullable=False
+    )
+    branch: Mapped[str] = mapped_column(String(255), nullable=False)
+    resource_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    resource_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    engagement_id: Mapped[int | None] = mapped_column(
+        ForeignKey("audit_engagements.id", ondelete="SET NULL")
+    )
+    linked_by: Mapped[str | None] = mapped_column(String(100))
+    linked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 class ImportBatch(Base):
     __tablename__ = "import_batches"
