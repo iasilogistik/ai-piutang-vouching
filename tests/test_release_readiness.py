@@ -25,16 +25,28 @@ class _ScalarResult:
 
 
 class _FakeConnection:
-    def __init__(self, alembic_rows=None, supabase_latest=None):
+    def __init__(
+        self,
+        alembic_rows=None,
+        supabase_latest=None,
+        app_revision=None,
+        supabase_error=False,
+    ):
         self.alembic_rows = alembic_rows
         self.supabase_latest = supabase_latest
+        self.app_revision = app_revision
+        self.supabase_error = supabase_error
 
     def execute(self, statement, params=None):
         sql = str(statement)
         if "version_num from public.alembic_version" in sql:
             return _ScalarResult(rows=self.alembic_rows or [])
         if "from supabase_migrations.schema_migrations" in sql:
+            if self.supabase_error:
+                raise PermissionError("internal tracker is not readable")
             return _ScalarResult(scalar=self.supabase_latest)
+        if "select public.current_app_schema_revision()" in sql:
+            return _ScalarResult(scalar=self.app_revision)
         raise AssertionError(f"Unexpected SQL in fake connection: {sql}")
 
 
@@ -69,30 +81,46 @@ def test_release_environment_falls_back_to_app_env(monkeypatch):
 
 
 def test_tracker_reads_alembic_heads_when_available(monkeypatch):
-    connection = _FakeConnection(alembic_rows=["0026_evidence_repository"])
+    connection = _FakeConnection(alembic_rows=["0027_release_schema_revision"])
     monkeypatch.setattr(
         release_readiness,
         "_relation_exists",
         lambda _connection, relation: relation == "public.alembic_version",
     )
 
-    assert release_readiness._tracked_heads(connection) == {"0026_evidence_repository"}
+    assert release_readiness._tracked_heads(connection) == {"0027_release_schema_revision"}
 
 
-def test_tracker_falls_back_to_supabase_latest_migration_name(monkeypatch):
-    connection = _FakeConnection(supabase_latest="0026_evidence_repository")
+def test_tracker_reads_supabase_latest_migration_when_allowed(monkeypatch):
+    connection = _FakeConnection(supabase_latest="0027_release_schema_revision")
     monkeypatch.setattr(
         release_readiness,
         "_relation_exists",
         lambda _connection, relation: relation == "supabase_migrations.schema_migrations",
     )
 
-    assert release_readiness._tracked_heads(connection) == {"0026_evidence_repository"}
+    assert release_readiness._tracked_heads(connection) == {"0027_release_schema_revision"}
 
 
-def test_tracker_fails_closed_when_no_metadata_table_exists(monkeypatch):
+def test_tracker_uses_public_revision_function_when_internal_tracker_is_hidden(monkeypatch):
+    connection = _FakeConnection(
+        app_revision="0027_release_schema_revision",
+        supabase_error=True,
+    )
+    monkeypatch.setattr(
+        release_readiness,
+        "_relation_exists",
+        lambda _connection, relation: relation == "supabase_migrations.schema_migrations",
+    )
+    monkeypatch.setattr(release_readiness, "_function_exists", lambda *_: True)
+
+    assert release_readiness._tracked_heads(connection) == {"0027_release_schema_revision"}
+
+
+def test_tracker_fails_closed_when_no_metadata_source_exists(monkeypatch):
     connection = _FakeConnection()
     monkeypatch.setattr(release_readiness, "_relation_exists", lambda *_: False)
+    monkeypatch.setattr(release_readiness, "_function_exists", lambda *_: False)
 
     try:
         release_readiness._tracked_heads(connection)
@@ -103,8 +131,8 @@ def test_tracker_fails_closed_when_no_metadata_table_exists(monkeypatch):
 
 
 def test_readiness_ready_when_database_revision_matches_code(monkeypatch):
-    monkeypatch.setattr(release_readiness, "_database_heads", lambda: {"0026_evidence_repository"})
-    monkeypatch.setattr(release_readiness, "_expected_heads", lambda: {"0026_evidence_repository"})
+    monkeypatch.setattr(release_readiness, "_database_heads", lambda: {"0027_release_schema_revision"})
+    monkeypatch.setattr(release_readiness, "_expected_heads", lambda: {"0027_release_schema_revision"})
 
     response = client.get("/readiness")
 
@@ -117,8 +145,8 @@ def test_readiness_ready_when_database_revision_matches_code(monkeypatch):
 
 
 def test_readiness_fails_when_schema_is_not_current(monkeypatch):
-    monkeypatch.setattr(release_readiness, "_database_heads", lambda: {"0025_audit_notifications"})
-    monkeypatch.setattr(release_readiness, "_expected_heads", lambda: {"0026_evidence_repository"})
+    monkeypatch.setattr(release_readiness, "_database_heads", lambda: {"0026_evidence_repository"})
+    monkeypatch.setattr(release_readiness, "_expected_heads", lambda: {"0027_release_schema_revision"})
 
     response = client.get("/readiness")
 
