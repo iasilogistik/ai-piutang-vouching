@@ -12,6 +12,7 @@ EXPECTED_TABLES = {
     "vouching_result",
     "document_control_evidence",
     "control_evidence_detections",
+    "audit_workflow_cases",
 }
 
 
@@ -56,6 +57,19 @@ def test_schema_relationship_columns_exist() -> None:
         "review_required",
         "review_reasons",
     }.issubset({column["name"] for column in inspector.get_columns("document_control_evidence")})
+    assert {
+        "id",
+        "branch",
+        "vouching_result_id",
+        "control_evidence_id",
+        "audit_exception_id",
+        "review_workflow_id",
+        "audit_report_id",
+        "audit_closing_id",
+        "stage",
+        "created_by",
+        "updated_by",
+    }.issubset({column["name"] for column in inspector.get_columns("audit_workflow_cases")})
     assert {
         "document_id",
         "branch",
@@ -122,3 +136,12 @@ def test_detection_idempotency_constraint_is_declared() -> None:
         "detector_name",
         "detector_version",
     ) in constraints
+
+
+def test_workflow_case_is_unique_per_vouching_result() -> None:
+    inspector = inspect(engine)
+    constraints = {
+        tuple(constraint["column_names"])
+        for constraint in inspector.get_unique_constraints("audit_workflow_cases")
+    }
+    assert ("vouching_result_id",) in constraints
