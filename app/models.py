@@ -272,6 +272,9 @@ class AuditReport(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    engagement_id: Mapped[int | None] = mapped_column(
+        ForeignKey("audit_engagements.id", ondelete="SET NULL")
+    )
     branch: Mapped[str] = mapped_column(String(255), nullable=False)
     period_start: Mapped[date] = mapped_column(Date, nullable=False)
     period_end: Mapped[date] = mapped_column(Date, nullable=False)
@@ -323,6 +326,9 @@ class AuditWorkflowCase(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    engagement_id: Mapped[int | None] = mapped_column(
+        ForeignKey("audit_engagements.id", ondelete="SET NULL")
+    )
     branch: Mapped[str] = mapped_column(String(255), nullable=False)
     vouching_result_id: Mapped[int] = mapped_column(
         ForeignKey("vouching_result.id", ondelete="RESTRICT"), nullable=False
@@ -349,3 +355,51 @@ class AuditWorkflowCase(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
+
+
+class AuditEngagement(Base):
+    __tablename__ = "audit_engagements"
+    __table_args__ = (
+        UniqueConstraint("code", name="uq_audit_engagements_code"),
+        Index("ix_audit_engagements_branch", "branch"),
+        Index("ix_audit_engagements_status", "status"),
+        Index("ix_audit_engagements_period", "period_start", "period_end"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    code: Mapped[str] = mapped_column(String(50), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    branch: Mapped[str] = mapped_column(String(255), nullable=False)
+    period_start: Mapped[date] = mapped_column(Date, nullable=False)
+    period_end: Mapped[date] = mapped_column(Date, nullable=False)
+    scope: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, server_default="DRAFT")
+    created_by: Mapped[str | None] = mapped_column(String(100))
+    updated_by: Mapped[str | None] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class AuditEngagementAssignment(Base):
+    __tablename__ = "audit_engagement_assignments"
+    __table_args__ = (
+        UniqueConstraint(
+            "engagement_id",
+            "user_id",
+            "assignment_role",
+            name="uq_audit_engagement_assignment",
+        ),
+        Index("ix_audit_engagement_assignments_engagement", "engagement_id"),
+        Index("ix_audit_engagement_assignments_user", "user_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    engagement_id: Mapped[int] = mapped_column(
+        ForeignKey("audit_engagements.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    assignment_role: Mapped[str] = mapped_column(String(20), nullable=False)
+    assigned_by: Mapped[str | None] = mapped_column(String(100))
+    assigned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
