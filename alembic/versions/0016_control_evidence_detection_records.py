@@ -1,6 +1,6 @@
 """Persist control-evidence detection history.
 
-Revision ID: 0016_control_evidence_detection_records
+Revision ID: 0016_control_evidence_detect
 Revises: 0015_audit_closing_signoff
 Create Date: 2026-09-22
 """
@@ -9,7 +9,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "0016_control_evidence_detection_records"
+revision = "0016_control_evidence_detect"
 down_revision = "0015_audit_closing_signoff"
 branch_labels = None
 depends_on = None
