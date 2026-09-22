@@ -45,7 +45,7 @@ class _FakeConnection:
             if self.supabase_error:
                 raise PermissionError("internal tracker is not readable")
             return _ScalarResult(scalar=self.supabase_latest)
-        if "select public.current_app_schema_revision()" in sql:
+        if "select app_private.current_app_schema_revision()" in sql:
             return _ScalarResult(scalar=self.app_revision)
         raise AssertionError(f"Unexpected SQL in fake connection: {sql}")
 
