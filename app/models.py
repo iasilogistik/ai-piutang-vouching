@@ -566,6 +566,74 @@ class CorrectiveActionPlanHistory(Base):
     change_reason: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
+
+class CorrectiveActionProgressUpdate(Base):
+    __tablename__ = "corrective_action_progress_updates"
+    __table_args__ = (
+        CheckConstraint(
+            "progress_percent is null or (progress_percent >= 0 and progress_percent <= 100)",
+            name="ck_corrective_action_progress_percent",
+        ),
+        Index("ix_corrective_action_progress_plan", "action_plan_id"),
+        Index("ix_corrective_action_progress_branch", "branch"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    action_plan_id: Mapped[int] = mapped_column(
+        ForeignKey("corrective_action_plans.id", ondelete="CASCADE"), nullable=False
+    )
+    branch: Mapped[str] = mapped_column(String(255), nullable=False)
+    update_text: Mapped[str] = mapped_column(Text, nullable=False)
+    progress_percent: Mapped[int | None] = mapped_column(Integer)
+    submitted_by: Mapped[str | None] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class CorrectiveActionEvidence(Base):
+    __tablename__ = "corrective_action_evidence"
+    __table_args__ = (
+        CheckConstraint(
+            "(document_id is not null and control_evidence_id is null) or "
+            "(document_id is null and control_evidence_id is not null)",
+            name="ck_corrective_action_evidence_one_source",
+        ),
+        UniqueConstraint("action_plan_id", "document_id", name="uq_corrective_action_document"),
+        UniqueConstraint("action_plan_id", "control_evidence_id", name="uq_corrective_action_control_evidence"),
+        Index("ix_corrective_action_evidence_plan", "action_plan_id"),
+        Index("ix_corrective_action_evidence_branch", "branch"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    action_plan_id: Mapped[int] = mapped_column(
+        ForeignKey("corrective_action_plans.id", ondelete="CASCADE"), nullable=False
+    )
+    branch: Mapped[str] = mapped_column(String(255), nullable=False)
+    document_id: Mapped[int | None] = mapped_column(ForeignKey("documents.id", ondelete="RESTRICT"))
+    control_evidence_id: Mapped[int | None] = mapped_column(
+        ForeignKey("document_control_evidence.id", ondelete="RESTRICT")
+    )
+    linked_by: Mapped[str | None] = mapped_column(String(100))
+    linked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class CorrectiveActionVerification(Base):
+    __tablename__ = "corrective_action_verifications"
+    __table_args__ = (
+        CheckConstraint("result in ('VERIFIED','RETURNED')", name="ck_corrective_action_verification_result"),
+        Index("ix_corrective_action_verifications_plan", "action_plan_id"),
+        Index("ix_corrective_action_verifications_branch", "branch"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    action_plan_id: Mapped[int] = mapped_column(
+        ForeignKey("corrective_action_plans.id", ondelete="CASCADE"), nullable=False
+    )
+    branch: Mapped[str] = mapped_column(String(255), nullable=False)
+    result: Mapped[str] = mapped_column(String(20), nullable=False)
+    verification_note: Mapped[str | None] = mapped_column(Text)
+    verified_by: Mapped[str] = mapped_column(String(100), nullable=False)
+    verified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
 class AuditException(Base):
     __tablename__ = "audit_exceptions"
     __table_args__ = (

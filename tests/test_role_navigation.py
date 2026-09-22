@@ -28,7 +28,7 @@ def test_non_admin_navigation_hides_administration_links():
 
 def test_viewer_navigation_is_read_focused():
     labels = _labels("VIEWER")
-    assert labels == ["Dashboard", "Engagements", "Sampling", "Working Papers", "Findings", "Management Actions", "Workflow", "Reports", "Evidence"]
+    assert labels == ["Dashboard", "Engagements", "Sampling", "Working Papers", "Findings", "Management Actions", "Follow-up", "Workflow", "Reports", "Evidence"]
     assert "Upload" not in labels
     assert "Vouching" not in labels
 
@@ -65,6 +65,7 @@ def test_wave2_navigation_uses_new_primary_routes():
     assert admin["Working Papers"] == "/ui/audit-working-papers"
     assert admin["Findings"] == "/ui/audit-findings"
     assert admin["Management Actions"] == "/ui/management-actions"
+    assert admin["Follow-up"] == "/ui/follow-up"
     assert admin["Upload"] == "/ui/upload"
     assert admin["Exceptions"] == "/ui/exceptions"
     assert admin["Review Queue"] == "/ui/review-queue"
@@ -76,6 +77,7 @@ def test_wave2_navigation_uses_new_primary_routes():
     assert auditor["Working Papers"] == "/ui/audit-working-papers"
     assert auditor["Findings"] == "/ui/audit-findings"
     assert auditor["Management Actions"] == "/ui/management-actions"
+    assert auditor["Follow-up"] == "/ui/follow-up"
     assert auditor["Upload"] == "/ui/upload"
     assert auditor["Exceptions"] == "/ui/exceptions"
     assert auditor["Review Queue"] == "/ui/review-queue"
@@ -87,6 +89,7 @@ def test_wave2_navigation_uses_new_primary_routes():
     assert reviewer["Working Papers"] == "/ui/audit-working-papers"
     assert reviewer["Findings"] == "/ui/audit-findings"
     assert reviewer["Management Actions"] == "/ui/management-actions"
+    assert reviewer["Follow-up"] == "/ui/follow-up"
     assert reviewer["Review Queue"] == "/ui/review-queue"
     assert reviewer["Exceptions"] == "/ui/exceptions"
     assert reviewer["Workflow"] == "/ui/audit-workflow"
@@ -97,6 +100,7 @@ def test_wave2_navigation_uses_new_primary_routes():
     assert viewer["Working Papers"] == "/ui/audit-working-papers"
     assert viewer["Findings"] == "/ui/audit-findings"
     assert viewer["Management Actions"] == "/ui/management-actions"
+    assert viewer["Follow-up"] == "/ui/follow-up"
     assert viewer["Workflow"] == "/ui/audit-workflow"
     assert "Upload" not in viewer
     assert "Exceptions" not in viewer
