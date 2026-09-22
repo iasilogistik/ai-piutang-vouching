@@ -634,6 +634,47 @@ class CorrectiveActionVerification(Base):
     verified_by: Mapped[str] = mapped_column(String(100), nullable=False)
     verified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
+
+class AuditNotification(Base):
+    __tablename__ = "audit_notifications"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_audit_notification_idempotency"),
+        Index("ix_audit_notifications_user_read", "user_id", "is_read", "created_at"),
+        Index("ix_audit_notifications_branch", "branch"),
+        Index("ix_audit_notifications_event", "event_type"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    branch: Mapped[str | None] = mapped_column(String(255))
+    event_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    target_type: Mapped[str | None] = mapped_column(String(50))
+    target_id: Mapped[int | None] = mapped_column(Integer)
+    target_url: Mapped[str | None] = mapped_column(String(1024))
+    idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_read: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class NotificationPreference(Base):
+    __tablename__ = "notification_preferences"
+    __table_args__ = (
+        CheckConstraint("reminder_days_before >= 0 and reminder_days_before <= 30", name="ck_notification_reminder_days"),
+        CheckConstraint("digest_frequency in ('IMMEDIATE','DAILY','WEEKLY')", name="ck_notification_digest_frequency"),
+    )
+
+    user_id: Mapped[str] = mapped_column(String(100), primary_key=True)
+    in_app_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    email_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    reminder_days_before: Mapped[int] = mapped_column(Integer, nullable=False, server_default="7")
+    digest_frequency: Mapped[str] = mapped_column(String(20), nullable=False, server_default="IMMEDIATE")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
 class AuditException(Base):
     __tablename__ = "audit_exceptions"
     __table_args__ = (

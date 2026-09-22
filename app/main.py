@@ -40,6 +40,7 @@ from app.services.drive_link import download_drive_link_file
 from app.services.exception_management import register_exception_management_routes
 from app.services.login_ui import login_html
 from app.services.navigation import register_navigation_routes
+from app.services.notifications import register_notification_routes
 from app.services.sap_import import import_sap_upload
 from app.services.storage import download_bytes
 from app.services.uat_pasuruan_ui import uat_pasuruan_html
@@ -50,6 +51,7 @@ from app.services.vouching import ocr_document, overall_result, reconcile_batch,
 app = FastAPI(title="AI Piutang Vouching")
 register_user_management_routes(app)
 register_navigation_routes(app)
+register_notification_routes(app)
 register_branch_dashboard_routes(app)
 register_audit_management_dashboard_routes(app)
 register_upload_center_routes(app)
