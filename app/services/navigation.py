@@ -115,6 +115,9 @@ def navigation_html(user: CurrentUser, unread_count: int = 0) -> str:
         f'<nav class="role-nav" data-role="{role}" data-branch="{branch}">'
         f'<span class="role-context">{role} · {branch}</span>'
         f'<a href="/ui/notifications" class="notification-link">Notifications ({unread_count})</a>'
+        f'<form action="/ui/search" method="get" class="global-search-form">'
+        f'<input name="q" aria-label="Global audit search" placeholder="Search audit..." />'
+        f'</form>'
         f'{links}</nav>'
     )
 
