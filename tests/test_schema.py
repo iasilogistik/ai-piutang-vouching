@@ -17,6 +17,10 @@ EXPECTED_TABLES = {
     "audit_engagement_assignments",
     "audit_populations",
     "audit_samples",
+    "audit_working_papers",
+    "audit_working_paper_versions",
+    "audit_working_paper_evidence",
+    "audit_working_paper_exceptions",
 }
 
 
@@ -92,6 +96,21 @@ def test_schema_relationship_columns_exist() -> None:
         "selection_reason", "method_parameters", "monetary_value", "status", "selected_by", "selected_at",
         "vouching_result_id", "control_evidence_id",
     }.issubset({column["name"] for column in inspector.get_columns("audit_samples")})
+    assert {
+        "id", "engagement_id", "branch", "reference", "title", "audit_objective",
+        "procedure_performed", "result_observation", "conclusion", "preparer_id", "prepared_at",
+        "reviewer_id", "reviewed_at", "status", "version_number", "sample_id", "created_at", "updated_at",
+    }.issubset({column["name"] for column in inspector.get_columns("audit_working_papers")})
+    assert {
+        "id", "working_paper_id", "version_number", "title", "audit_objective", "procedure_performed",
+        "result_observation", "conclusion", "status", "changed_by", "change_reason", "created_at",
+    }.issubset({column["name"] for column in inspector.get_columns("audit_working_paper_versions")})
+    assert {
+        "id", "working_paper_id", "document_id", "control_evidence_id", "linked_by", "linked_at",
+    }.issubset({column["name"] for column in inspector.get_columns("audit_working_paper_evidence")})
+    assert {
+        "id", "working_paper_id", "audit_exception_id", "linked_by", "linked_at",
+    }.issubset({column["name"] for column in inspector.get_columns("audit_working_paper_exceptions")})
     assert {
         "document_id",
         "branch",
@@ -190,3 +209,22 @@ def test_audit_sample_duplicate_constraint_is_declared() -> None:
         for constraint in inspector.get_unique_constraints("audit_samples")
     }
     assert ("population_id", "source_record_ref") in constraints
+
+
+def test_working_paper_constraints_are_declared() -> None:
+    inspector = inspect(engine)
+    papers = {
+        tuple(constraint["column_names"])
+        for constraint in inspector.get_unique_constraints("audit_working_papers")
+    }
+    versions = {
+        tuple(constraint["column_names"])
+        for constraint in inspector.get_unique_constraints("audit_working_paper_versions")
+    }
+    exceptions = {
+        tuple(constraint["column_names"])
+        for constraint in inspector.get_unique_constraints("audit_working_paper_exceptions")
+    }
+    assert ("engagement_id", "reference") in papers
+    assert ("working_paper_id", "version_number") in versions
+    assert ("working_paper_id", "audit_exception_id") in exceptions
