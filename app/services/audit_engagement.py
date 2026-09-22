@@ -318,13 +318,17 @@ pre{{white-space:pre-wrap;background:#0f172a;color:#dbeafe;padding:12px;border-r
 const token=document.getElementById('token');token.value=localStorage.getItem('auditToken')||'';
 function headers(){{const v=token.value.trim();if(!v)throw new Error('Bearer token wajib diisi');localStorage.setItem('auditToken',v);return {{Authorization:'Bearer '+v}}}}
 async function json(url,opt={{}}){{opt.headers=Object.assign({{}},opt.headers||{{}},headers());const r=await fetch(url,opt);const x=await r.json();if(!r.ok)throw new Error(x.detail||JSON.stringify(x));document.getElementById('log').textContent=JSON.stringify(x,null,2);return x}}
-async function load(){{const p=new URLSearchParams();if(branch.value.trim())p.set('branch',branch.value.trim());if(status.value)p.set('status',status.value);const x=await json('/audit-engagements?'+p);rows.innerHTML=(x.engagements||[]).map(e=>'<tr><td>'+e.id+'</td><td>'+e.code+'</td><td>'+e.branch+'</td><td>'+e.period_start+' - '+e.period_end+'</td><td>'+e.status+'</td><td>'+e.assignments.map(a=>a.assignment_role+':'+a.user_id).join('<br>')+'</td><td>'+e.workflow_case_ids.join(', ')+'</td><td>'+e.audit_report_ids.join(', ')+'</td></tr>').join('')||'<tr><td colspan="8">Tidak ada engagement.</td></tr>'}}
+const log=document.getElementById('log');
+const branchInput=document.getElementById('branch');
+const statusInput=document.getElementById('status');
+const rows=document.getElementById('rows');
+async function loadEngagements(){{const p=new URLSearchParams();if(branchInput.value.trim())p.set('branch',branchInput.value.trim());if(statusInput.value)p.set('status',statusInput.value);const x=await json('/audit-engagements?'+p);rows.innerHTML=(x.engagements||[]).map(e=>'<tr><td>'+e.id+'</td><td>'+e.code+'</td><td>'+e.branch+'</td><td>'+e.period_start+' - '+e.period_end+'</td><td>'+e.status+'</td><td>'+e.assignments.map(a=>a.assignment_role+':'+a.user_id).join('<br>')+'</td><td>'+e.workflow_case_ids.join(', ')+'</td><td>'+e.audit_report_ids.join(', ')+'</td></tr>').join('')||'<tr><td colspan="8">Tidak ada engagement.</td></tr>'}}
 async function post(url,data){{const fd=new FormData();Object.entries(data).forEach(([k,v])=>{{if(v!==''&&v!=null)fd.append(k,v)}});return json(url,{{method:'POST',body:fd}})}}
-load.onclick=()=>load().catch(e=>log.textContent='ERROR: '+e.message);
-create.onclick=()=>post('/audit-engagements',{{code:code.value,title:title.value,branch:createBranch.value,period_start:start.value,period_end:end.value,scope:scope.value}}).then(load).catch(e=>log.textContent='ERROR: '+e.message);
-assign.onclick=()=>post('/audit-engagements/'+engagementId.value+'/assign',{{user_id:userId.value,assignment_role:assignRole.value}}).then(load).catch(e=>log.textContent='ERROR: '+e.message);
-transition.onclick=()=>post('/audit-engagements/'+engagementId.value+'/transition',{{status:target.value}}).then(load).catch(e=>log.textContent='ERROR: '+e.message);
-link.onclick=()=>post('/audit-engagements/'+engagementId.value+'/link',{{resource_type:resourceType.value,resource_id:resourceId.value}}).then(load).catch(e=>log.textContent='ERROR: '+e.message);
+document.getElementById('load').onclick=()=>loadEngagements().catch(e=>log.textContent='ERROR: '+e.message);
+document.getElementById('create').onclick=()=>post('/audit-engagements',{{code:document.getElementById('code').value,title:document.getElementById('title').value,branch:document.getElementById('createBranch').value,period_start:document.getElementById('start').value,period_end:document.getElementById('end').value,scope:document.getElementById('scope').value}}).then(loadEngagements).catch(e=>log.textContent='ERROR: '+e.message);
+document.getElementById('assign').onclick=()=>post('/audit-engagements/'+document.getElementById('engagementId').value+'/assign',{{user_id:document.getElementById('userId').value,assignment_role:document.getElementById('assignRole').value}}).then(loadEngagements).catch(e=>log.textContent='ERROR: '+e.message);
+document.getElementById('transition').onclick=()=>post('/audit-engagements/'+document.getElementById('engagementId').value+'/transition',{{status:document.getElementById('target').value}}).then(loadEngagements).catch(e=>log.textContent='ERROR: '+e.message);
+document.getElementById('link').onclick=()=>post('/audit-engagements/'+document.getElementById('engagementId').value+'/link',{{resource_type:document.getElementById('resourceType').value,resource_id:document.getElementById('resourceId').value}}).then(loadEngagements).catch(e=>log.textContent='ERROR: '+e.message);
 </script></body></html>"""
 
 
