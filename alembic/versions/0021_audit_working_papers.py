@@ -166,16 +166,50 @@ def upgrade() -> None:
                 )
                 """
             )
+
+        op.execute(
+            """
+            create policy "app_manage_audit_working_paper_versions"
+            on public.audit_working_paper_versions for all to authenticated
+            using (
+              exists (
+                select 1 from public.audit_working_papers wp
+                where wp.id = working_paper_id
+                  and (select public.current_app_role()) = any (
+                    array['ADMIN'::public.app_role, 'AUDITOR'::public.app_role, 'REVIEWER'::public.app_role]
+                  )
+                  and (
+                    (select public.current_app_role()) = 'ADMIN'::public.app_role
+                    or upper(trim(wp.branch)) = (select public.current_app_branch())
+                  )
+              )
+            )
+            with check (
+              exists (
+                select 1 from public.audit_working_papers wp
+                where wp.id = working_paper_id
+                  and (select public.current_app_role()) = any (
+                    array['ADMIN'::public.app_role, 'AUDITOR'::public.app_role, 'REVIEWER'::public.app_role]
+                  )
+                  and (
+                    (select public.current_app_role()) = 'ADMIN'::public.app_role
+                    or upper(trim(wp.branch)) = (select public.current_app_branch())
+                  )
+              )
+            )
+            """
+        )
+        for table in ("audit_working_paper_evidence", "audit_working_paper_exceptions"):
             op.execute(
                 f"""
-                create policy "app_manage_{table}"
+                create policy "auditor_manage_{table}"
                 on public.{table} for all to authenticated
                 using (
                   exists (
                     select 1 from public.audit_working_papers wp
                     where wp.id = working_paper_id
                       and (select public.current_app_role()) = any (
-                        array['ADMIN'::public.app_role, 'AUDITOR'::public.app_role, 'REVIEWER'::public.app_role]
+                        array['ADMIN'::public.app_role, 'AUDITOR'::public.app_role]
                       )
                       and (
                         (select public.current_app_role()) = 'ADMIN'::public.app_role
@@ -188,7 +222,7 @@ def upgrade() -> None:
                     select 1 from public.audit_working_papers wp
                     where wp.id = working_paper_id
                       and (select public.current_app_role()) = any (
-                        array['ADMIN'::public.app_role, 'AUDITOR'::public.app_role, 'REVIEWER'::public.app_role]
+                        array['ADMIN'::public.app_role, 'AUDITOR'::public.app_role]
                       )
                       and (
                         (select public.current_app_role()) = 'ADMIN'::public.app_role
