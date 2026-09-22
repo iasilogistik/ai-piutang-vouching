@@ -6,7 +6,8 @@
       "fix/*": false,
       "chore/*": false,
       "codex/*": false,
-      "dev/*": false
+      "dev/*": false,
+      "perf/*": false
     }
   }
 }

@@ -19,7 +19,7 @@ def test_release_has_single_alembic_head():
     config.set_main_option("script_location", str(ROOT / "alembic"))
     heads = ScriptDirectory.from_config(config).get_heads()
     assert len(heads) == 1
-    assert heads[0] == "0027_release_schema_revision"
+    assert heads[0] == "0028_performance_hardening"
 
 
 def test_release_identity_and_readiness_routes_registered():
@@ -64,7 +64,7 @@ def test_current_protected_audit_api_routes_registered():
 def test_vercel_feature_branches_do_not_auto_deploy():
     config = json.loads((ROOT / "vercel.json").read_text(encoding="utf-8"))
     enabled = config["git"]["deploymentEnabled"]
-    for pattern in ("feature/*", "fix/*", "chore/*", "codex/*", "dev/*"):
+    for pattern in ("feature/*", "fix/*", "chore/*", "codex/*", "dev/*", "perf/*"):
         assert enabled[pattern] is False
     assert "main" not in enabled
 
