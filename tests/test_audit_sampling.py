@@ -98,6 +98,24 @@ def test_duplicate_sample_is_rejected():
         assert exc.value.status_code == 409
 
 
+def test_cross_branch_population_creation_is_hidden():
+    with Session(_engine()) as db:
+        engagement = _engagement(db, branch="SIDOARJO")
+        with pytest.raises(HTTPException) as exc:
+            create_population(
+                db,
+                engagement=engagement,
+                name="Pop",
+                population_type="AR",
+                source_type="SYSTEM",
+                source_reference=None,
+                total_records=10,
+                total_value=None,
+                user=_user(branch="PASURUAN"),
+            )
+        assert exc.value.status_code == 404
+
+
 def test_invalid_sampling_method_is_rejected():
     with Session(_engine()) as db:
         population = create_population(
