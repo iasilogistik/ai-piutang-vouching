@@ -155,7 +155,7 @@ def test_integrity_verification_detects_changed_content(monkeypatch):
         assert ok["hash_match"] is True
         assert ok["size_match"] is True
 
-        Path(doc.storage_path).write_bytes(b"tampered")
+        Path(doc.storage_path).write_bytes(b"tampered-data")
         changed = verify_integrity(db, doc, user=_user())
         assert changed["hash_match"] is False
         assert changed["size_match"] is False
