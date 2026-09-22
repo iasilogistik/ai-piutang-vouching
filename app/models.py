@@ -461,6 +461,111 @@ class AuditFindingSample(Base):
     linked_by: Mapped[str | None] = mapped_column(String(100))
     linked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
+
+class ManagementResponse(Base):
+    __tablename__ = "management_responses"
+    __table_args__ = (
+        UniqueConstraint("finding_id", name="uq_management_response_finding"),
+        Index("ix_management_responses_branch", "branch"),
+        Index("ix_management_responses_status", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    finding_id: Mapped[int] = mapped_column(
+        ForeignKey("audit_findings.id", ondelete="CASCADE"), nullable=False
+    )
+    branch: Mapped[str] = mapped_column(String(255), nullable=False)
+    response_text: Mapped[str | None] = mapped_column(Text)
+    position: Mapped[str | None] = mapped_column(String(20))
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="DRAFT")
+    submitted_by: Mapped[str | None] = mapped_column(String(100))
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reviewed_by: Mapped[str | None] = mapped_column(String(100))
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    review_note: Mapped[str | None] = mapped_column(Text)
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class ManagementResponseVersion(Base):
+    __tablename__ = "management_response_versions"
+    __table_args__ = (
+        UniqueConstraint("response_id", "version_number", name="uq_management_response_version"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    response_id: Mapped[int] = mapped_column(
+        ForeignKey("management_responses.id", ondelete="CASCADE"), nullable=False
+    )
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    response_text: Mapped[str | None] = mapped_column(Text)
+    position: Mapped[str | None] = mapped_column(String(20))
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    changed_by: Mapped[str | None] = mapped_column(String(100))
+    change_reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class CorrectiveActionPlan(Base):
+    __tablename__ = "corrective_action_plans"
+    __table_args__ = (
+        CheckConstraint(
+            "(pic_user_id is not null and external_pic_name is null) or "
+            "(pic_user_id is null and external_pic_name is not null)",
+            name="ck_corrective_action_plan_one_pic",
+        ),
+        Index("ix_corrective_action_plans_finding", "finding_id"),
+        Index("ix_corrective_action_plans_branch", "branch"),
+        Index("ix_corrective_action_plans_status", "status"),
+        Index("ix_corrective_action_plans_target_date", "target_date"),
+        Index("ix_corrective_action_plans_pic_user", "pic_user_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    finding_id: Mapped[int] = mapped_column(
+        ForeignKey("audit_findings.id", ondelete="CASCADE"), nullable=False
+    )
+    response_id: Mapped[int] = mapped_column(
+        ForeignKey("management_responses.id", ondelete="CASCADE"), nullable=False
+    )
+    branch: Mapped[str] = mapped_column(String(255), nullable=False)
+    action_description: Mapped[str] = mapped_column(Text, nullable=False)
+    pic_user_id: Mapped[str | None] = mapped_column(String(100))
+    external_pic_name: Mapped[str | None] = mapped_column(String(255))
+    target_date: Mapped[date] = mapped_column(Date, nullable=False)
+    status: Mapped[str] = mapped_column(String(40), nullable=False, server_default="OPEN")
+    completion_notes: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[str | None] = mapped_column(String(100))
+    updated_by: Mapped[str | None] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class CorrectiveActionPlanHistory(Base):
+    __tablename__ = "corrective_action_plan_history"
+    __table_args__ = (
+        Index("ix_corrective_action_history_plan", "action_plan_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    action_plan_id: Mapped[int] = mapped_column(
+        ForeignKey("corrective_action_plans.id", ondelete="CASCADE"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(40), nullable=False)
+    action_description: Mapped[str] = mapped_column(Text, nullable=False)
+    pic_user_id: Mapped[str | None] = mapped_column(String(100))
+    external_pic_name: Mapped[str | None] = mapped_column(String(255))
+    target_date: Mapped[date] = mapped_column(Date, nullable=False)
+    completion_notes: Mapped[str | None] = mapped_column(Text)
+    changed_by: Mapped[str | None] = mapped_column(String(100))
+    change_reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
 class AuditException(Base):
     __tablename__ = "audit_exceptions"
     __table_args__ = (
