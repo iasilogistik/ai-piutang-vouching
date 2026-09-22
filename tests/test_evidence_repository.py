@@ -1,6 +1,7 @@
 from datetime import date
 import hashlib
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -19,6 +20,7 @@ from app.models import (
     Document,
     EvidenceResourceLink,
 )
+from app.services import evidence_repository
 from app.services.evidence_repository import (
     archive_evidence,
     delete_evidence_disabled,
@@ -146,7 +148,7 @@ def test_supersede_preserves_prior_version_and_archives_old():
 
 
 def test_integrity_verification_detects_changed_content(monkeypatch):
-    monkeypatch.setattr(settings, "use_supabase_storage", False)
+    monkeypatch.setattr(evidence_repository, "settings", SimpleNamespace(use_supabase_storage=False))
     with Session(_engine()) as db:
         doc = _document(db, name="integrity.pdf", content=b"original")
         ok = verify_integrity(db, doc, user=_user())
