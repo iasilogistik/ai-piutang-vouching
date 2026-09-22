@@ -1,10 +1,6 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
-
-from alembic.config import Config
-from alembic.script import ScriptDirectory
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
@@ -14,6 +10,7 @@ from app.database import engine
 
 router = APIRouter()
 _REGISTERED = False
+EXPECTED_SCHEMA_REVISION = "0028_performance_hardening"
 
 
 class MigrationMetadataUnavailable(RuntimeError):
@@ -45,11 +42,9 @@ def release_environment() -> str:
 
 
 def _expected_heads() -> set[str]:
-    root = Path(__file__).resolve().parents[2]
-    config = Config(str(root / "alembic.ini"))
-    config.set_main_option("script_location", str(root / "alembic"))
-    scripts = ScriptDirectory.from_config(config)
-    return set(scripts.get_heads())
+    # Keep runtime readiness independent from migration/config files that may be
+    # omitted by serverless bundlers. CI asserts this constant equals Alembic head.
+    return {EXPECTED_SCHEMA_REVISION}
 
 
 def _relation_exists(connection, relation: str) -> bool:

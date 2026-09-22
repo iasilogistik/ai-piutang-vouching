@@ -5,6 +5,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 from app.main import app
+from app.services.release_readiness import EXPECTED_SCHEMA_REVISION
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,7 +20,7 @@ def test_release_has_single_alembic_head():
     config.set_main_option("script_location", str(ROOT / "alembic"))
     heads = ScriptDirectory.from_config(config).get_heads()
     assert len(heads) == 1
-    assert heads[0] == "0028_performance_hardening"
+    assert heads[0] == EXPECTED_SCHEMA_REVISION
 
 
 def test_release_identity_and_readiness_routes_registered():
