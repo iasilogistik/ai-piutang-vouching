@@ -158,18 +158,33 @@ def save_document(
     if not content:
         raise ValueError("Uploaded document is empty")
     digest = hashlib.sha256(content).hexdigest()
+    content_type = upload.content_type or (
+        "application/pdf" if suffix == ".pdf"
+        else "image/jpeg" if suffix in {".jpg", ".jpeg"}
+        else "image/png"
+    )
     if settings.use_supabase_storage:
         storage_path = f"{document_type}/{digest}{suffix}"
-        content_type = upload.content_type or ("application/pdf" if suffix == ".pdf" else "image/jpeg" if suffix in {".jpg", ".jpeg"} else "image/png")
         upload_bytes(storage_path, content, content_type)
     else:
         STORAGE_ROOT.mkdir(parents=True, exist_ok=True)
         target = STORAGE_ROOT / f"{digest}{suffix}"
         target.write_bytes(content)
         storage_path = str(target)
-    doc = Document(file_name=filename, file_type=suffix[1:].upper(), document_type=document_type,
-                   file_hash=digest, storage_path=storage_path, uploaded_by=uploaded_by,
-                   branch=normalize_branch(branch) or branch_for_actor(db, uploaded_by))
+    doc = Document(
+        file_name=filename,
+        file_type=suffix[1:].upper(),
+        document_type=document_type,
+        file_hash=digest,
+        storage_path=storage_path,
+        uploaded_by=uploaded_by,
+        branch=normalize_branch(branch) or branch_for_actor(db, uploaded_by),
+        evidence_classification=document_type,
+        evidence_source="UPLOAD",
+        file_size_bytes=len(content),
+        mime_type=content_type,
+        evidence_version_number=1,
+    )
     db.add(doc)
     db.commit()
     db.refresh(doc)
