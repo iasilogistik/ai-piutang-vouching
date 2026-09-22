@@ -70,12 +70,12 @@ def _function_exists(connection, signature: str) -> bool:
     )
 
 
-def _public_schema_revision(connection) -> str | None:
+def _protected_schema_revision(connection) -> str | None:
     try:
-        if not _function_exists(connection, "public.current_app_schema_revision()"):
+        if not _function_exists(connection, "app_private.current_app_schema_revision()"):
             return None
         value = connection.execute(
-            text("select public.current_app_schema_revision()")
+            text("select app_private.current_app_schema_revision()")
         ).scalar_one_or_none()
         return str(value) if value else None
     except Exception:
@@ -109,7 +109,7 @@ def _tracked_heads(connection) -> set[str]:
         # Do not open the internal schema to application roles just for readiness.
         pass
 
-    public_revision = _public_schema_revision(connection)
+    public_revision = _protected_schema_revision(connection)
     if public_revision:
         return {public_revision}
 
