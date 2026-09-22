@@ -13,6 +13,26 @@ branch_labels = None
 depends_on = None
 
 
+def _supabase_auth_available() -> bool:
+    bind = op.get_bind()
+    return bool(
+        bind.execute(
+            sa.text(
+                """
+                select
+                  exists (select 1 from pg_roles where rolname='authenticated')
+                  and exists (
+                    select 1
+                    from pg_proc p
+                    join pg_namespace n on n.oid=p.pronamespace
+                    where n.nspname='auth' and p.proname='uid'
+                  )
+                """
+            )
+        ).scalar()
+    )
+
+
 def upgrade() -> None:
     op.create_table(
         "audit_notifications",
@@ -50,23 +70,24 @@ def upgrade() -> None:
     for table in ("audit_notifications", "notification_preferences"):
         op.execute(f"alter table public.{table} enable row level security")
 
-    op.execute("""
-        create policy "notification_owner_read"
-        on public.audit_notifications for select to authenticated
-        using (user_id = auth.uid()::text)
-    """)
-    op.execute("""
-        create policy "notification_owner_update"
-        on public.audit_notifications for update to authenticated
-        using (user_id = auth.uid()::text)
-        with check (user_id = auth.uid()::text)
-    """)
-    op.execute("""
-        create policy "notification_preferences_owner"
-        on public.notification_preferences for all to authenticated
-        using (user_id = auth.uid()::text)
-        with check (user_id = auth.uid()::text)
-    """)
+    if _supabase_auth_available():
+        op.execute("""
+            create policy "notification_owner_read"
+            on public.audit_notifications for select to authenticated
+            using (user_id = auth.uid()::text)
+        """)
+        op.execute("""
+            create policy "notification_owner_update"
+            on public.audit_notifications for update to authenticated
+            using (user_id = auth.uid()::text)
+            with check (user_id = auth.uid()::text)
+        """)
+        op.execute("""
+            create policy "notification_preferences_owner"
+            on public.notification_preferences for all to authenticated
+            using (user_id = auth.uid()::text)
+            with check (user_id = auth.uid()::text)
+        """)
 
 
 def downgrade() -> None:
