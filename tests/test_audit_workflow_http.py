@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 
+from app.auth import current_user
 from app.main import app
 
 
@@ -16,13 +17,18 @@ def test_audit_workflow_ui_exposes_integrated_flow():
 
 
 def test_audit_workflow_api_requires_authentication():
-    assert client.get("/audit-workflow-cases").status_code == 401
-    assert client.get("/audit-workflow-cases/1").status_code == 401
-    assert client.post(
-        "/audit-workflow-cases",
-        data={"vouching_result_id": "1"},
-    ).status_code == 401
-    assert client.post(
-        "/audit-workflow-cases/1/transition",
-        data={"stage": "CONTROL_EVIDENCE"},
-    ).status_code == 401
+    previous_override = app.dependency_overrides.pop(current_user, None)
+    try:
+        assert client.get("/audit-workflow-cases").status_code == 401
+        assert client.get("/audit-workflow-cases/1").status_code == 401
+        assert client.post(
+            "/audit-workflow-cases",
+            data={"vouching_result_id": "1"},
+        ).status_code == 401
+        assert client.post(
+            "/audit-workflow-cases/1/transition",
+            data={"stage": "CONTROL_EVIDENCE"},
+        ).status_code == 401
+    finally:
+        if previous_override is not None:
+            app.dependency_overrides[current_user] = previous_override
