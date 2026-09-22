@@ -13,6 +13,8 @@ EXPECTED_TABLES = {
     "document_control_evidence",
     "control_evidence_detections",
     "audit_workflow_cases",
+    "audit_engagements",
+    "audit_engagement_assignments",
 }
 
 
@@ -59,6 +61,7 @@ def test_schema_relationship_columns_exist() -> None:
     }.issubset({column["name"] for column in inspector.get_columns("document_control_evidence")})
     assert {
         "id",
+        "engagement_id",
         "branch",
         "vouching_result_id",
         "control_evidence_id",
@@ -70,6 +73,14 @@ def test_schema_relationship_columns_exist() -> None:
         "created_by",
         "updated_by",
     }.issubset({column["name"] for column in inspector.get_columns("audit_workflow_cases")})
+    assert "engagement_id" in {column["name"] for column in inspector.get_columns("audit_reports")}
+    assert {
+        "id", "code", "title", "branch", "period_start", "period_end", "scope", "status",
+        "created_by", "updated_by", "created_at", "updated_at",
+    }.issubset({column["name"] for column in inspector.get_columns("audit_engagements")})
+    assert {
+        "id", "engagement_id", "user_id", "assignment_role", "assigned_by", "assigned_at",
+    }.issubset({column["name"] for column in inspector.get_columns("audit_engagement_assignments")})
     assert {
         "document_id",
         "branch",
@@ -145,3 +156,17 @@ def test_workflow_case_is_unique_per_vouching_result() -> None:
         for constraint in inspector.get_unique_constraints("audit_workflow_cases")
     }
     assert ("vouching_result_id",) in constraints
+
+
+def test_engagement_constraints_are_declared() -> None:
+    inspector = inspect(engine)
+    engagement_unique = {
+        tuple(constraint["column_names"])
+        for constraint in inspector.get_unique_constraints("audit_engagements")
+    }
+    assignment_unique = {
+        tuple(constraint["column_names"])
+        for constraint in inspector.get_unique_constraints("audit_engagement_assignments")
+    }
+    assert ("code",) in engagement_unique
+    assert ("engagement_id", "user_id", "assignment_role") in assignment_unique
