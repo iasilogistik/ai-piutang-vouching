@@ -19,6 +19,7 @@ from app.services.audit_sampling import register_audit_sampling_routes
 from app.services.audit_working_paper import register_audit_working_paper_routes
 from app.services.audit_finding import register_audit_finding_routes
 from app.services.management_actions import register_management_action_routes
+from app.services.follow_up import register_follow_up_routes
 from app.services.audit_report import register_audit_report_routes
 from app.services.audit_closing import register_audit_closing_routes
 from app.services.branch_dashboard import register_branch_dashboard_routes
@@ -61,6 +62,7 @@ register_audit_sampling_routes(app)
 register_audit_working_paper_routes(app)
 register_audit_finding_routes(app)
 register_management_action_routes(app)
+register_follow_up_routes(app)
 
 
 def get_db():
