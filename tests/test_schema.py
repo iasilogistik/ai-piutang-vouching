@@ -15,6 +15,8 @@ EXPECTED_TABLES = {
     "audit_workflow_cases",
     "audit_engagements",
     "audit_engagement_assignments",
+    "audit_populations",
+    "audit_samples",
 }
 
 
@@ -81,6 +83,15 @@ def test_schema_relationship_columns_exist() -> None:
     assert {
         "id", "engagement_id", "user_id", "assignment_role", "assigned_by", "assigned_at",
     }.issubset({column["name"] for column in inspector.get_columns("audit_engagement_assignments")})
+    assert {
+        "id", "engagement_id", "branch", "name", "population_type", "source_type",
+        "source_reference", "total_records", "total_value", "snapshot_at", "created_by", "created_at",
+    }.issubset({column["name"] for column in inspector.get_columns("audit_populations")})
+    assert {
+        "id", "engagement_id", "population_id", "branch", "source_record_ref", "selection_method",
+        "selection_reason", "method_parameters", "monetary_value", "status", "selected_by", "selected_at",
+        "vouching_result_id", "control_evidence_id",
+    }.issubset({column["name"] for column in inspector.get_columns("audit_samples")})
     assert {
         "document_id",
         "branch",
@@ -170,3 +181,12 @@ def test_engagement_constraints_are_declared() -> None:
     }
     assert ("code",) in engagement_unique
     assert ("engagement_id", "user_id", "assignment_role") in assignment_unique
+
+
+def test_audit_sample_duplicate_constraint_is_declared() -> None:
+    inspector = inspect(engine)
+    constraints = {
+        tuple(constraint["column_names"])
+        for constraint in inspector.get_unique_constraints("audit_samples")
+    }
+    assert ("population_id", "source_record_ref") in constraints
