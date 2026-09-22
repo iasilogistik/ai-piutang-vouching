@@ -158,6 +158,9 @@ def test_readiness_fails_when_schema_is_not_current(monkeypatch):
         "status": "not_ready",
         "database": "healthy",
         "schema_current": False,
+        "reason": "schema_revision_mismatch",
+        "expected_revision": ["0028_performance_hardening"],
+        "database_revision": ["0027_release_schema_revision"],
     }
 
 
@@ -174,6 +177,8 @@ def test_readiness_reports_healthy_database_when_tracker_is_missing(monkeypatch)
         "status": "not_ready",
         "database": "healthy",
         "schema_current": False,
+        "reason": "migration_metadata_unavailable",
+        "expected_revision": ["0028_performance_hardening"],
     }
 
 
@@ -191,5 +196,7 @@ def test_readiness_fails_closed_when_database_is_unavailable(monkeypatch):
         "status": "not_ready",
         "database": "unavailable",
         "schema_current": False,
+        "reason": "database_unavailable",
+        "expected_revision": ["0028_performance_hardening"],
     }
     assert "detail" not in payload
