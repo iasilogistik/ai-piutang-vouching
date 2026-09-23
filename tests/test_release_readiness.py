@@ -6,7 +6,7 @@ from app.services.release_readiness import EXPECTED_SCHEMA_REVISION
 
 client = TestClient(app)
 
-EXPECTED_REVISION = "0030_public_revision_helper"
+EXPECTED_REVISION = EXPECTED_SCHEMA_REVISION
 PREVIOUS_REVISION = "0029_app_private_usage"
 
 
