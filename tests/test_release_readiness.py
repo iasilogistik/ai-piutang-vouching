@@ -186,6 +186,11 @@ def test_readiness_reports_healthy_database_when_tracker_is_missing(monkeypatch)
         raise release_readiness.MigrationMetadataUnavailable("must not leak")
 
     monkeypatch.setattr(release_readiness, "_database_heads", no_tracker)
+    monkeypatch.setattr(
+        release_readiness,
+        "_missing_database_schema_objects",
+        lambda: ["public.audit_notifications"],
+    )
 
     response = client.get("/readiness")
 
@@ -196,6 +201,7 @@ def test_readiness_reports_healthy_database_when_tracker_is_missing(monkeypatch)
         "schema_current": False,
         "reason": "migration_metadata_unavailable",
         "expected_revision": [EXPECTED_REVISION],
+        "missing_schema_objects": ["public.audit_notifications"],
     }
 
 
@@ -217,3 +223,22 @@ def test_readiness_fails_closed_when_database_is_unavailable(monkeypatch):
         "expected_revision": [EXPECTED_REVISION],
     }
     assert "detail" not in payload
+
+
+def test_missing_required_schema_objects_reports_only_invisible_relations(monkeypatch):
+    visible = {
+        "public.documents",
+        "public.document_control_evidence",
+        "public.user_roles",
+        "public.audit_trail",
+        "public.audit_workflow_cases",
+    }
+    monkeypatch.setattr(
+        release_readiness,
+        "_relation_exists",
+        lambda _connection, relation: relation in visible,
+    )
+
+    missing = release_readiness._missing_required_schema_objects(object())
+
+    assert missing == ["public.audit_notifications"]
