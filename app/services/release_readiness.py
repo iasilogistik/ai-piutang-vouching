@@ -10,7 +10,7 @@ from app.database import engine
 
 router = APIRouter()
 _REGISTERED = False
-EXPECTED_SCHEMA_REVISION = "0028_performance_hardening"
+EXPECTED_SCHEMA_REVISION = "0029_app_private_usage"
 
 
 class MigrationMetadataUnavailable(RuntimeError):
