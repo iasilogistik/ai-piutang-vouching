@@ -5,6 +5,9 @@ from app.services import release_readiness
 
 client = TestClient(app)
 
+EXPECTED_REVISION = "0029_fix_app_private_schema_usage"
+PREVIOUS_REVISION = "0028_performance_hardening"
+
 
 class _ScalarResult:
     def __init__(self, *, scalar=None, rows=None):
@@ -81,18 +84,18 @@ def test_release_environment_falls_back_to_app_env(monkeypatch):
 
 
 def test_tracker_reads_alembic_heads_when_available(monkeypatch):
-    connection = _FakeConnection(alembic_rows=["0028_performance_hardening"])
+    connection = _FakeConnection(alembic_rows=[EXPECTED_REVISION])
     monkeypatch.setattr(
         release_readiness,
         "_relation_exists",
         lambda _connection, relation: relation == "public.alembic_version",
     )
 
-    assert release_readiness._tracked_heads(connection) == {"0028_performance_hardening"}
+    assert release_readiness._tracked_heads(connection) == {EXPECTED_REVISION}
 
 
 def test_tracker_reads_supabase_latest_migration_when_allowed(monkeypatch):
-    connection = _FakeConnection(supabase_latest="0028_performance_hardening")
+    connection = _FakeConnection(supabase_latest=EXPECTED_REVISION)
     monkeypatch.setattr(
         release_readiness,
         "_relation_exists",
@@ -100,12 +103,12 @@ def test_tracker_reads_supabase_latest_migration_when_allowed(monkeypatch):
     )
     monkeypatch.setattr(release_readiness, "_function_exists", lambda *_: False)
 
-    assert release_readiness._tracked_heads(connection) == {"0028_performance_hardening"}
+    assert release_readiness._tracked_heads(connection) == {EXPECTED_REVISION}
 
 
 def test_tracker_prefers_protected_revision_before_restricted_internal_tracker(monkeypatch):
     connection = _FakeConnection(
-        app_revision="0028_performance_hardening",
+        app_revision=EXPECTED_REVISION,
         supabase_error=True,
     )
     monkeypatch.setattr(
@@ -117,7 +120,7 @@ def test_tracker_prefers_protected_revision_before_restricted_internal_tracker(m
 
     # This succeeds only if the helper is used before the direct internal read:
     # the fake internal tracker raises exactly like a restricted hosted role.
-    assert release_readiness._tracked_heads(connection) == {"0028_performance_hardening"}
+    assert release_readiness._tracked_heads(connection) == {EXPECTED_REVISION}
 
 
 def test_tracker_fails_closed_when_no_metadata_source_exists(monkeypatch):
@@ -134,8 +137,8 @@ def test_tracker_fails_closed_when_no_metadata_source_exists(monkeypatch):
 
 
 def test_readiness_ready_when_database_revision_matches_code(monkeypatch):
-    monkeypatch.setattr(release_readiness, "_database_heads", lambda: {"0028_performance_hardening"})
-    monkeypatch.setattr(release_readiness, "_expected_heads", lambda: {"0028_performance_hardening"})
+    monkeypatch.setattr(release_readiness, "_database_heads", lambda: {EXPECTED_REVISION})
+    monkeypatch.setattr(release_readiness, "_expected_heads", lambda: {EXPECTED_REVISION})
 
     response = client.get("/readiness")
 
@@ -148,8 +151,8 @@ def test_readiness_ready_when_database_revision_matches_code(monkeypatch):
 
 
 def test_readiness_fails_when_schema_is_not_current(monkeypatch):
-    monkeypatch.setattr(release_readiness, "_database_heads", lambda: {"0027_release_schema_revision"})
-    monkeypatch.setattr(release_readiness, "_expected_heads", lambda: {"0028_performance_hardening"})
+    monkeypatch.setattr(release_readiness, "_database_heads", lambda: {PREVIOUS_REVISION})
+    monkeypatch.setattr(release_readiness, "_expected_heads", lambda: {EXPECTED_REVISION})
 
     response = client.get("/readiness")
 
@@ -159,8 +162,8 @@ def test_readiness_fails_when_schema_is_not_current(monkeypatch):
         "database": "healthy",
         "schema_current": False,
         "reason": "schema_revision_mismatch",
-        "expected_revision": ["0028_performance_hardening"],
-        "database_revision": ["0027_release_schema_revision"],
+        "expected_revision": [EXPECTED_REVISION],
+        "database_revision": [PREVIOUS_REVISION],
     }
 
 
@@ -178,7 +181,7 @@ def test_readiness_reports_healthy_database_when_tracker_is_missing(monkeypatch)
         "database": "healthy",
         "schema_current": False,
         "reason": "migration_metadata_unavailable",
-        "expected_revision": ["0028_performance_hardening"],
+        "expected_revision": [EXPECTED_REVISION],
     }
 
 
@@ -197,6 +200,6 @@ def test_readiness_fails_closed_when_database_is_unavailable(monkeypatch):
         "database": "unavailable",
         "schema_current": False,
         "reason": "database_unavailable",
-        "expected_revision": ["0028_performance_hardening"],
+        "expected_revision": [EXPECTED_REVISION],
     }
     assert "detail" not in payload
