@@ -10,7 +10,7 @@ from app.database import engine
 
 router = APIRouter()
 _REGISTERED = False
-EXPECTED_SCHEMA_REVISION = "0029_app_private_usage"
+EXPECTED_SCHEMA_REVISION = "0030_public_revision_helper"
 
 
 class MigrationMetadataUnavailable(RuntimeError):
@@ -65,16 +65,30 @@ def _function_exists(connection, signature: str) -> bool:
     )
 
 
-def _protected_schema_revision(connection) -> str | None:
+def _call_revision_helper(connection, signature: str, sql: str) -> str | None:
     try:
-        if not _function_exists(connection, "app_private.current_app_schema_revision()"):
+        if not _function_exists(connection, signature):
             return None
-        value = connection.execute(
-            text("select app_private.current_app_schema_revision()")
-        ).scalar_one_or_none()
+        value = connection.execute(text(sql)).scalar_one_or_none()
         return str(value) if value else None
     except Exception:
         return None
+
+
+def _protected_schema_revision(connection) -> str | None:
+    public_revision = _call_revision_helper(
+        connection,
+        "public.current_app_schema_revision()",
+        "select public.current_app_schema_revision()",
+    )
+    if public_revision:
+        return public_revision
+
+    return _call_revision_helper(
+        connection,
+        "app_private.current_app_schema_revision()",
+        "select app_private.current_app_schema_revision()",
+    )
 
 
 def _tracked_heads(connection) -> set[str]:
@@ -85,7 +99,7 @@ def _tracked_heads(connection) -> set[str]:
         return {str(value) for value in rows}
 
     # Hosted Supabase can restrict direct reads from its internal migration schema.
-    # Prefer the narrow SECURITY DEFINER helper before trying that internal table:
+    # Prefer a narrow SECURITY DEFINER helper before trying that internal table:
     # a permission error on the direct read aborts the PostgreSQL transaction and
     # would otherwise make the protected fallback unusable on the same connection.
     protected_revision = _protected_schema_revision(connection)
