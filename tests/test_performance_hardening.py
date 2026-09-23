@@ -8,10 +8,10 @@ ROOT = Path(__file__).resolve().parents[1]
 MIGRATION = ROOT / "alembic" / "versions" / "0028_performance_hardening.py"
 
 
-def test_app_private_usage_is_the_single_release_head():
+def test_public_revision_helper_is_the_single_release_head():
     config = Config(str(ROOT / "alembic.ini"))
     config.set_main_option("script_location", str(ROOT / "alembic"))
-    assert ScriptDirectory.from_config(config).get_heads() == ["0029_app_private_usage"]
+    assert ScriptDirectory.from_config(config).get_heads() == ["0030_public_revision_helper"]
 
 
 def test_performance_hardening_covers_reported_foreign_keys_and_rls_initplan():
