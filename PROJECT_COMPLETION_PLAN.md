@@ -1,122 +1,96 @@
 # PROJECT COMPLETION PLAN
 
-Version: 2.0 — 2026-09-23
+Version: 3.0 — 2026-09-23
 
 ## Objective
 
-Complete the project from the current production baseline through environment correction, live four-role UAT, RLS consolidation, security disposition, and final go-live sign-off.
+Finish the project from the current production baseline to formal go-live sign-off.
 
-This plan is intentionally split into two execution surfaces:
-
-1. **Development / Release lanes** — production, database, UAT, security, release and handover work.
-2. **Codex execution lanes** — narrow verify/implement tasks only. Codex must not re-analyze architecture or redesign modules.
+This plan is split into:
+1. **Development / Release execution**
+2. **Codex execute-only verification**
 
 No task is DONE without objective evidence.
 
 ## Current baseline
 
-- Repository: `iasilogistik/ai-piutang-vouching`.
-- Latest `main`: `bee659293f855353b130b19e8ea5e812022d8ca7`.
-- Vercel production: READY on the same SHA.
-- `/version`: correct commit, branch `main`, environment `production`.
-- `/health`: HTTP 200 healthy.
-- `/readiness`: HTTP 503, `migration_metadata_unavailable`.
-- Runtime reports these required objects as missing:
+- Repository: `iasilogistik/ai-piutang-vouching`
+- Latest main: `6153542f09cd6ef978e2f739d0b4d28c63f494c7`
+- Vercel production: READY on the same SHA
+- `/version`: SHA correct, branch `main`, environment `production`
+- `/health`: HTTP 200 healthy
+- `/readiness`: HTTP 503
+- readiness reason: `migration_metadata_unavailable`
+- expected revision: `0031_revision_helper_acl`
+- runtime reports these schema objects as missing:
   - `public.audit_notifications`
   - `public.audit_workflow_cases`
   - `public.document_control_evidence`
   - `public.user_roles`
-- Supabase project `snmbkpjfmxrmautidlcf` independently confirms those objects exist.
-- Strongest remaining blocker: OPS-03 #114 — Vercel production `DATABASE_URL` points to a stale/different DB or unsupported connection context.
-- PERF-02 draft PR #106 is mergeable and verified; current migration target is `0032_rls_policy_consolidation`.
-- SEC-02 #118 is complete: migration `0031_revision_helper_acl` is applied and the SECURITY DEFINER executable warnings are cleared.
-- Codex C01 final verification was rerun after SEC-02 and is PASS FINAL in CODEX-01 #116 (239 passed, 51 warnings).
+- Supabase project `snmbkpjfmxrmautidlcf` confirms those objects exist.
+- Current root blocker: **OPS-03 #114** — Vercel Production `DATABASE_URL` must be aligned to the intended Supabase production database.
+- PERF-02 draft PR #106 is based on current main, mergeable, and CI green.
+- Codex C01 latest-baseline recheck: PASS FINAL.
 
-## Definition of project DONE
+## Definition of DONE
 
-The project is complete only when all of the following are true:
-
-1. Vercel production uses the intended Supabase production database.
-2. `/version.commit` equals final approved `main`.
-3. `/version.environment=production`.
-4. `/health=200 healthy`.
-5. `/readiness=200 ready` and `schema_current=true`.
+The project is complete only when:
+1. Vercel production connects to the intended Supabase production DB.
+2. `/version.commit == final main`.
+3. `/version.environment == production`.
+4. `/health == 200 healthy`.
+5. `/readiness == 200 ready` and `schema_current=true`.
 6. ADMIN/AUDITOR/REVIEWER/VIEWER live UAT passes.
-7. Cross-branch negative authorization tests pass.
-8. Migration `0032_rls_policy_consolidation` is applied schema-first after pre-UAT PASS.
-9. The identical post-0032 UAT matrix passes with no authorization change.
+7. Cross-branch negative tests pass.
+8. PERF-02 migration `0032_rls_policy_consolidation` is applied only after pre-UAT PASS.
+9. The identical post-0032 UAT matrix passes.
 10. Supabase security/performance advisors are reviewed.
 11. SEC-01 is enabled or explicitly risk-accepted.
-12. Final documentation is present and current.
+12. Final handover docs match final production.
 13. GO-LIVE #103 contains evidence and sign-off.
-14. CODEX-01 #116 C01–C05 are PASS or an explicitly external blocker is resolved outside Codex before final PASS.
+14. CODEX-01 #116 C01–C05 are PASS.
 
-# DEVELOPMENT / RELEASE PLAN
+# DEVELOPMENT / RELEASE EXECUTION
 
-## Lane A — OPS-03 Production Database Alignment
+## Lane A — OPS-03 Production DB Alignment
+**Owner:** authorized Vercel/Supabase operator
+**Issue:** #114
+**Parallel with:** Lane B provisioning, Lane D security disposition, Lane E documentation
 
-**Owner:** Vercel/Supabase operator  
-**Issue:** #114  
-**Runs in parallel with:** Lane B provisioning, Lane D security disposition, Lane E documentation.
+Actions:
+1. Open Vercel project `prj_uTNHTXIvJNDp1OluI9SDiQhKrEx8`.
+2. Inspect Production `DATABASE_URL` without sharing its value.
+3. Compare it with the current Supabase Connect string for `snmbkpjfmxrmautidlcf`.
+4. If mismatched, replace only Production `DATABASE_URL`.
+5. Redeploy latest main once.
+6. Verify:
+   - version SHA == main
+   - environment == production
+   - health 200
+   - readiness 200
+   - schema_current true
+   - no release-caused runtime errors
 
-### A1 — Inspect production DATABASE_URL
-In Vercel project `prj_uTNHTXIvJNDp1OluI9SDiQhKrEx8`:
-- open Production Environment Variables;
-- inspect `DATABASE_URL` without copying it into GitHub/chat/screenshots;
-- compare internally with Supabase project `snmbkpjfmxrmautidlcf` Connect string.
-
-Safe fingerprint rule:
-- direct connection should target the intended project endpoint; or
-- pooler credentials should identify project ref `snmbkpjfmxrmautidlcf`.
-
-### A2 — Correct the environment if mismatched
-- update only Production `DATABASE_URL`;
-- do not change application code to compensate for wrong infrastructure config;
-- redeploy latest approved `main` once.
-
-### A3 — Verify release
-Required:
-- `/version.commit == main`
-- `/version.environment == production`
-- `/health == 200 healthy`
-- `/readiness == 200 ready`
-- `schema_current == true`
-- current audit tables query successfully
-- no new runtime errors
-
-### A4 — Evidence
-Attach non-secret evidence to #114 and GO-LIVE #103.
-
-**Lane A DONE:** readiness green on intended Supabase production DB.
-
----
+**DONE:** #114 contains non-secret evidence and readiness is green.
 
 ## Lane B — Live Four-Role UAT
+**Owner:** release/UAT operator
+**Issue:** #89
+**Provisioning can run in parallel with Lane A.**
+**Execution dependency:** Lane A PASS.
 
-**Owner:** Release/UAT operator  
-**Issue:** #89  
-**Can start provisioning in parallel with Lane A.**  
-**Full execution dependency:** Lane A PASS.
-
-### B1 — Provision official Auth users
-Create through supported Supabase Authentication administration:
+Provision official Supabase Auth users:
 - AUDITOR
 - REVIEWER
 - VIEWER
 
-Existing ADMIN remains.
+Map each to:
+- branch: PASURUAN
+- active: true
 
-Do not insert directly into `auth.users`.
+Do not write directly to `auth.users`.
 
-### B2 — Map application access
-Through ADMIN user management:
-- AUDITOR → PASURUAN → active
-- REVIEWER → PASURUAN → active
-- VIEWER → PASURUAN → active
-
-### B3 — Run live harness
-Tokens remain local-only:
-
+Run:
 ```bash
 export ADMIN_TOKEN='local-only'
 export AUDITOR_TOKEN='local-only'
@@ -126,182 +100,141 @@ export UAT_BRANCH='PASURUAN'
 python scripts/live_rbac_uat.py
 ```
 
-### B4 — Required matrix
+Required matrix:
 - identity/role
-- navigation visibility
 - authorized reads
-- admin-only denial
-- auditor write gate
-- reviewer approval/verification gate
-- viewer read-only behavior
+- ADMIN-only denial
+- AUDITOR write gate
+- REVIEWER approval/verification gate
+- VIEWER read-only
 - cross-branch denial
 - search/export isolation
 - evidence isolation
-- follow-up/closing role gates
-- audit-trail actor/branch/status evidence
+- follow-up/closing gates
+- audit-trail actor/branch/status
 
-### B5 — Evidence
-Record only PASS/FAIL, routes, role and branch. Never record tokens/passwords.
-
-**Lane B DONE:** complete four-role matrix PASS with no cross-branch leakage.
-
----
+**DONE:** complete four-role matrix PASS with no cross-branch leakage.
 
 ## Lane C — PERF-02 RLS Consolidation
-
-**Owner:** Database/Release operator  
-**Issue / PR:** #93 / #106  
+**Owner:** database/release
+**Issue/PR:** #93 / #106
 **Hard dependency:** Lane B pre-migration PASS.
 
-Preparation already complete:
-- draft PR #106
+Prepared state:
 - migration `0032_rls_policy_consolidation`
-- exactly 21 overlapping authenticated manage policies represented
-- broad read SELECT policies preserved
-- USING/WITH CHECK expressions preserved
-- C01 Codex verification PASS FINAL
-- CI green
-- PR remains draft
+- PR #106 draft
+- based on latest main
+- mergeable
+- CI PASS
+- 21 manage policies captured
+- broad read SELECT policies unchanged
+- existing USING/WITH CHECK preserved
+- C01 PASS FINAL
 
-### C1 — Freeze baseline
-Capture pre-0032 UAT matrix from Lane B.
+Execution:
+1. Freeze pre-0032 UAT evidence.
+2. Rebase #106 only if main changed.
+3. Rerun CI.
+4. Apply 0032 schema-first to production.
+5. Run identical post-0032 UAT.
+6. PRE must equal POST.
+7. Run security/performance advisors.
+8. Merge #106 only after equivalence PASS.
 
-### C2 — Refresh draft
-- rebase PR #106 on final main if main changed;
-- rerun CI;
-- rerun Codex C01 only if functional diff changed.
+**DONE:** no authorization change and target overlap warnings reduced/removed.
 
-### C3 — Apply schema-first
-Apply `0032_rls_policy_consolidation` to Supabase production before merging application release contract changes.
+## Lane D — SEC-01 Disposition
+**Owner:** project owner / Supabase operator
+**Issue:** #79
+**Runs in parallel.**
 
-### C4 — Post-migration equivalence
-Run identical live UAT matrix.
-
-PRE must equal POST.
-
-### C5 — Advisor review
-Run:
-- Supabase performance advisor
-- Supabase security advisor
-
-Expected:
-- targeted multiple-permissive-policy warnings reduced/removed;
-- no new authorization/security issue.
-
-### C6 — Merge
-Merge #106 only after post-migration UAT PASS.
-
-**Lane C DONE:** authorization semantics unchanged and targeted planner warning resolved.
-
----
-
-## Lane D — Security Disposition
-
-**Owner:** Project owner / Supabase operator  
-**Issue:** #79  
-**Runs in parallel with A/B preparation.**
-
-Current condition:
-- Supabase organization plan is Free.
-- leaked-password protection requires Pro or above.
-
-Choose one:
-1. upgrade Supabase plan and enable leaked-password protection; or
-2. record explicit risk acceptance for go-live.
+Choose exactly one:
+1. Upgrade Supabase plan and enable leaked-password protection; or
+2. Record explicit risk acceptance.
 
 No SQL workaround.
 
-**Lane D DONE:** advisor cleared or signed risk acceptance attached to GO-LIVE #103.
+**DONE:** advisor cleared or signed risk acceptance recorded.
 
----
+## Lane E — Documentation/Handover
+**Owner:** development/release
+**Runs in parallel.**
 
-## Lane E — Documentation & Handover
+Required:
+- USER_GUIDE.md
+- GO_LIVE_RUNBOOK.md
+- HANDOVER_CHECKLIST.md
+- PROJECT_COMPLETION_PLAN.md
+- CODEX_EXECUTION_PACK.md
+- UAT_MULTI_ROLE.md
+- DEPLOYMENT.md
+- PROJECT_STATUS.md
+- TESTING_REPORT.md
+- MANUAL_ACTIONS_REQUIRED.md
+- SEC01_RISK_ACCEPTANCE.md
 
-**Owner:** Development/Release  
-**Status:** core DEV-30 documentation already merged.
-
-Required files:
-- `USER_GUIDE.md`
-- `GO_LIVE_RUNBOOK.md`
-- `HANDOVER_CHECKLIST.md`
-- `PROJECT_COMPLETION_PLAN.md`
-- `CODEX_EXECUTION_PACK.md`
-- `UAT_MULTI_ROLE.md`
-- `DEPLOYMENT.md`
-- `PROJECT_STATUS.md`
-- `TESTING_REPORT.md`
-
-Final step:
-- update status/test evidence to final SHA/UAT/advisor outcome.
-
-**Lane E DONE:** handover package matches final production state.
-
----
+**DONE:** files reflect final SHA/UAT/advisor outcome.
 
 ## Lane F — Final Go-Live Sign-Off
-
-**Owner:** Project owner  
-**Issue:** #103  
+**Owner:** project owner
+**Issue:** #103
 **Dependency:** A + B + C + D + E.
 
-Final evidence:
+Attach:
 - final main SHA
-- final production deployment ID/URL
-- `/version`
-- `/health`
-- `/readiness`
+- production deployment ID/URL
+- version/health/readiness
 - migration head
 - pre/post RLS UAT matrix
 - advisor summary
 - runtime-error review
-- accepted risks
-- handover docs
-- sign-off date/owner
+- risk acceptance, if any
+- handover evidence
+- sign-off owner/date
 
-**Lane F DONE:** #103 closed with evidence.
+**DONE:** #103 closed.
 
-# PARALLEL EXECUTION BOARD
+# PARALLEL BOARD
 
 ```text
 NOW
-├─ Lane A: OPS-03 DATABASE_URL correction ─────────────┐
-├─ Lane B: provision UAT Auth users ────────────────┐  │
-├─ Lane D: Pro upgrade / risk acceptance ─────────┐ │  │
-└─ Lane E: keep final docs current ──────────────┐ │ │  │
-                                                │ │ │  │
-AFTER A PASS                                    │ │ │  │
-└─ Lane B: execute live four-role UAT ──────────┘ │ │  │
-                                                  │ │  │
-AFTER B PASS                                      │ │  │
-└─ Lane C: apply 0032 -> repeat UAT -> advisors ───┘ │  │
-                                                    │  │
-FINAL                                               │  │
-└─ Lane F: GO-LIVE #103 sign-off <───────────────────┴──┘
+├─ A: align Vercel Production DATABASE_URL ─────────────┐
+├─ B1: provision AUDITOR/REVIEWER/VIEWER ────────────┐  │
+├─ D: Pro upgrade OR SEC-01 risk acceptance ───────┐ │  │
+└─ E: keep closeout docs current ─────────────────┐ │ │  │
+                                                 │ │ │  │
+AFTER A PASS                                     │ │ │  │
+└─ B2: run live four-role UAT ───────────────────┘ │ │  │
+                                                   │ │  │
+AFTER B PASS                                       │ │  │
+└─ C: apply 0032 -> repeat UAT -> advisors ─────────┘ │  │
+                                                     │  │
+FINAL                                                │  │
+└─ F: GO-LIVE #103 sign-off <─────────────────────────┴──┘
 ```
 
-## Current task status
+## Current status
 
 | Work | Status |
 |---|---|
 | Production SHA parity | PASS |
 | Health | PASS |
-| OPS-03 database alignment | BLOCKED — external Vercel env write |
 | Readiness | BLOCKED by OPS-03 |
+| C01 PERF-02 verifier | PASS FINAL |
 | UAT harness | READY |
-| UAT users | BLOCKED — official Auth provisioning required |
-| PERF-02 implementation | READY — draft #106 |
-| Codex C01 | PASS FINAL |
-| PERF-02 production apply | BLOCKED by UAT |
-| SEC-01 | BLOCKED — plan upgrade or risk acceptance |
-| Documentation | READY / update final evidence later |
+| UAT users | BLOCKED by official Auth provisioning |
+| PERF-02 implementation | READY in draft #106 |
+| 0032 production apply | BLOCKED by pre-UAT |
+| SEC-01 | BLOCKED by owner choice / plan |
+| Documentation | READY for final refresh |
 | GO-LIVE | BLOCKED by A/B/C/D |
 
 ## Non-negotiable controls
 
-- No architecture redesign during finalization.
+- No architecture redesign during closeout.
 - No retrigger-only commits.
 - No direct SQL writes to `auth.users`.
-- No secret/token/password/database URL in repository, issue, chat or screenshot.
-- No 0032 production apply before pre-migration four-role UAT PASS.
+- No secret/token/password/DATABASE_URL in repo, issue, chat, or screenshot.
+- No 0032 apply before pre-UAT PASS.
 - No RLS weakening.
 - No GO-LIVE closure without evidence.
