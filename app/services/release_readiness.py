@@ -56,19 +56,12 @@ def _relation_exists(connection, relation: str) -> bool:
     )
 
 
-def _function_exists(connection, signature: str) -> bool:
-    return bool(
-        connection.execute(
-            text("select to_regprocedure(:signature) is not null"),
-            {"signature": signature},
-        ).scalar()
-    )
-
-
-def _call_revision_helper(connection, signature: str, sql: str) -> str | None:
+def _call_revision_helper(connection, sql: str) -> str | None:
+    # Call helpers directly instead of probing with to_regprocedure first. Some
+    # hosted runtimes can return null for procedure lookup even when EXECUTE on a
+    # SECURITY DEFINER helper is allowed. Undefined-function or permission errors
+    # still fail closed and fall through to the next metadata source.
     try:
-        if not _function_exists(connection, signature):
-            return None
         value = connection.execute(text(sql)).scalar_one_or_none()
         return str(value) if value else None
     except Exception:
@@ -78,7 +71,6 @@ def _call_revision_helper(connection, signature: str, sql: str) -> str | None:
 def _protected_schema_revision(connection) -> str | None:
     public_revision = _call_revision_helper(
         connection,
-        "public.current_app_schema_revision()",
         "select public.current_app_schema_revision()",
     )
     if public_revision:
@@ -86,7 +78,6 @@ def _protected_schema_revision(connection) -> str | None:
 
     return _call_revision_helper(
         connection,
-        "app_private.current_app_schema_revision()",
         "select app_private.current_app_schema_revision()",
     )
 
