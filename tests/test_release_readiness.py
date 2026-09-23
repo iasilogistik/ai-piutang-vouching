@@ -5,8 +5,8 @@ from app.services import release_readiness
 
 client = TestClient(app)
 
-EXPECTED_REVISION = "0029_app_private_usage"
-PREVIOUS_REVISION = "0028_performance_hardening"
+EXPECTED_REVISION = "0030_public_revision_helper"
+PREVIOUS_REVISION = "0029_app_private_usage"
 
 
 class _ScalarResult:
@@ -32,12 +32,14 @@ class _FakeConnection:
         self,
         alembic_rows=None,
         supabase_latest=None,
-        app_revision=None,
+        app_private_revision=None,
+        public_revision=None,
         supabase_error=False,
     ):
         self.alembic_rows = alembic_rows
         self.supabase_latest = supabase_latest
-        self.app_revision = app_revision
+        self.app_private_revision = app_private_revision
+        self.public_revision = public_revision
         self.supabase_error = supabase_error
 
     def execute(self, statement, params=None):
@@ -48,8 +50,10 @@ class _FakeConnection:
             if self.supabase_error:
                 raise PermissionError("internal tracker is not readable")
             return _ScalarResult(scalar=self.supabase_latest)
+        if "select public.current_app_schema_revision()" in sql:
+            return _ScalarResult(scalar=self.public_revision)
         if "select app_private.current_app_schema_revision()" in sql:
-            return _ScalarResult(scalar=self.app_revision)
+            return _ScalarResult(scalar=self.app_private_revision)
         raise AssertionError(f"Unexpected SQL in fake connection: {sql}")
 
 
@@ -106,9 +110,10 @@ def test_tracker_reads_supabase_latest_migration_when_allowed(monkeypatch):
     assert release_readiness._tracked_heads(connection) == {EXPECTED_REVISION}
 
 
-def test_tracker_prefers_protected_revision_before_restricted_internal_tracker(monkeypatch):
+def test_tracker_prefers_public_revision_helper_before_private_and_internal(monkeypatch):
     connection = _FakeConnection(
-        app_revision=EXPECTED_REVISION,
+        public_revision=EXPECTED_REVISION,
+        app_private_revision="should-not-be-used",
         supabase_error=True,
     )
     monkeypatch.setattr(
@@ -116,10 +121,27 @@ def test_tracker_prefers_protected_revision_before_restricted_internal_tracker(m
         "_relation_exists",
         lambda _connection, relation: relation == "supabase_migrations.schema_migrations",
     )
-    monkeypatch.setattr(release_readiness, "_function_exists", lambda *_: True)
+    monkeypatch.setattr(release_readiness, "_function_exists", lambda _connection, signature: True)
 
-    # This succeeds only if the helper is used before the direct internal read:
-    # the fake internal tracker raises exactly like a restricted hosted role.
+    assert release_readiness._tracked_heads(connection) == {EXPECTED_REVISION}
+
+
+def test_tracker_uses_private_helper_when_public_helper_is_unavailable(monkeypatch):
+    connection = _FakeConnection(
+        app_private_revision=EXPECTED_REVISION,
+        supabase_error=True,
+    )
+    monkeypatch.setattr(
+        release_readiness,
+        "_relation_exists",
+        lambda _connection, relation: relation == "supabase_migrations.schema_migrations",
+    )
+    monkeypatch.setattr(
+        release_readiness,
+        "_function_exists",
+        lambda _connection, signature: signature == "app_private.current_app_schema_revision()",
+    )
+
     assert release_readiness._tracked_heads(connection) == {EXPECTED_REVISION}
 
 
