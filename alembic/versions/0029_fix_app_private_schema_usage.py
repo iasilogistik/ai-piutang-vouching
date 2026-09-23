@@ -1,6 +1,6 @@
 """Grant schema usage for the readiness revision helper.
 
-Revision ID: 0029_fix_app_private_schema_usage
+Revision ID: 0029_app_private_usage
 Revises: 0028_performance_hardening
 Create Date: 2026-09-23
 """
@@ -8,7 +8,7 @@ Create Date: 2026-09-23
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0029_fix_app_private_schema_usage"
+revision = "0029_app_private_usage"
 down_revision = "0028_performance_hardening"
 branch_labels = None
 depends_on = None
