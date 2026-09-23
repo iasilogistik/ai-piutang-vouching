@@ -98,12 +98,29 @@ def _protected_schema_revision(connection) -> str | None:
     )
 
 
-def _required_schema_objects_available(connection) -> bool:
+def _missing_required_schema_objects(connection) -> list[str]:
+    missing: list[str] = []
     try:
-        return all(_relation_exists(connection, relation) for relation in REQUIRED_SCHEMA_OBJECTS)
+        for relation in sorted(REQUIRED_SCHEMA_OBJECTS):
+            if not _relation_exists(connection, relation):
+                missing.append(relation)
+        return missing
     except Exception:
         _safe_rollback(connection)
-        return False
+        return sorted(REQUIRED_SCHEMA_OBJECTS)
+
+
+def _required_schema_objects_available(connection) -> bool:
+    return not _missing_required_schema_objects(connection)
+
+
+def _missing_database_schema_objects() -> list[str]:
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("select 1"))
+            return _missing_required_schema_objects(connection)
+    except Exception:
+        return sorted(REQUIRED_SCHEMA_OBJECTS)
 
 
 def _tracked_heads(connection) -> set[str]:
@@ -169,6 +186,7 @@ def readiness_payload() -> tuple[int, dict[str, object]]:
             "schema_current": False,
             "reason": "migration_metadata_unavailable",
             "expected_revision": expected_revision,
+            "missing_schema_objects": _missing_database_schema_objects(),
         }
     except Exception:
         return 503, {
