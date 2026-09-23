@@ -105,7 +105,6 @@ def test_tracker_reads_supabase_latest_migration_when_allowed(monkeypatch):
         "_relation_exists",
         lambda _connection, relation: relation == "supabase_migrations.schema_migrations",
     )
-    monkeypatch.setattr(release_readiness, "_function_exists", lambda *_: False)
 
     assert release_readiness._tracked_heads(connection) == {EXPECTED_REVISION}
 
@@ -121,7 +120,6 @@ def test_tracker_prefers_public_revision_helper_before_private_and_internal(monk
         "_relation_exists",
         lambda _connection, relation: relation == "supabase_migrations.schema_migrations",
     )
-    monkeypatch.setattr(release_readiness, "_function_exists", lambda _connection, signature: True)
 
     assert release_readiness._tracked_heads(connection) == {EXPECTED_REVISION}
 
@@ -136,11 +134,6 @@ def test_tracker_uses_private_helper_when_public_helper_is_unavailable(monkeypat
         "_relation_exists",
         lambda _connection, relation: relation == "supabase_migrations.schema_migrations",
     )
-    monkeypatch.setattr(
-        release_readiness,
-        "_function_exists",
-        lambda _connection, signature: signature == "app_private.current_app_schema_revision()",
-    )
 
     assert release_readiness._tracked_heads(connection) == {EXPECTED_REVISION}
 
@@ -148,7 +141,6 @@ def test_tracker_uses_private_helper_when_public_helper_is_unavailable(monkeypat
 def test_tracker_fails_closed_when_no_metadata_source_exists(monkeypatch):
     connection = _FakeConnection()
     monkeypatch.setattr(release_readiness, "_relation_exists", lambda *_: False)
-    monkeypatch.setattr(release_readiness, "_function_exists", lambda *_: False)
 
     try:
         release_readiness._tracked_heads(connection)
