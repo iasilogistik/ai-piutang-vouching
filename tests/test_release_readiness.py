@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.services import release_readiness
+from app.services.release_readiness import EXPECTED_SCHEMA_REVISION
 
 client = TestClient(app)
 
