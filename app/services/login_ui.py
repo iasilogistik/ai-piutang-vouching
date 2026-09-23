@@ -41,6 +41,7 @@ def login_html() -> str:
     .err { display:block; background:#fef2f2; color:var(--red); border:1px solid #fecaca; }
     .ok { display:block; background:#f0fdf4; color:var(--green); border:1px solid #bbf7d0; }
     .hint { font-size:12px; color:var(--muted); margin-top:12px; }
+    .role-nav { margin-top:16px; }
   </style>
 </head>
 <body>
@@ -55,6 +56,7 @@ def login_html() -> str:
       <button id="loginBtn" type="submit">Login</button>
     </form>
     <div id="message" class="msg"></div>
+    <div id="roleNav" class="role-nav"></div>
     <div class="links">
       <a href="/ui/users">User Management (ADMIN)</a>
       <a href="/ui/uat-pasuruan">Buka UAT Pasuruan</a>
@@ -69,12 +71,14 @@ const form = document.getElementById('loginForm');
 const btn = document.getElementById('loginBtn');
 const message = document.getElementById('message');
 function show(text, ok) { message.textContent = text; message.className = `msg ${ok ? 'ok' : 'err'}`; }
+function roleNavTarget() { return document.getElementById('roleNav'); }
 async function loadRoleNavigation() {
-  const target = document.getElementById('roleNav');
+  const target = roleNavTarget();
+  if (!target) return;
   const token = localStorage.getItem('auditToken') || '';
   if (!token) { target.innerHTML = ''; return; }
   try {
-    const response = await fetch('/ui/navigation', { headers:{ Authorization:\`Bearer \${token}\` } });
+    const response = await fetch('/ui/navigation', { headers:{ Authorization:`Bearer ${token}` } });
     if (!response.ok) { target.innerHTML = ''; return; }
     target.innerHTML = await response.text();
   } catch { target.innerHTML = ''; }
@@ -98,7 +102,8 @@ form.addEventListener('submit', async (event) => {
     let body; try { body = JSON.parse(text); } catch { body = text; }
     if (!response.ok) throw new Error(body.detail || JSON.stringify(body));
     storeSession(body);
-    show('Login berhasil. Token sudah disimpan di browser.', true);\n    await loadRoleNavigation();
+    show('Login berhasil. Token sudah disimpan di browser.', true);
+    await loadRoleNavigation();
   } catch (error) {
     show(error.message || 'Login gagal.', false);
   } finally {
@@ -110,9 +115,12 @@ document.getElementById('logoutBtn').addEventListener('click', () => {
   localStorage.removeItem('auditRefreshToken');
   localStorage.removeItem('auditExpiresAt');
   localStorage.removeItem('auditUser');
-  document.getElementById('roleNav').innerHTML = '';\n  show('Token browser sudah dihapus.', true);
+  const target = roleNavTarget();
+  if (target) target.innerHTML = '';
+  show('Token browser sudah dihapus.', true);
 });
-loadRoleNavigation();\n</script>
+loadRoleNavigation();
+</script>
 </body>
 </html>
 """

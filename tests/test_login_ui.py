@@ -18,6 +18,17 @@ def test_login_ui_shell_loads():
     assert "Logout" in response.text
 
 
+def test_login_ui_role_navigation_script_is_safe_without_token():
+    response = client.get("/login")
+
+    assert response.status_code == 200
+    assert 'id="roleNav"' in response.text
+    assert "function roleNavTarget()" in response.text
+    assert "Authorization:`Bearer ${token}`" in response.text
+    assert "document.getElementById('roleNav').innerHTML" not in response.text
+    assert "\\n    await loadRoleNavigation" not in response.text
+
+
 def test_auth_login_route_validates_required_form_fields():
     response = client.post("/auth/login")
 
