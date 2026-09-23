@@ -10,7 +10,7 @@ from app.database import engine
 
 router = APIRouter()
 _REGISTERED = False
-EXPECTED_SCHEMA_REVISION = "0030_public_revision_helper"
+EXPECTED_SCHEMA_REVISION = "0031_revision_helper_acl"
 REQUIRED_SCHEMA_OBJECTS = {
     "public.documents",
     "public.document_control_evidence",
