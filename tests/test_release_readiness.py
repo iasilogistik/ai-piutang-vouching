@@ -5,7 +5,7 @@ from app.services import release_readiness
 
 client = TestClient(app)
 
-EXPECTED_REVISION = "0029_fix_app_private_schema_usage"
+EXPECTED_REVISION = "0029_app_private_usage"
 PREVIOUS_REVISION = "0028_performance_hardening"
 
 
