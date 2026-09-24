@@ -10,6 +10,12 @@ def test_role_dependency_allows_authorized_role():
     assert dependency(user) == user
 
 
+def test_auditor_can_access_admin_maintenance_dependency():
+    dependency = require_roles("ADMIN")
+    user = CurrentUser(user_id="u1", role="AUDITOR")
+    assert dependency(user) == user
+
+
 def test_role_dependency_rejects_unauthorized_role():
     dependency = require_roles("ADMIN", "AUDITOR")
     with pytest.raises(HTTPException) as exc:
