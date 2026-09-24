@@ -1,6 +1,6 @@
 # CODEX EXECUTION PACK
 
-Version: 3.0 — 2026-09-23
+Version: 3.1 — 2026-09-24
 
 ## Execute-only mode
 
@@ -64,11 +64,17 @@ git diff --check
 ```
 
 # C02 — OPS-03 Production Environment Verifier
-**STATUS: BLOCKED — external operator action**
+**STATUS: BLOCKED — external operator action; current production alias is 500**
 
 Prerequisite:
 - authorized Vercel operator aligns Production `DATABASE_URL` to Supabase project `snmbkpjfmxrmautidlcf`
-- latest main redeployed
+- latest main redeployed exactly once
+- do not patch application code to compensate for a wrong database
+
+Current evidence:
+- current alias `/version`, `/health`, `/readiness`: 500
+- runtime database lacks `public.user_roles`
+- same-main deployment snapshot `ai-piutang-vouching-8286kcdj4-ia-logistik.vercel.app` has health 200 and the correct SHA
 
 Codex does not edit or request the env value.
 
@@ -88,12 +94,13 @@ PASS:
 - no release-caused runtime errors
 
 # C03 — Live Four-Role UAT Verifier
-**STATUS: BLOCKED — requires C02 + Auth users**
+**STATUS: BLOCKED — requires C02 + complete four-role Auth/mapping set**
 
 Prerequisites:
 - C02 PASS
-- official AUDITOR/REVIEWER/VIEWER Auth users
-- all three mapped to PASURUAN
+- four effective sessions: ADMIN / AUDITOR / REVIEWER / VIEWER
+- AUDITOR/REVIEWER/VIEWER mapped to PASURUAN
+- current aggregate production state is only 3 Auth users and 0 active `public.user_roles`, so C03 is not ready
 - ADMIN session available locally
 
 Run only:
