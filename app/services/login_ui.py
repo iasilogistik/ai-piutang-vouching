@@ -89,6 +89,19 @@ function storeSession(data) {
   if (data.expires_at) localStorage.setItem('auditExpiresAt', String(data.expires_at));
   if (data.user) localStorage.setItem('auditUser', JSON.stringify(data.user));
 }
+async function resolvePostLoginDestination(accessToken) {
+  if (!accessToken) return '/ui/uat-pasuruan';
+  try {
+    const response = await fetch('/auth/me', { headers:{ Authorization:`Bearer ${accessToken}` } });
+    if (!response.ok) return '/ui/uat-pasuruan';
+    const profile = await response.json();
+    if (profile.role === 'ADMIN') return '/ui/users';
+    if (profile.role === 'REVIEWER' || profile.role === 'VIEWER') return '/ui/control-evidence';
+    return '/ui/uat-pasuruan';
+  } catch {
+    return '/ui/uat-pasuruan';
+  }
+}
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
   btn.disabled = true;
@@ -102,8 +115,10 @@ form.addEventListener('submit', async (event) => {
     let body; try { body = JSON.parse(text); } catch { body = text; }
     if (!response.ok) throw new Error(body.detail || JSON.stringify(body));
     storeSession(body);
-    show('Login berhasil. Token sudah disimpan di browser.', true);
     await loadRoleNavigation();
+    const destination = await resolvePostLoginDestination(body.access_token || '');
+    show(`Login berhasil. Mengarahkan ke ${destination}...`, true);
+    window.location.href = destination;
   } catch (error) {
     show(error.message || 'Login gagal.', false);
   } finally {
