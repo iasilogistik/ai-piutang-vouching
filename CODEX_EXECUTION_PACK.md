@@ -1,34 +1,34 @@
 # CODEX EXECUTION PACK
 
-Version: 2.0 — 2026-09-23
+Version: 3.0 — 2026-09-24
 
 ## Operating mode
 
-This file is an **execute-only instruction pack**.
+This is an **execute-only** instruction pack.
 
 Codex MUST NOT:
-- analyze the architecture again;
+- re-analyze architecture;
 - redesign modules;
 - propose new features;
 - refactor unrelated code;
-- rename unrelated modules;
 - change RBAC semantics;
 - change branch-isolation semantics;
+- invent users/roles;
+- weaken RLS to make tests pass;
 - expose secrets;
-- create migrations unless the task explicitly says so;
-- produce a new plan.
+- create a new plan.
 
 Codex MUST:
 1. execute only the named task;
-2. inspect only the named files plus direct dependencies needed to run tests;
+2. inspect only named files and direct test dependencies;
 3. run the specified checks;
 4. self-review the diff;
 5. confirm no unrelated change;
 6. report PASS or BLOCKED;
-7. include exact evidence;
+7. include exact non-secret evidence;
 8. stop if authorization/security equivalence cannot be proven.
 
-The orchestration source of truth is:
+Source of truth:
 - `PROJECT_COMPLETION_PLAN.md`
 - GO-LIVE #103
 - CODEX-01 #116
@@ -37,109 +37,58 @@ The orchestration source of truth is:
 
 **STATUS: PASS FINAL**
 
-Do not repeat unless `main` changes and PR #106 is rebased with a functional diff.
+Do not rerun unless PR #106 receives a functional diff or a rebase changes functional content.
 
-Verified:
-- PR #106 rebased to latest main at verification time.
-- Mergeable.
-- Migration CI PASS.
-- Full pytest PASS: **239 passed, 51 warnings**.
-- Functional diff constrained to migration/readiness/tests.
-- No unrelated business-logic change.
-- Authorization predicates preserved.
+Final verified state recorded in CODEX-01 #116:
+- draft PR #106
+- migration `0032_rls_policy_consolidation`
+- single migration chain through 0032
+- CI PASS
+- full pytest PASS
+- exactly 21 manage policies represented
+- broad read SELECT policies untouched
+- existing authorization predicates preserved
+- no application business-logic module changed
 
-Current migration:
-```text
-0032_rls_policy_consolidation
-```
+If rerun is required, inspect only the files named in #116 and return PASS/BLOCKED evidence.
 
-If C01 must be rerun, inspect only:
+# C02 — Production Environment Verifier
 
-```text
-alembic/versions/0032_rls_policy_consolidation.py
-app/services/release_readiness.py
-tests/test_rls_policy_consolidation.py
-tests/test_performance_hardening.py
-tests/test_release_readiness.py
-tests/test_revision_helper_security.py
-```
+**STATUS: PASS FINAL**
 
-Required commands:
-
-```bash
-alembic heads
-alembic upgrade head
-pytest -q
-git diff --check
-git diff main...HEAD --   alembic/versions/0032_rls_policy_consolidation.py   app/services/release_readiness.py   tests/test_rls_policy_consolidation.py   tests/test_performance_hardening.py   tests/test_release_readiness.py \
-  tests/test_revision_helper_security.py
-```
-
-Return only:
-- PASS/BLOCKED
-- Alembic head
-- pytest summary
-- changed files
-- authorization/security concern, if any
-
-No architecture commentary.
-
-# C02 — OPS-03 Production Environment Verifier
-
-**STATUS: BLOCKED**
-
-**External prerequisite:** authorized Vercel operator corrects Production `DATABASE_URL` to Supabase project `snmbkpjfmxrmautidlcf` and redeploys latest main.
-
-Codex does NOT edit the environment variable.
-
-After operator action, verify only:
-
-```text
-/version
-/health
-/readiness
-```
-
-Required acceptance:
-- `/version.commit == latest main`
+Verified on 2026-09-24:
+- main: `368e52c9068069c58d9074e372239c6178338708`
+- production deployment: `dpl_DnRywkE2ge7mB5qGS3gMtj9879Sh`
+- `/version.commit == main`
 - `/version.environment == production`
 - `/health == 200 healthy`
 - `/readiness == 200 ready`
 - `schema_current == true`
+- required production tables visible
+- revision helpers return `0031_revision_helper_acl`
+- latest post-deployment error/warning window clean
 
-Then run authenticated schema smoke if credentials are locally available.
-
-Also check production runtime errors.
-
-Do not patch code unless the latest production diagnostic payload proves a code defect.
-
-Do not request or print:
-- DATABASE_URL
-- database password
-- access token
-- service role key
-- refresh token
-
-Completion response:
-- PASS/BLOCKED
-- production SHA
-- health status
-- readiness status
-- runtime-error result
-- exact non-secret blocker if blocked
+Do not rerun unless production SHA/database alignment changes.
 
 # C03 — Live Four-Role UAT Verifier
 
 **STATUS: BLOCKED**
 
 Prerequisites:
-1. C02 PASS.
-2. Official Supabase Auth users exist for AUDITOR, REVIEWER, VIEWER.
-3. All three mapped to PASURUAN.
-4. ADMIN token available locally.
+1. C02 remains PASS.
+2. Official Auth identities exist for ADMIN/AUDITOR/REVIEWER/VIEWER.
+3. Application mappings are authoritative:
+   - ADMIN active
+   - AUDITOR -> PASURUAN active
+   - REVIEWER -> PASURUAN active
+   - VIEWER -> PASURUAN active
+4. Tokens are available locally.
 
-Do not create users.
-Do not change role mappings unless explicitly delegated by the release operator.
+Codex MUST NOT:
+- create users;
+- infer role from email/name/UUID/account order;
+- write to `auth.users`;
+- print/store token values.
 
 Run only:
 
@@ -152,9 +101,7 @@ export UAT_BRANCH='PASURUAN'
 python scripts/live_rbac_uat.py
 ```
 
-Never echo or persist token values.
-
-Verify:
+Verify only:
 - identity/role
 - authorized reads
 - ADMIN-only denial
@@ -166,14 +113,14 @@ Verify:
 - evidence isolation
 - follow-up/closing role gates
 
-Completion response only:
+Completion response:
 - PASS/BLOCKED
 - production SHA
 - readiness state
 - branch
 - role matrix PASS/FAIL
-- failed route names, if any
-- security concern, if any
+- failed route/action names if any
+- security concern if any
 
 # C04 — Post-0032 Authorization Equivalence
 
@@ -182,42 +129,38 @@ Completion response only:
 Prerequisites:
 - C03 PASS recorded.
 - Development/Release operator applies `0032_rls_policy_consolidation` schema-first.
-- Production application/release contract points to 0032.
 
-Codex does NOT redesign policy logic.
-
-Run the exact same C03 UAT matrix.
-
-Compare PRE vs POST.
+Run the exact same C03 matrix.
 
 Required acceptance:
-- every authorization outcome identical;
-- cross-branch denial intact;
-- no new role escalation;
-- targeted multiple-permissive-policy warnings reduced/removed;
-- no new security advisor issue caused by 0032.
+- PRE == POST for every authorization outcome
+- cross-branch denial intact
+- no role escalation
+- target multiple-permissive-policy warnings reduced/removed
+- no new security-advisor issue caused by 0032
 
 If PRE != POST:
-- return BLOCKED;
-- list exact route/action difference;
-- do not weaken policy to make tests pass.
+- return BLOCKED
+- list exact route/action difference
+- do not weaken RLS
 
 Completion response:
 - PASS/BLOCKED
-- PRE/POST matrix comparison
+- PRE/POST comparison
 - advisor delta
-- changed authorization outcome, if any
+- changed authorization outcome if any
 
 # C05 — Final Repository / Release Verifier
 
 **STATUS: BLOCKED**
 
 Prerequisites:
+- C01 PASS
 - C02 PASS
 - C03 PASS
 - C04 PASS
 - SEC-01 disposition recorded
-- all required PRs merged
+- required PRs merged
 
 Run:
 
@@ -230,42 +173,56 @@ git diff --check
 ```
 
 Verify:
-- exactly one Alembic head;
-- release readiness expected revision equals Alembic head;
-- no required implementation PR left open;
-- final production SHA equals final main;
-- `/health` green;
-- `/readiness` green;
-- documentation present;
-- no accidental secret files;
-- `vercel.json` deployment governance still present.
+- exactly one Alembic head
+- readiness expected revision == Alembic head
+- no required implementation PR left open
+- final production SHA == final main
+- health green
+- readiness green
+- handover docs present
+- no accidental secret file
+- `vercel.json` governance present
 
 Required files:
-
-```text
-USER_GUIDE.md
-GO_LIVE_RUNBOOK.md
-HANDOVER_CHECKLIST.md
-PROJECT_COMPLETION_PLAN.md
-CODEX_EXECUTION_PACK.md
-UAT_MULTI_ROLE.md
-DEPLOYMENT.md
-PROJECT_STATUS.md
-TESTING_REPORT.md
-```
+- `USER_GUIDE.md`
+- `GO_LIVE_RUNBOOK.md`
+- `HANDOVER_CHECKLIST.md`
+- `PROJECT_COMPLETION_PLAN.md`
+- `CODEX_EXECUTION_PACK.md`
+- `UAT_MULTI_ROLE.md`
+- `DEPLOYMENT.md`
+- `PROJECT_STATUS.md`
+- `TESTING_REPORT.md`
 
 Completion response only:
 - PASS/BLOCKED
 - Alembic head
 - pytest summary
 - production SHA
-- readiness result
+- readiness
 - missing files
-- remaining blocker issue numbers
+- remaining blocker issues
 
-# CODEX SELF-CHECK — mandatory for every task
+# PARALLEL CODEX BOARD
 
-Before reporting PASS, Codex must complete all of these:
+```text
+DONE
+├─ C01 PERF-02 verifier ........ PASS FINAL
+└─ C02 production verifier ..... PASS FINAL
+
+WAITING ON DEVELOPMENT/OPERATOR
+└─ C03 live four-role UAT ...... BLOCKED by authoritative mappings/sessions
+
+AFTER C03 PASS
+└─ C04 post-0032 equivalence ... BLOCKED until schema-first 0032 apply
+
+FINAL
+└─ C05 repository/release ...... BLOCKED until C03+C04+SEC-01 disposition
+```
+
+# Mandatory self-check
+
+Before reporting PASS:
 
 ```text
 [ ] Requested scope complete
@@ -284,8 +241,6 @@ If any box cannot be checked, return BLOCKED.
 
 # Completion format
 
-Codex response must be concise and contain only:
-
 ```text
 STATUS: PASS | BLOCKED
 TASK: C0X
@@ -299,6 +254,6 @@ SECURITY/AUTHORIZATION:
 - none | exact concern
 ```
 
-Do not output repository history.
 Do not output a new plan.
+Do not repeat repository history.
 Do not suggest architecture changes.
