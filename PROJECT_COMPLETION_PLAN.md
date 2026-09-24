@@ -1,6 +1,6 @@
 # PROJECT COMPLETION PLAN
 
-Version: 3.0 — 2026-09-23
+Version: 3.1 — 2026-09-24
 
 ## Objective
 
@@ -16,11 +16,12 @@ No task is DONE without objective evidence.
 
 - Repository: `iasilogistik/ai-piutang-vouching`
 - Latest main: `6153542f09cd6ef978e2f739d0b4d28c63f494c7`
-- Vercel production: READY on the same SHA
-- `/version`: SHA correct, branch `main`, environment `production`
-- `/health`: HTTP 200 healthy
-- `/readiness`: HTTP 503
-- readiness reason: `migration_metadata_unavailable`
+- Latest main: `6153542f09cd6ef978e2f739d0b4d28c63f494c7`
+- Current production alias: **UNHEALTHY** after the latest environment action
+- Current alias `/version`, `/health`, `/readiness`: HTTP 500 / FUNCTION_INVOCATION_FAILED
+- Runtime evidence: current Vercel DB context does not contain `public.user_roles`
+- Same-main deployment snapshot `ai-piutang-vouching-8286kcdj4-ia-logistik.vercel.app`: `/health` 200 and `/version.commit` = latest main
+- That healthy snapshot still has readiness 503 because it uses the previous/stale DB context
 - expected revision: `0031_revision_helper_acl`
 - runtime reports these schema objects as missing:
   - `public.audit_notifications`
@@ -28,7 +29,7 @@ No task is DONE without objective evidence.
   - `public.document_control_evidence`
   - `public.user_roles`
 - Supabase project `snmbkpjfmxrmautidlcf` confirms those objects exist.
-- Current root blocker: **OPS-03 #114** — Vercel Production `DATABASE_URL` must be aligned to the intended Supabase production database.
+- Current root blocker: **OPS-03 #114** — Vercel Production `DATABASE_URL` must be aligned to the intended Supabase production database. The application code itself is proven viable by a same-SHA healthy deployment snapshot.
 - PERF-02 draft PR #106 is based on current main, mergeable, and CI green.
 - Codex C01 latest-baseline recheck: PASS FINAL.
 
@@ -53,6 +54,7 @@ The project is complete only when:
 # DEVELOPMENT / RELEASE EXECUTION
 
 ## Lane A — OPS-03 Production DB Alignment
+**P0 / critical path**
 **Owner:** authorized Vercel/Supabase operator
 **Issue:** #114
 **Parallel with:** Lane B provisioning, Lane D security disposition, Lane E documentation
@@ -62,8 +64,9 @@ Actions:
 2. Inspect Production `DATABASE_URL` without sharing its value.
 3. Compare it with the current Supabase Connect string for `snmbkpjfmxrmautidlcf`.
 4. If mismatched, replace only Production `DATABASE_URL`.
-5. Redeploy latest main once.
-6. Verify:
+5. If an immediate service-restoration action is needed before the env fix, an authorized Vercel operator may promote the same-main healthy deployment snapshot `ai-piutang-vouching-8286kcdj4-ia-logistik.vercel.app`; this is only a temporary rollback and does not close OPS-03.
+6. Redeploy latest main exactly once after correcting Production `DATABASE_URL`.
+7. Verify:
    - version SHA == main
    - environment == production
    - health 200
@@ -79,10 +82,18 @@ Actions:
 **Provisioning can run in parallel with Lane A.**
 **Execution dependency:** Lane A PASS.
 
-Provision official Supabase Auth users:
+Current aggregate state:
+- Auth users total: 3
+- active `public.user_roles`: 0
+- Auth role metadata tags: none
+
+For true four-role UAT, ensure **four effective role sessions** exist:
+- ADMIN
 - AUDITOR
 - REVIEWER
 - VIEWER
+
+If only three Auth users exist, provision the missing account through official Supabase Auth administration. Do not infer identities or roles from creation order.
 
 Map each to:
 - branch: PASURUAN
@@ -218,7 +229,8 @@ FINAL                                                │  │
 | Work | Status |
 |---|---|
 | Production SHA parity | PASS |
-| Health | PASS |
+| Production alias health | **FAIL (500)** after env change |
+| Same-main deployment snapshot health | PASS |
 | Readiness | BLOCKED by OPS-03 |
 | C01 PERF-02 verifier | PASS FINAL |
 | UAT harness | READY |
