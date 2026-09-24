@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import httpx
-from fastapi import Depends, Header, HTTPException
+from fastapi import Depends, Header, HTTPException, Request
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -58,10 +58,26 @@ def current_user(authorization: str | None = Header(default=None), db: Session =
     return CurrentUser(user_id=user_id, role=role, branch=row["branch"] if row is not None else None)
 
 
+def _auditor_admin_exception(request: Request, allowed: set[str]) -> bool:
+    """Allow auditors on narrowly defined user-maintenance paths only.
+
+    This keeps branch master modification and other ADMIN-only governance
+    endpoints restricted to ADMIN while allowing auditors to see/edit/hapus
+    application user access in User Management.
+    """
+    if "ADMIN" not in allowed:
+        return False
+    return request.url.path.startswith("/admin/users")
+
+
 def require_roles(*roles: str):
     allowed = set(roles)
-    def dependency(user: CurrentUser = Depends(current_user)) -> CurrentUser:
+
+    def dependency(request: Request, user: CurrentUser = Depends(current_user)) -> CurrentUser:
+        if user.role == "AUDITOR" and _auditor_admin_exception(request, allowed):
+            return user
         if user.role not in allowed:
             raise HTTPException(status_code=403, detail="Insufficient application role")
         return user
+
     return dependency
