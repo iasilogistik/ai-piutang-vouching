@@ -1,6 +1,6 @@
 # CODEX EXECUTION PACK
 
-Version: 3.1 — 2026-09-24
+Version: 3.2 — 2026-09-24
 
 ## Execute-only mode
 
@@ -34,7 +34,7 @@ Sources of truth:
 **STATUS: PASS FINAL**
 
 Latest-baseline evidence:
-- main: `6153542f09cd6ef978e2f739d0b4d28c63f494c7`
+- last C01 functional baseline remains PASS FINAL; rerun only after PR #106 functional rebase/diff
 - PR #106 base: same SHA
 - PR #106 head: `e72ebdb456b0ea2c00dd2c07c3e33c1bc9d410a6`
 - draft: true
@@ -64,19 +64,29 @@ git diff --check
 ```
 
 # C02 — OPS-03 Production Environment Verifier
-**STATUS: BLOCKED — external operator action; current production alias is 500**
+**STATUS: BLOCKED — external operator action only**
 
-Prerequisite:
-- authorized Vercel operator aligns Production `DATABASE_URL` to Supabase project `snmbkpjfmxrmautidlcf`
-- latest main redeployed exactly once
-- do not patch application code to compensate for a wrong database
+BUG-05 development hotfix is complete and MUST NOT be re-analyzed:
+- PR #121 merged
+- CI PASS
+- production main: `368e52c9068069c58d9074e372239c6178338708`
+- `/version`: 200 and exact main SHA
+- application import succeeds
+- public UI shells: 200
+- protected APIs without token: 401
 
-Current evidence:
-- current alias `/version`, `/health`, `/readiness`: 500
-- runtime database lacks `public.user_roles`
-- same-main deployment snapshot `ai-piutang-vouching-8286kcdj4-ia-logistik.vercel.app` has health 200 and the correct SHA
+Remaining external prerequisite:
+- authorized Vercel operator replaces Production `DATABASE_URL` with the exact Supabase **Connect → Transaction pooler** string for project `snmbkpjfmxrmautidlcf`
+- redeploy latest main exactly once
 
-Codex does not edit or request the env value.
+Current blocker evidence:
+- `/health`: 500
+- `/readiness`: 503 `database_unavailable`
+- runtime reaches shared pooler port 6543
+- database authentication fails for user `postgres`
+
+Codex does not edit, request, print, or reconstruct the env value.
+Codex performs no architecture analysis and no code patch unless the post-operator evidence proves a new application defect.
 
 Verify only:
 - /version
