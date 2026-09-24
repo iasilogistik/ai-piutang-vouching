@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import httpx
+from sqlalchemy import text
 
 from app.config import settings
+from app.database import SessionLocal
+
+_ALLOWED_LOGIN_ROLES = {"ADMIN", "AUDITOR"}
 
 
 def _auth_url(path: str) -> str:
@@ -34,6 +38,38 @@ def _normalize_session(data: dict[str, object]) -> dict[str, object]:
     }
 
 
+def _enforce_admin_or_auditor(session: dict[str, object]) -> dict[str, object]:
+    user = session.get("user")
+    user_id = user.get("id") if isinstance(user, dict) else None
+    if not user_id:
+        raise ValueError("Login gagal. User ID tidak diterima dari layanan autentikasi")
+
+    with SessionLocal() as db:
+        row = db.execute(
+            text(
+                """
+                select role::text as role, branch, coalesce(is_active, true) as is_active
+                from public.user_roles
+                where user_id = :user_id
+                """
+            ),
+            {"user_id": user_id},
+        ).mappings().one_or_none()
+
+    if row is None:
+        raise ValueError("Login ditolak. User belum didaftarkan sebagai ADMIN atau AUDITOR")
+    if not row["is_active"]:
+        raise ValueError("Login ditolak. User aplikasi berstatus nonaktif")
+    if row["role"] not in _ALLOWED_LOGIN_ROLES:
+        raise ValueError("Login ditolak. Hanya role ADMIN dan AUDITOR yang dapat login")
+
+    session_user = session.get("user")
+    if isinstance(session_user, dict):
+        session_user["role"] = row["role"]
+        session_user["branch"] = row["branch"]
+    return session
+
+
 def login_with_password(email: str, password: str) -> dict[str, object]:
     email = (email or "").strip()
     if not email or not password:
@@ -52,7 +88,7 @@ def login_with_password(email: str, password: str) -> dict[str, object]:
     data = response.json()
     if not data.get("access_token"):
         raise ValueError("Login gagal. Access token tidak diterima")
-    return _normalize_session(data)
+    return _enforce_admin_or_auditor(_normalize_session(data))
 
 
 def refresh_access_token(refresh_token: str) -> dict[str, object]:
@@ -73,4 +109,4 @@ def refresh_access_token(refresh_token: str) -> dict[str, object]:
     data = response.json()
     if not data.get("access_token"):
         raise ValueError("Refresh gagal. Access token tidak diterima")
-    return _normalize_session(data)
+    return _enforce_admin_or_auditor(_normalize_session(data))
