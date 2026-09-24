@@ -60,8 +60,14 @@ def current_user(authorization: str | None = Header(default=None), db: Session =
 
 def require_roles(*roles: str):
     allowed = set(roles)
+
     def dependency(user: CurrentUser = Depends(current_user)) -> CurrentUser:
+        # Business rule: AUDITOR is allowed to operate ADMIN-only user/branch
+        # maintenance screens, while login is limited to ADMIN and AUDITOR.
+        if user.role == "AUDITOR" and "ADMIN" in allowed:
+            return user
         if user.role not in allowed:
             raise HTTPException(status_code=403, detail="Insufficient application role")
         return user
+
     return dependency
