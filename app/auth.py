@@ -67,12 +67,7 @@ def _auditor_admin_exception(request: Request, allowed: set[str]) -> bool:
     """
     if "ADMIN" not in allowed:
         return False
-    path = request.url.path
-    if path.startswith("/admin/users"):
-        return True
-    if request.method == "GET" and path.startswith("/admin/branches"):
-        return True
-    return False
+    return request.url.path.startswith("/admin/users")
 
 
 def require_roles(*roles: str):
