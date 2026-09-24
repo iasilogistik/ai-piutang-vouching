@@ -10,16 +10,22 @@ prj_uTNHTXIvJNDp1OluI9SDiQhKrEx8
 ```
 
 Required:
-1. Open Vercel → project → Settings → Environment Variables.
-2. Inspect **Production** `DATABASE_URL` privately.
-3. Open Supabase project `snmbkpjfmxrmautidlcf` → Connect.
-4. Compare the intended current production connection string.
-5. If different, update Production `DATABASE_URL`.
+1. Open Supabase project `snmbkpjfmxrmautidlcf` → **Connect** → **Transaction pooler**.
+2. Copy the exact generated transaction-pooler connection string privately.
+3. Open Vercel → project `prj_uTNHTXIvJNDp1OluI9SDiQhKrEx8` → Settings → Environment Variables.
+4. Update only **Production** `DATABASE_URL` with that exact string.
+5. Do not manually reconstruct the pooler username, host, port, or password.
 6. Do not paste the value into chat, GitHub, screenshots, or documents.
-7. Current production alias is now 500 because the active DB context lacks `public.user_roles`. Do not run migrations against that unknown/stale database.
-8. Optional immediate rollback: promote the same-main healthy deployment snapshot `ai-piutang-vouching-8286kcdj4-ia-logistik.vercel.app` while the env value is corrected.
-9. Redeploy latest main exactly once after the correct Production `DATABASE_URL` is saved.
-10. After redeploy, C02 verifies version/health/readiness/runtime.
+7. Current production already includes BUG-05 psycopg3 URL normalization; no driver suffix needs to be manually added to the secret.
+8. Redeploy latest main exactly once after the corrected value is saved.
+9. After redeploy, C02 verifies version/health/readiness/runtime.
+
+Current non-secret evidence:
+- `/version` 200 on latest main
+- `/health` 500
+- `/readiness` 503 database_unavailable
+- Supabase shared pooler :6543 is reachable
+- database authentication fails for user `postgres`
 
 Expected result:
 ```text
