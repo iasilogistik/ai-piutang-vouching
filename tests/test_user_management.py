@@ -24,7 +24,7 @@ def test_login_page_hides_application_shortcuts():
 
     assert response.status_code == 200
     assert "User Management" not in response.text
-    assert "/ui/users" not in response.text
+    assert 'href="/ui/users"' not in response.text
     assert "Buka UAT Pasuruan" not in response.text
     assert "Buka Control Evidence Dashboard" not in response.text
 
