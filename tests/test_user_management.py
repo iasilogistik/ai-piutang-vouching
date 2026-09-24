@@ -19,12 +19,14 @@ def _bootstrap_user_routes() -> None:
     assert response.status_code == 200
 
 
-def test_login_page_links_user_management():
+def test_login_page_hides_application_shortcuts():
     response = client.get("/login")
 
     assert response.status_code == 200
-    assert "User Management" in response.text
-    assert "/ui/users" in response.text
+    assert "User Management" not in response.text
+    assert 'href="/ui/users"' not in response.text
+    assert "Buka UAT Pasuruan" not in response.text
+    assert "Buka Control Evidence Dashboard" not in response.text
 
 
 def test_user_management_ui_shell_loads_without_login_bootstrap():

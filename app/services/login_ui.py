@@ -35,19 +35,16 @@ def login_html() -> str:
     input { width:100%; padding:11px 12px; border:1px solid var(--line); border-radius:10px; font:inherit; }
     button { width:100%; margin-top:18px; padding:12px; border:0; border-radius:10px; background:var(--blue); color:#fff; font-weight:700; cursor:pointer; }
     button:disabled { opacity:.6; cursor:not-allowed; }
-    .links { display:grid; gap:8px; margin-top:18px; }
-    .links a { color:var(--blue); text-decoration:none; font-weight:700; font-size:14px; }
     .msg { margin-top:14px; padding:10px; border-radius:10px; font-size:14px; display:none; }
     .err { display:block; background:#fef2f2; color:var(--red); border:1px solid #fecaca; }
     .ok { display:block; background:#f0fdf4; color:var(--green); border:1px solid #bbf7d0; }
     .hint { font-size:12px; color:var(--muted); margin-top:12px; }
-    .role-nav { margin-top:16px; }
   </style>
 </head>
 <body>
   <main class="card">
     <h1>AI Piutang Vouching</h1>
-    <p>Login khusus role ADMIN dan AUDITOR. Setelah login, token disimpan otomatis di browser dan dipakai oleh halaman UAT/Dashboard.</p>
+    <p>Login khusus role ADMIN dan AUDITOR. Setelah login berhasil, sistem akan langsung mengarahkan ke halaman kerja sesuai role.</p>
     <form id="loginForm">
       <label for="email">Email</label>
       <input id="email" type="email" autocomplete="username" placeholder="nama@perusahaan.co.id" required />
@@ -56,14 +53,7 @@ def login_html() -> str:
       <button id="loginBtn" type="submit">Login</button>
     </form>
     <div id="message" class="msg"></div>
-    <div id="roleNav" class="role-nav"></div>
-    <div class="links">
-      <a href="/ui/users">User Management (ADMIN/AUDITOR)</a>
-      <a href="/ui/uat-pasuruan">Buka UAT Pasuruan</a>
-      <a href="/ui/control-evidence">Buka Control Evidence Dashboard</a>
-      <a href="/ui/drive-import">Buka Google Drive Import</a>
-    </div>
-    <p class="hint">Role REVIEWER dan VIEWER tidak dapat login melalui halaman ini. Edit dan hapus/nonaktifkan akses hanya tersedia untuk ADMIN dan AUDITOR.</p>
+    <p class="hint">Halaman ini hanya untuk login. Menu aplikasi akan muncul setelah masuk ke halaman tujuan.</p>
     <button id="logoutBtn" type="button" style="background:#475569;">Logout / Hapus Token Browser</button>
   </main>
 <script>
@@ -71,18 +61,6 @@ const form = document.getElementById('loginForm');
 const btn = document.getElementById('loginBtn');
 const message = document.getElementById('message');
 function show(text, ok) { message.textContent = text; message.className = `msg ${ok ? 'ok' : 'err'}`; }
-function roleNavTarget() { return document.getElementById('roleNav'); }
-async function loadRoleNavigation() {
-  const target = roleNavTarget();
-  if (!target) return;
-  const token = localStorage.getItem('auditToken') || '';
-  if (!token) { target.innerHTML = ''; return; }
-  try {
-    const response = await fetch('/ui/navigation', { headers:{ Authorization:`Bearer ${token}` } });
-    if (!response.ok) { target.innerHTML = ''; return; }
-    target.innerHTML = await response.text();
-  } catch { target.innerHTML = ''; }
-}
 function storeSession(data) {
   localStorage.setItem('auditToken', data.access_token || '');
   if (data.refresh_token) localStorage.setItem('auditRefreshToken', data.refresh_token);
@@ -114,10 +92,9 @@ form.addEventListener('submit', async (event) => {
     let body; try { body = JSON.parse(text); } catch { body = text; }
     if (!response.ok) throw new Error(body.detail || JSON.stringify(body));
     storeSession(body);
-    await loadRoleNavigation();
     const destination = await resolvePostLoginDestination(body.access_token || '');
-    show(`Login berhasil. Token ADMIN/AUDITOR aktif. Mengarahkan ke ${destination}...`, true);
-    window.location.href = destination;
+    show(`Login berhasil. Mengarahkan ke ${destination}...`, true);
+    window.location.replace(destination);
   } catch (error) {
     show(error.message || 'Login gagal.', false);
   } finally {
@@ -129,11 +106,8 @@ document.getElementById('logoutBtn').addEventListener('click', () => {
   localStorage.removeItem('auditRefreshToken');
   localStorage.removeItem('auditExpiresAt');
   localStorage.removeItem('auditUser');
-  const target = roleNavTarget();
-  if (target) target.innerHTML = '';
   show('Token browser sudah dihapus.', true);
 });
-loadRoleNavigation();
 </script>
 </body>
 </html>
