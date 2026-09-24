@@ -47,7 +47,7 @@ def login_html() -> str:
 <body>
   <main class="card">
     <h1>AI Piutang Vouching</h1>
-    <p>Login menggunakan akun yang terdaftar di Supabase Auth. Setelah login, token disimpan otomatis di browser dan dipakai oleh halaman UAT/Dashboard.</p>
+    <p>Login khusus role ADMIN dan AUDITOR. Setelah login, token disimpan otomatis di browser dan dipakai oleh halaman UAT/Dashboard.</p>
     <form id="loginForm">
       <label for="email">Email</label>
       <input id="email" type="email" autocomplete="username" placeholder="nama@perusahaan.co.id" required />
@@ -58,12 +58,12 @@ def login_html() -> str:
     <div id="message" class="msg"></div>
     <div id="roleNav" class="role-nav"></div>
     <div class="links">
-      <a href="/ui/users">User Management (ADMIN)</a>
+      <a href="/ui/users">User Management (ADMIN/AUDITOR)</a>
       <a href="/ui/uat-pasuruan">Buka UAT Pasuruan</a>
       <a href="/ui/control-evidence">Buka Control Evidence Dashboard</a>
       <a href="/ui/drive-import">Buka Google Drive Import</a>
     </div>
-    <p class="hint">Logout dapat dilakukan dengan menghapus token dari browser melalui tombol logout di halaman ini.</p>
+    <p class="hint">Role REVIEWER dan VIEWER tidak dapat login melalui halaman ini. Edit dan hapus/nonaktifkan akses hanya tersedia untuk ADMIN dan AUDITOR.</p>
     <button id="logoutBtn" type="button" style="background:#475569;">Logout / Hapus Token Browser</button>
   </main>
 <script>
@@ -90,16 +90,15 @@ function storeSession(data) {
   if (data.user) localStorage.setItem('auditUser', JSON.stringify(data.user));
 }
 async function resolvePostLoginDestination(accessToken) {
-  if (!accessToken) return '/ui/uat-pasuruan';
+  if (!accessToken) return '/ui/users';
   try {
     const response = await fetch('/auth/me', { headers:{ Authorization:`Bearer ${accessToken}` } });
-    if (!response.ok) return '/ui/uat-pasuruan';
+    if (!response.ok) return '/ui/users';
     const profile = await response.json();
-    if (profile.role === 'ADMIN') return '/ui/users';
-    if (profile.role === 'REVIEWER' || profile.role === 'VIEWER') return '/ui/control-evidence';
-    return '/ui/uat-pasuruan';
+    if (profile.role === 'ADMIN' || profile.role === 'AUDITOR') return '/ui/users';
+    return '/login';
   } catch {
-    return '/ui/uat-pasuruan';
+    return '/ui/users';
   }
 }
 form.addEventListener('submit', async (event) => {
@@ -117,7 +116,7 @@ form.addEventListener('submit', async (event) => {
     storeSession(body);
     await loadRoleNavigation();
     const destination = await resolvePostLoginDestination(body.access_token || '');
-    show(`Login berhasil. Mengarahkan ke ${destination}...`, true);
+    show(`Login berhasil. Token ADMIN/AUDITOR aktif. Mengarahkan ke ${destination}...`, true);
     window.location.href = destination;
   } catch (error) {
     show(error.message || 'Login gagal.', false);
