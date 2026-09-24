@@ -1,22 +1,4 @@
-def _register_user_management_once() -> None:
-    """Register user-management routes when /login is first opened.
-
-    This keeps the existing main.py route surface stable while exposing the
-    admin screen after the authentication sprint is enabled.
-    """
-    try:
-        from app.main import app
-        from app.services.user_management import register_user_management_routes
-
-        register_user_management_routes(app)
-    except Exception:
-        # The login page must remain available even if optional admin routes fail
-        # to register during local development or partial deployments.
-        return
-
-
 def login_html() -> str:
-    _register_user_management_once()
     return """
 <!doctype html>
 <html lang="id">
@@ -56,7 +38,6 @@ def login_html() -> str:
     </form>
     <div id="message" class="msg"></div>
     <div class="links">
-      <a href="/ui/users">User Management (ADMIN)</a>
       <a href="/ui/uat-pasuruan">Buka UAT Pasuruan</a>
       <a href="/ui/control-evidence">Buka Control Evidence Dashboard</a>
       <a href="/ui/drive-import">Buka Google Drive Import</a>
