@@ -1,6 +1,6 @@
 # PROJECT COMPLETION PLAN
 
-Version: 3.1 — 2026-09-24
+Version: 3.2 — 2026-09-24
 
 ## Objective
 
@@ -15,21 +15,17 @@ No task is DONE without objective evidence.
 ## Current baseline
 
 - Repository: `iasilogistik/ai-piutang-vouching`
-- Latest main: `6153542f09cd6ef978e2f739d0b4d28c63f494c7`
-- Latest main: `6153542f09cd6ef978e2f739d0b4d28c63f494c7`
-- Current production alias: **UNHEALTHY** after the latest environment action
-- Current alias `/version`, `/health`, `/readiness`: HTTP 500 / FUNCTION_INVOCATION_FAILED
-- Runtime evidence: current Vercel DB context does not contain `public.user_roles`
-- Same-main deployment snapshot `ai-piutang-vouching-8286kcdj4-ia-logistik.vercel.app`: `/health` 200 and `/version.commit` = latest main
-- That healthy snapshot still has readiness 503 because it uses the previous/stale DB context
-- expected revision: `0031_revision_helper_acl`
-- runtime reports these schema objects as missing:
-  - `public.audit_notifications`
-  - `public.audit_workflow_cases`
-  - `public.document_control_evidence`
-  - `public.user_roles`
-- Supabase project `snmbkpjfmxrmautidlcf` confirms those objects exist.
-- Current root blocker: **OPS-03 #114** — Vercel Production `DATABASE_URL` must be aligned to the intended Supabase production database. The application code itself is proven viable by a same-SHA healthy deployment snapshot.
+- Latest main: `368e52c9068069c58d9074e372239c6178338708`
+- Vercel production: READY on the same SHA.
+- BUG-05 #120 / PR #121 is complete: standard PostgreSQL URLs are normalized to the installed psycopg v3 driver.
+- `/version`: HTTP 200, commit matches main, branch `main`, environment `production`.
+- public audit UI shells: HTTP 200.
+- protected APIs without bearer token: HTTP 401.
+- `/health`: HTTP 500 because the database connection cannot authenticate.
+- `/readiness`: HTTP 503, `reason=database_unavailable`.
+- Runtime reaches Supabase shared transaction pooler on port 6543 but receives `FATAL: password authentication failed for user "postgres"`.
+- Current root blocker: **OPS-03 #114** — Production `DATABASE_URL` credentials/username must be replaced with the exact **Supabase Connect → Transaction pooler** connection string for project `snmbkpjfmxrmautidlcf`.
+- No additional application workaround is indicated by current evidence.
 - PERF-02 draft PR #106 is based on current main, mergeable, and CI green.
 - Codex C01 latest-baseline recheck: PASS FINAL.
 
@@ -60,12 +56,12 @@ The project is complete only when:
 **Parallel with:** Lane B provisioning, Lane D security disposition, Lane E documentation
 
 Actions:
-1. Open Vercel project `prj_uTNHTXIvJNDp1OluI9SDiQhKrEx8`.
-2. Inspect Production `DATABASE_URL` without sharing its value.
-3. Compare it with the current Supabase Connect string for `snmbkpjfmxrmautidlcf`.
-4. If mismatched, replace only Production `DATABASE_URL`.
-5. If an immediate service-restoration action is needed before the env fix, an authorized Vercel operator may promote the same-main healthy deployment snapshot `ai-piutang-vouching-8286kcdj4-ia-logistik.vercel.app`; this is only a temporary rollback and does not close OPS-03.
-6. Redeploy latest main exactly once after correcting Production `DATABASE_URL`.
+1. Open Supabase project `snmbkpjfmxrmautidlcf` → **Connect** → **Transaction pooler**.
+2. Copy the exact generated connection string privately; do not reconstruct the pooler username, host, port, or password manually.
+3. Open Vercel project `prj_uTNHTXIvJNDp1OluI9SDiQhKrEx8` → Settings → Environment Variables.
+4. Replace only **Production** `DATABASE_URL` with that exact transaction-pooler string.
+5. Never paste the value into GitHub, chat, screenshots, or documents.
+6. Redeploy latest approved `main` exactly once after saving the corrected value.
 7. Verify:
    - version SHA == main
    - environment == production
@@ -229,9 +225,9 @@ FINAL                                                │  │
 | Work | Status |
 |---|---|
 | Production SHA parity | PASS |
-| Production alias health | **FAIL (500)** after env change |
-| Same-main deployment snapshot health | PASS |
-| Readiness | BLOCKED by OPS-03 |
+| Production version/UI import | PASS after BUG-05 |
+| Production health | BLOCKED — transaction-pooler authentication |
+| Readiness | BLOCKED — database_unavailable from OPS-03 |
 | C01 PERF-02 verifier | PASS FINAL |
 | UAT harness | READY |
 | UAT users | BLOCKED by official Auth provisioning |
