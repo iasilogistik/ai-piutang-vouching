@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.auth import CurrentUser, require_roles
 from app.database import SessionLocal
 from app.models import AuditNotification
+from app.services.main_home_ui import main_home_html
 
 router = APIRouter()
 _REGISTERED = False
@@ -120,6 +121,16 @@ def navigation_html(user: CurrentUser, unread_count: int = 0) -> str:
         f'</form>'
         f'{links}</nav>'
     )
+
+
+@router.get("/", response_class=HTMLResponse)
+def main_home_root():
+    return HTMLResponse(main_home_html())
+
+
+@router.get("/ui/main", response_class=HTMLResponse)
+def main_home_page():
+    return HTMLResponse(main_home_html())
 
 
 @router.get("/ui/navigation", response_class=HTMLResponse)
