@@ -29,6 +29,17 @@ def test_login_ui_role_navigation_script_is_safe_without_token():
     assert "\\n    await loadRoleNavigation" not in response.text
 
 
+def test_login_ui_redirects_admin_to_user_management():
+    response = client.get("/login")
+
+    assert response.status_code == 200
+    assert "resolvePostLoginDestination" in response.text
+    assert "fetch('/auth/me'" in response.text
+    assert "profile.role === 'ADMIN'" in response.text
+    assert "return '/ui/users'" in response.text
+    assert "window.location.href = destination" in response.text
+
+
 def test_auth_login_route_validates_required_form_fields():
     response = client.post("/auth/login")
 
