@@ -16,6 +16,14 @@ def test_public_revision_helper_precedes_acl_hardening():
     assert revision.down_revision == "0030_public_revision_helper"
 
 
+def test_revision_helper_acl_precedes_rls_consolidation():
+    config = Config(str(ROOT / "alembic.ini"))
+    config.set_main_option("script_location", str(ROOT / "alembic"))
+    scripts = ScriptDirectory.from_config(config)
+    revision = scripts.get_revision("0032_rls_policy_consolidation")
+    assert revision.down_revision == "0031_revision_helper_acl"
+
+
 def test_performance_hardening_covers_reported_foreign_keys_and_rls_initplan():
     text = MIGRATION.read_text(encoding="utf-8")
 

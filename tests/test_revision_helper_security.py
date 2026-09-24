@@ -19,12 +19,13 @@ def _load_migration():
     return module
 
 
-def test_revision_helper_acl_is_release_head():
+def test_revision_helper_acl_precedes_rls_consolidation():
     config = Config(str(ROOT / "alembic.ini"))
     config.set_main_option("script_location", str(ROOT / "alembic"))
-    heads = ScriptDirectory.from_config(config).get_heads()
-    assert heads == ["0031_revision_helper_acl"]
-    assert EXPECTED_SCHEMA_REVISION == "0031_revision_helper_acl"
+    scripts = ScriptDirectory.from_config(config)
+    revision = scripts.get_revision("0032_rls_policy_consolidation")
+    assert revision.down_revision == "0031_revision_helper_acl"
+    assert EXPECTED_SCHEMA_REVISION == "0032_rls_policy_consolidation"
 
 
 def test_revision_helper_acl_revokes_browser_roles(monkeypatch):
