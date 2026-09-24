@@ -36,6 +36,10 @@ def test_user_management_ui_shell_loads_without_login_bootstrap():
     assert "Simpan User Role" in response.text
     assert '<select id="branch">' in response.text
     assert "/admin/branches?active=true" in response.text
+    assert "Sesi Admin" in response.text
+    assert "Token tidak ditampilkan" in response.text
+    assert "Bearer Token" not in response.text
+    assert 'id="token"' not in response.text
 
 
 def test_admin_can_upsert_list_and_deactivate_user_role_when_auth_disabled():
