@@ -87,12 +87,13 @@ def _users_html() -> str:
     button, .button-link { border:0; border-radius:8px; padding:10px 13px; background:var(--blue); color:white; font-weight:700; cursor:pointer; text-decoration:none; display:inline-block; }
     button.secondary, .button-link.secondary { background:#475569; }
     button.danger { background:var(--red); }
-    .actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
+    .actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; align-items:center; }
     table { width:100%; border-collapse:collapse; margin-top:10px; }
     th, td { border-bottom:1px solid var(--line); padding:8px; text-align:left; font-size:13px; vertical-align:top; }
     th { background:#f8fafc; }
     .ok { color:var(--green); font-weight:700; }
     .err { color:var(--red); font-weight:700; }
+    .muted { color:var(--muted); font-size:13px; }
     pre { white-space:pre-wrap; word-break:break-word; background:#0f172a; color:#dbeafe; border-radius:10px; padding:12px; min-height:120px; max-height:360px; overflow:auto; }
     @media (max-width:800px) { .grid { grid-template-columns:1fr; } }
   </style>
@@ -104,13 +105,14 @@ def _users_html() -> str:
 </header>
 <main>
   <section class="panel">
-    <h2>Token Admin</h2>
-    <label for="token">Bearer Token</label>
-    <input id="token" type="password" placeholder="Token ADMIN dari halaman login" autocomplete="off" />
+    <h2>Sesi Admin</h2>
+    <p class="muted">Halaman ini memakai token login yang tersimpan otomatis di browser. Token tidak ditampilkan di layar.</p>
     <div class="actions">
       <button type="button" id="loadBtn">Muat User</button>
+      <button type="button" class="secondary" id="logoutBtn">Logout</button>
       <a class="button-link secondary" href="/login">Login</a>
       <a class="button-link secondary" href="/ui/control-evidence">Control Evidence</a>
+      <span id="sessionStatus" class="muted">Memeriksa sesi...</span>
     </div>
   </section>
 
@@ -141,14 +143,20 @@ def _users_html() -> str:
   </section>
 </main>
 <script>
-const tokenInput = document.getElementById('token');
 const rowsEl = document.getElementById('rows');
 const logEl = document.getElementById('log');
-tokenInput.value = localStorage.getItem('auditToken') || '';
+const sessionStatus = document.getElementById('sessionStatus');
+function getAuditToken() {
+  const token = localStorage.getItem('auditToken') || '';
+  sessionStatus.textContent = token ? 'Sesi login tersedia.' : 'Belum login. Silakan login terlebih dahulu.';
+  return token;
+}
 function authHeaders() {
-  const token = tokenInput.value.trim();
-  if (!token) throw new Error('Bearer token ADMIN wajib diisi.');
-  localStorage.setItem('auditToken', token);
+  const token = getAuditToken();
+  if (!token) {
+    window.location.href = '/login';
+    throw new Error('Silakan login sebagai ADMIN terlebih dahulu.');
+  }
   return { Authorization: `Bearer ${token}` };
 }
 function appendLog(label, payload, ok = true) {
@@ -223,13 +231,24 @@ window.deactivateUser = async (userId) => {
 document.getElementById('loadBtn').addEventListener('click', loadUsers);
 document.getElementById('saveBtn').addEventListener('click', saveUser);
 document.getElementById('clearBtn').addEventListener('click', () => setForm({ role:'VIEWER', is_active:true }));
+document.getElementById('logoutBtn').addEventListener('click', () => {
+  localStorage.removeItem('auditToken');
+  localStorage.removeItem('auditRefreshToken');
+  localStorage.removeItem('auditExpiresAt');
+  localStorage.removeItem('auditUser');
+  window.location.href = '/login';
+});
 document.getElementById('role').addEventListener('change', () => {
   const branchSelect = document.getElementById('branch');
   if (document.getElementById('role').value !== 'ADMIN' && !branchSelect.value && branchSelect.options.length > 1) {
     branchSelect.selectedIndex = 1;
   }
 });
-loadBranches();
+if (getAuditToken()) {
+  loadBranches();
+} else {
+  appendLog('Sesi Admin', 'Belum login. Token tidak ditampilkan di halaman ini.', false);
+}
 </script>
 </body>
 </html>
