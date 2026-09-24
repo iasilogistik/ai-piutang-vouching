@@ -18,15 +18,17 @@ def test_login_ui_shell_loads():
     assert "Logout" in response.text
 
 
-def test_login_ui_role_navigation_script_is_safe_without_token():
+def test_login_ui_does_not_render_application_navigation():
     response = client.get("/login")
 
     assert response.status_code == 200
-    assert 'id="roleNav"' in response.text
-    assert "function roleNavTarget()" in response.text
-    assert "Authorization:`Bearer ${token}`" in response.text
-    assert "document.getElementById('roleNav').innerHTML" not in response.text
-    assert "\\n    await loadRoleNavigation" not in response.text
+    assert 'id="roleNav"' not in response.text
+    assert "loadRoleNavigation" not in response.text
+    assert "DashboardAudit" not in response.text
+    assert "Notifications" not in response.text
+    assert "Buka UAT Pasuruan" not in response.text
+    assert "Buka Control Evidence Dashboard" not in response.text
+    assert "Buka Google Drive Import" not in response.text
 
 
 def test_login_ui_redirects_admin_to_user_management():
@@ -37,7 +39,7 @@ def test_login_ui_redirects_admin_to_user_management():
     assert "fetch('/auth/me'" in response.text
     assert "profile.role === 'ADMIN'" in response.text
     assert "return '/ui/users'" in response.text
-    assert "window.location.href = destination" in response.text
+    assert "window.location.replace(destination)" in response.text
 
 
 def test_auth_login_route_validates_required_form_fields():
