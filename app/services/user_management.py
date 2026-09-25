@@ -150,6 +150,8 @@ def _users_html() -> str:
     button.warning { background:var(--amber); }
     .actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; align-items:center; }
     .hint { color:var(--muted); font-size:12px; margin:6px 0 0; }
+    .notice { display:none; margin-top:12px; padding:11px 12px; border-radius:10px; border:1px solid #fed7aa; background:#fff7ed; color:#9a3412; font-size:13px; }
+    .notice a { color:#1f6feb; font-weight:700; }
     .custom-branch { display:none; border:1px dashed var(--line); background:#f8fafc; border-radius:10px; padding:12px; margin-top:12px; }
     table { width:100%; border-collapse:collapse; margin-top:10px; }
     th, td { border-bottom:1px solid var(--line); padding:8px; text-align:left; font-size:13px; vertical-align:top; }
@@ -173,11 +175,12 @@ def _users_html() -> str:
     <div class="actions">
       <button type="button" id="loadBtn">Muat User</button>
       <button type="button" class="secondary" id="logoutBtn">Logout</button>
-      <a class="button-link secondary" href="/login">Login</a>
+      <a class="button-link secondary" href="/login?next=/ui/users">Login Ulang</a>
       <a class="button-link secondary" href="/ui/control-evidence">Control Evidence</a>
       <a class="button-link secondary" href="/ui/branches">Master Cabang</a>
       <span id="sessionStatus" class="muted">Memeriksa sesi...</span>
     </div>
+    <div id="sessionNotice" class="notice"></div>
   </section>
 
   <section class="panel">
@@ -221,8 +224,33 @@ def _users_html() -> str:
 const rowsEl = document.getElementById('rows');
 const logEl = document.getElementById('log');
 const sessionStatus = document.getElementById('sessionStatus');
+const sessionNotice = document.getElementById('sessionNotice');
 const CUSTOM_BRANCH_VALUE = '__CUSTOM_BRANCH__';
 let editingUserId = '';
+
+function nextLoginUrl() {
+  return `/login?next=${encodeURIComponent('/ui/users')}`;
+}
+function storeSession(data) {
+  localStorage.setItem('auditToken', data.access_token || '');
+  if (data.refresh_token) localStorage.setItem('auditRefreshToken', data.refresh_token);
+  if (data.expires_at) localStorage.setItem('auditExpiresAt', String(data.expires_at));
+  if (data.user) localStorage.setItem('auditUser', JSON.stringify(data.user));
+}
+function clearSession() {
+  localStorage.removeItem('auditToken');
+  localStorage.removeItem('auditRefreshToken');
+  localStorage.removeItem('auditExpiresAt');
+  localStorage.removeItem('auditUser');
+}
+function showSessionNotice(message) {
+  sessionNotice.innerHTML = `${message} <a href="${nextLoginUrl()}">Login ulang</a>`;
+  sessionNotice.style.display = 'block';
+}
+function hideSessionNotice() {
+  sessionNotice.style.display = 'none';
+  sessionNotice.textContent = '';
+}
 function getAuditToken() {
   const token = localStorage.getItem('auditToken') || '';
   sessionStatus.textContent = token ? 'Sesi login tersedia.' : 'Belum login. Silakan login terlebih dahulu.';
@@ -231,7 +259,7 @@ function getAuditToken() {
 function authHeaders() {
   const token = getAuditToken();
   if (!token) {
-    window.location.href = '/login';
+    showSessionNotice('Sesi belum tersedia.');
     throw new Error('Silakan login sebagai ADMIN terlebih dahulu.');
   }
   return { Authorization: `Bearer ${token}` };
@@ -241,6 +269,53 @@ function appendLog(label, payload, ok = true) {
   const text = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2);
   logEl.textContent = `[${time}] ${ok ? 'OK' : 'ERROR'} - ${label}\n${text}\n\n` + (logEl.textContent === 'Belum ada aktivitas.' ? '' : logEl.textContent);
 }
+async function parseResponse(response) {
+  const text = await response.text();
+  if (!text) return {};
+  try { return JSON.parse(text); } catch { return { detail: text }; }
+}
+function isExpiredAuth(body) {
+  const detail = (body && (body.detail || body.message || body.error_description || body.error)) || '';
+  return /invalid|expired|jwt|token|required|unauthorized/i.test(String(detail));
+}
+async function refreshSession() {
+  const refreshToken = localStorage.getItem('auditRefreshToken') || '';
+  if (!refreshToken) return false;
+  try {
+    const form = new FormData();
+    form.append('refresh_token', refreshToken);
+    const response = await fetch('/auth/refresh', { method:'POST', body:form });
+    const body = await parseResponse(response);
+    if (!response.ok || !body.access_token) return false;
+    storeSession(body);
+    hideSessionNotice();
+    sessionStatus.textContent = 'Sesi diperbarui otomatis.';
+    return true;
+  } catch (_) { return false; }
+}
+function handleAuthFailure(label, body) {
+  clearSession();
+  sessionStatus.textContent = 'Sesi expired. Login ulang diperlukan.';
+  showSessionNotice('Sesi login sudah expired atau token tidak valid.');
+  appendLog(label, 'Sesi login sudah expired atau token tidak valid. Silakan klik Login Ulang, lalu ulangi proses.', false);
+  const detail = body && (body.detail || body.message || body.error_description || body.error);
+  if (detail) appendLog('Detail Autentikasi', String(detail), false);
+}
+async function fetchWithAuth(url, options = {}, label = 'Request') {
+  let response = await fetch(url, { ...options, headers: { ...(options.headers || {}), ...authHeaders() } });
+  let body = await parseResponse(response);
+  if (response.status === 401 && isExpiredAuth(body)) {
+    const refreshed = await refreshSession();
+    if (refreshed) {
+      response = await fetch(url, { ...options, headers: { ...(options.headers || {}), ...authHeaders() } });
+      body = await parseResponse(response);
+    }
+  }
+  if (response.status === 401 && isExpiredAuth(body)) {
+    handleAuthFailure(label, body);
+  }
+  return { response, body };
+}
 function normalizeBranchCode(value) { return (value || '').trim().toUpperCase(); }
 function toggleCustomBranchPanel() {
   const branchSelect = document.getElementById('branch');
@@ -248,8 +323,7 @@ function toggleCustomBranchPanel() {
 }
 async function loadBranches(selected = '') {
   try {
-    const response = await fetch('/admin/branches?active=true', { headers: authHeaders() });
-    const body = await response.json();
+    const { response, body } = await fetchWithAuth('/admin/branches?active=true', {}, 'Muat Master Cabang');
     if (!response.ok) throw new Error(body.detail || JSON.stringify(body));
     const select = document.getElementById('branch');
     const selectedCode = normalizeBranchCode(selected);
@@ -290,8 +364,7 @@ function render(users) {
 window.editUser = (user) => setForm(user);
 async function loadUsers() {
   try {
-    const response = await fetch('/admin/users', { headers: authHeaders() });
-    const body = await response.json();
+    const { response, body } = await fetchWithAuth('/admin/users', {}, 'Muat User');
     if (!response.ok) throw new Error(body.detail || JSON.stringify(body));
     await loadBranches(document.getElementById('branch').value);
     render(body.users || []);
@@ -310,8 +383,7 @@ async function ensureSelectedBranch() {
   form.append('region', document.getElementById('customBranchRegion').value.trim());
   form.append('area', document.getElementById('customBranchArea').value.trim());
   form.append('active', 'true');
-  const response = await fetch('/admin/branches', { method:'POST', headers: authHeaders(), body: form });
-  const body = await response.json();
+  const { response, body } = await fetchWithAuth('/admin/branches', { method:'POST', body: form }, 'Tambah Cabang Sendiri');
   if (!response.ok && response.status !== 409) throw new Error(body.detail || JSON.stringify(body));
   appendLog(response.status === 409 ? 'Cabang Sudah Ada' : 'Tambah Cabang Sendiri', body);
   await loadBranches(code);
@@ -329,8 +401,7 @@ async function saveUser() {
     form.append('role', document.getElementById('role').value);
     form.append('branch', branchValue);
     form.append('is_active', document.getElementById('isActive').value);
-    const response = await fetch('/admin/users', { method:'POST', headers: authHeaders(), body: form });
-    const body = await response.json();
+    const { response, body } = await fetchWithAuth('/admin/users', { method:'POST', body: form }, 'Simpan User');
     if (!response.ok) throw new Error(body.detail || JSON.stringify(body));
     document.getElementById('password').value = '';
     appendLog('Simpan User', body);
@@ -343,16 +414,14 @@ window.forgotPassword = async (user) => {
     if (!user.email) throw new Error('Email user belum tersedia.');
     const ok = confirm(`Kirim email lupa password ke ${user.email}?`);
     if (!ok) return;
-    const response = await fetch(`/admin/users/${encodeURIComponent(user.user_id)}/forgot-password`, { method:'POST', headers: authHeaders() });
-    const body = await response.json();
+    const { response, body } = await fetchWithAuth(`/admin/users/${encodeURIComponent(user.user_id)}/forgot-password`, { method:'POST' }, 'Lupa Password');
     if (!response.ok) throw new Error(body.detail || JSON.stringify(body));
     appendLog('Lupa Password', body);
   } catch (error) { appendLog('Lupa Password', error.message, false); }
 };
 window.deactivateUser = async (userId) => {
   try {
-    const response = await fetch(`/admin/users/${encodeURIComponent(userId)}/deactivate`, { method:'POST', headers: authHeaders() });
-    const body = await response.json();
+    const { response, body } = await fetchWithAuth(`/admin/users/${encodeURIComponent(userId)}/deactivate`, { method:'POST' }, 'Nonaktifkan User');
     if (!response.ok) throw new Error(body.detail || JSON.stringify(body));
     appendLog('Nonaktifkan User', body);
     await loadUsers();
@@ -362,11 +431,8 @@ document.getElementById('loadBtn').addEventListener('click', loadUsers);
 document.getElementById('saveBtn').addEventListener('click', saveUser);
 document.getElementById('clearBtn').addEventListener('click', resetForm);
 document.getElementById('logoutBtn').addEventListener('click', () => {
-  localStorage.removeItem('auditToken');
-  localStorage.removeItem('auditRefreshToken');
-  localStorage.removeItem('auditExpiresAt');
-  localStorage.removeItem('auditUser');
-  window.location.href = '/login';
+  clearSession();
+  window.location.href = nextLoginUrl();
 });
 document.getElementById('branch').addEventListener('change', toggleCustomBranchPanel);
 document.getElementById('role').addEventListener('change', () => {
@@ -374,7 +440,7 @@ document.getElementById('role').addEventListener('change', () => {
   if (document.getElementById('role').value !== 'ADMIN' && !branchSelect.value && branchSelect.options.length > 2) branchSelect.selectedIndex = 1;
   toggleCustomBranchPanel();
 });
-if (getAuditToken()) { loadBranches(); } else { appendLog('Sesi Admin', 'Belum login. Token tidak ditampilkan di halaman ini.', false); }
+if (getAuditToken()) { loadBranches(); } else { appendLog('Sesi Admin', 'Belum login. Silakan klik Login Ulang terlebih dahulu.', false); showSessionNotice('Belum login sebagai ADMIN.'); }
 </script>
 </body>
 </html>
