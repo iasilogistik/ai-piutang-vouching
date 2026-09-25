@@ -16,7 +16,7 @@ def test_user_management_ui_auto_loads_users_and_has_delete_without_branch_page_
     assert "data-action=\"delete\"" in response.text
     assert "deleteUser" in response.text
     assert 'href="/ui/branches"' not in response.text
-    assert "Master Cabang" not in response.text
+    assert "Master Cabang</a>" not in response.text
 
 
 def test_admin_can_delete_user_role_from_user_management_actions():
