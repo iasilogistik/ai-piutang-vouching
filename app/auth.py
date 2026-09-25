@@ -55,9 +55,9 @@ def current_user(authorization: str | None = Header(default=None), db: Session =
             """
             select role::text as role, branch, coalesce(is_active, true) as is_active
             from public.user_roles
-            where user_id = :user_id
-               or (:email is not null and lower(email) = :email)
-            order by case when user_id = :user_id then 0 else 1 end
+            where user_id = cast(:user_id as text)
+               or (cast(:email as text) is not null and lower(email) = cast(:email as text))
+            order by case when user_id = cast(:user_id as text) then 0 else 1 end
             limit 1
             """
         ),
