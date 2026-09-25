@@ -10,12 +10,14 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 BASE_URL = os.getenv("UAT_BASE_URL", "https://ai-piutang-vouching.vercel.app").rstrip("/")
-UAT_BRANCH = os.getenv("UAT_BRANCH", "PASURUAN").strip().upper()
-OTHER_BRANCH = os.getenv("UAT_OTHER_BRANCH", "__UAT_OUTSIDE_SCOPE__").strip().upper()
+UAT_BRANCH = os.getenv("UAT_BRANCH", "").strip().upper()
+UAT_SECOND_BRANCH = os.getenv("UAT_SECOND_BRANCH", "").strip().upper()
+SCOPED_VIEWER_BRANCH = os.getenv("SCOPED_VIEWER_BRANCH", "").strip().upper()
 TIMEOUT_SECONDS = float(os.getenv("UAT_TIMEOUT_SECONDS", "20"))
 MISSING_ID = 2_147_483_647
 
 ROLES = ("ADMIN", "AUDITOR", "REVIEWER", "VIEWER")
+GLOBAL_BRANCH_ROLES = ("AUDITOR", "REVIEWER", "VIEWER")
 
 
 @dataclass(frozen=True)
@@ -37,8 +39,28 @@ def _tokens_from_env() -> dict[str, str]:
             missing.append(name)
         else:
             tokens[role] = value
+
+    scoped_name = "SCOPED_VIEWER_TOKEN"
+    scoped_value = os.getenv(scoped_name, "").strip()
+    if not scoped_value:
+        missing.append(scoped_name)
+    else:
+        tokens["SCOPED_VIEWER"] = scoped_value
+
+    for name, value in (
+        ("UAT_BRANCH", UAT_BRANCH),
+        ("UAT_SECOND_BRANCH", UAT_SECOND_BRANCH),
+        ("SCOPED_VIEWER_BRANCH", SCOPED_VIEWER_BRANCH),
+    ):
+        if not value:
+            missing.append(name)
+
     if missing:
         raise RuntimeError("Missing required environment variables: " + ", ".join(missing))
+    if UAT_BRANCH == UAT_SECOND_BRANCH:
+        raise RuntimeError("UAT_SECOND_BRANCH must differ from UAT_BRANCH")
+    if SCOPED_VIEWER_BRANCH not in {UAT_BRANCH, UAT_SECOND_BRANCH}:
+        raise RuntimeError("SCOPED_VIEWER_BRANCH must equal UAT_BRANCH or UAT_SECOND_BRANCH")
     return tokens
 
 
@@ -109,6 +131,8 @@ def _default_transport(
 def run_matrix(tokens: dict[str, str], transport: Transport = _default_transport) -> list[CheckResult]:
     results: list[CheckResult] = []
 
+    # Primary UAT accounts are global across uploaded branches. ADMIN branch
+    # metadata is ignored; AUDITOR/REVIEWER/VIEWER must expose branch=null.
     for role in ROLES:
         token = tokens[role]
         body = _expect(
@@ -126,39 +150,41 @@ def run_matrix(tokens: dict[str, str], transport: Transport = _default_transport
             payload = {}
 
         actual_role = str(payload.get("role", "")).upper()
-        expected_branch = None if role == "ADMIN" else UAT_BRANCH
         actual_branch = payload.get("branch")
         identity_ok = actual_role == role and (
-            role == "ADMIN" or str(actual_branch or "").upper() == expected_branch
+            role == "ADMIN" or actual_branch in {None, ""}
         )
         results.append(
             CheckResult(
                 role=role,
-                name="auth role/branch payload",
+                name="auth role/global-scope payload",
                 expected=1,
                 actual=1 if identity_ok else 0,
                 passed=identity_ok,
             )
         )
         print(
-            f"{'PASS' if identity_ok else 'FAIL'} [{role}] auth role/branch payload "
-            f"(role={actual_role or '-'}, branch={actual_branch or '-'})"
+            f"{'PASS' if identity_ok else 'FAIL'} [{role}] auth role/global-scope payload "
+            f"(role={actual_role or '-'}, branch={actual_branch or 'ALL'})"
         )
 
-        for path, name in (
-            ("/audit-findings", "read findings"),
-            ("/follow-up", "read follow-up"),
-            ("/search?page_size=1", "read global search"),
-        ):
-            _expect(
-                results,
-                transport,
-                role=role,
-                token=token,
-                name=name,
-                path=path,
-                expected=200,
-            )
+        # Both branches must be real uploaded branches. Global roles can filter
+        # and read either branch without changing their user profile.
+        for branch in (UAT_BRANCH, UAT_SECOND_BRANCH):
+            for path, name in (
+                (f"/audit-findings?branch={branch}", f"read findings {branch}"),
+                (f"/follow-up?branch={branch}", f"read follow-up {branch}"),
+                (f"/search?branch={branch}&page_size=1", f"read global search {branch}"),
+            ):
+                _expect(
+                    results,
+                    transport,
+                    role=role,
+                    token=token,
+                    name=name,
+                    path=path,
+                    expected=200,
+                )
 
     _expect(
         results,
@@ -169,7 +195,7 @@ def run_matrix(tokens: dict[str, str], transport: Transport = _default_transport
         path="/admin/users",
         expected=200,
     )
-    for role in ("AUDITOR", "REVIEWER", "VIEWER"):
+    for role in GLOBAL_BRANCH_ROLES:
         _expect(
             results,
             transport,
@@ -180,21 +206,84 @@ def run_matrix(tokens: dict[str, str], transport: Transport = _default_transport
             expected=403,
         )
 
-    for role in ("AUDITOR", "REVIEWER", "VIEWER"):
-        for path, name in (
-            (f"/audit-findings?branch={OTHER_BRANCH}", "cross-branch findings denied"),
-            (f"/search?branch={OTHER_BRANCH}&page_size=1", "cross-branch search denied"),
-            (f"/follow-up?branch={OTHER_BRANCH}", "cross-branch follow-up denied"),
-        ):
-            _expect(
-                results,
-                transport,
-                role=role,
-                token=tokens[role],
-                name=name,
-                path=path,
-                expected=403,
-            )
+    # Dedicated scoped control account proves the optional restriction still
+    # works even though the primary UAT roles are global.
+    scoped_token = tokens["SCOPED_VIEWER"]
+    scoped_body = _expect(
+        results,
+        transport,
+        role="SCOPED_VIEWER",
+        token=scoped_token,
+        name="auth identity",
+        path="/auth/me",
+        expected=200,
+    )
+    try:
+        scoped_payload = json.loads(scoped_body)
+    except json.JSONDecodeError:
+        scoped_payload = {}
+    scoped_identity_ok = (
+        str(scoped_payload.get("role", "")).upper() == "VIEWER"
+        and str(scoped_payload.get("branch") or "").upper() == SCOPED_VIEWER_BRANCH
+    )
+    results.append(
+        CheckResult(
+            role="SCOPED_VIEWER",
+            name="auth scoped-branch payload",
+            expected=1,
+            actual=1 if scoped_identity_ok else 0,
+            passed=scoped_identity_ok,
+        )
+    )
+    print(
+        f"{'PASS' if scoped_identity_ok else 'FAIL'} [SCOPED_VIEWER] auth scoped-branch payload "
+        f"(branch={scoped_payload.get('branch') or '-'})"
+    )
+
+    other_for_scoped = (
+        UAT_SECOND_BRANCH if SCOPED_VIEWER_BRANCH == UAT_BRANCH else UAT_BRANCH
+    )
+    for path, name, expected in (
+        (
+            f"/audit-findings?branch={SCOPED_VIEWER_BRANCH}",
+            "scoped findings allowed",
+            200,
+        ),
+        (
+            f"/search?branch={SCOPED_VIEWER_BRANCH}&page_size=1",
+            "scoped search allowed",
+            200,
+        ),
+        (
+            f"/follow-up?branch={SCOPED_VIEWER_BRANCH}",
+            "scoped follow-up allowed",
+            200,
+        ),
+        (
+            f"/audit-findings?branch={other_for_scoped}",
+            "outside-scope findings denied",
+            403,
+        ),
+        (
+            f"/search?branch={other_for_scoped}&page_size=1",
+            "outside-scope search denied",
+            403,
+        ),
+        (
+            f"/follow-up?branch={other_for_scoped}",
+            "outside-scope follow-up denied",
+            403,
+        ),
+    ):
+        _expect(
+            results,
+            transport,
+            role="SCOPED_VIEWER",
+            token=scoped_token,
+            name=name,
+            path=path,
+            expected=expected,
+        )
 
     create_finding_form = {
         "engagement_id": MISSING_ID,
@@ -260,10 +349,6 @@ def run_matrix(tokens: dict[str, str], transport: Transport = _default_transport
 
 
 def main() -> int:
-    if OTHER_BRANCH == UAT_BRANCH:
-        print("UAT_OTHER_BRANCH must differ from UAT_BRANCH", file=sys.stderr)
-        return 2
-
     try:
         tokens = _tokens_from_env()
         results = run_matrix(tokens)

@@ -1,50 +1,68 @@
-# Live Multi-Role RBAC UAT
+# Live Multi-Role RBAC UAT — Dynamic Branch
 
-This runbook executes the authenticated production acceptance matrix for issue #89 without storing credentials in Git.
+This runbook validates authenticated production authorization for dynamic branch scope without storing credentials in Git.
 
-## Prerequisites
+## Branch model under test
 
-Production must have four active Supabase Auth users mapped in `public.user_roles`:
+Branch is a data dimension discovered from uploads, not a mandatory fixed user attribute.
 
-| Role | Branch |
-|---|---|
-| ADMIN | no branch / all branches |
-| AUDITOR | PASURUAN |
-| REVIEWER | PASURUAN |
-| VIEWER | PASURUAN |
+Application-user semantics:
 
-The canonical branch master already contains active branch `PASURUAN`.
+- `branch = NULL` -> global across all uploaded branches.
+- non-null branch -> optional exact restriction.
+- ADMIN remains global.
+- Audit/business records must still carry a non-null branch.
+- A new branch can be registered automatically from upload context.
 
-Auth users must be created through an authorized Supabase Auth management path. Do not insert users directly into `auth.users`.
+The UAT therefore uses **two real branches that already exist from uploaded data**. Do not use placeholder branches for global-access checks.
 
-After the Auth users exist, assign the application role/branch from:
+## Required UAT accounts
 
-```text
-/ui/users
+| Account | Role | User branch |
+|---|---|---|
+| Admin | ADMIN | any / NULL |
+| Global Auditor | AUDITOR | NULL |
+| Global Reviewer | REVIEWER | NULL |
+| Global Viewer | VIEWER | NULL |
+| Scoped Control Viewer | VIEWER | one of the two UAT branches |
+
+Auth users must be created through the supported Supabase Auth administration path. Do not insert directly into `auth.users`.
+
+Map application roles/scopes through `/ui/users`. Blank branch means **Semua cabang (dinamis)**.
+
+## Select two real uploaded branches
+
+Choose two distinct branches already present in production upload/catalog data. Example only:
+
+```bash
+export UAT_BRANCH='GRESIK'
+export UAT_SECOND_BRANCH='SIDOARJO'
+export SCOPED_VIEWER_BRANCH='GRESIK'
 ```
 
-using an ADMIN bearer token.
+Do not hard-code PASURUAN. Actual values depend on what branches have been uploaded.
+
+`SCOPED_VIEWER_BRANCH` must equal either `UAT_BRANCH` or `UAT_SECOND_BRANCH`.
 
 ## Obtain tokens
 
-Log in once for each UAT account via `/auth/login` or the application login page. Keep tokens only in the local shell/session. Never commit them.
-
-Example shell setup:
+Log in once for each UAT account. Keep access tokens only in the local shell/session.
 
 ```bash
 export ADMIN_TOKEN='...'
 export AUDITOR_TOKEN='...'
 export REVIEWER_TOKEN='...'
 export VIEWER_TOKEN='...'
-export UAT_BRANCH='PASURUAN'
+export SCOPED_VIEWER_TOKEN='...'
 ```
 
-Optional:
+Optional runtime target:
 
 ```bash
 export UAT_BASE_URL='https://ai-piutang-vouching.vercel.app'
-export UAT_OTHER_BRANCH='__UAT_OUTSIDE_SCOPE__'
 ```
+
+Never commit or attach bearer tokens, passwords, refresh tokens, service keys, or database credentials.
 
 ## Run
 
@@ -52,36 +70,66 @@ export UAT_OTHER_BRANCH='__UAT_OUTSIDE_SCOPE__'
 python scripts/live_rbac_uat.py
 ```
 
-The script never prints bearer tokens.
+## What the harness validates
 
-## What it validates
+### Global users
 
-The harness checks:
+ADMIN, global AUDITOR, global REVIEWER and global VIEWER:
 
-1. `/auth/me` identifies the expected role and branch.
-2. All four roles can read authorized findings, follow-up and search endpoints.
-3. Only ADMIN can list `/admin/users`.
-4. AUDITOR/REVIEWER/VIEWER cannot request another branch through findings/search/follow-up filters.
-5. Finding creation allows ADMIN/AUDITOR and blocks REVIEWER/VIEWER.
-6. Finding reopen allows ADMIN/REVIEWER and blocks AUDITOR/VIEWER.
-7. Follow-up verification allows ADMIN/REVIEWER and blocks AUDITOR/VIEWER.
+1. `/auth/me` returns the expected role.
+2. Non-ADMIN global accounts expose no fixed branch.
+3. Each account can read findings, follow-up and global search for `UAT_BRANCH`.
+4. Each account can read the same endpoints for `UAT_SECOND_BRANCH`.
+5. Only ADMIN can access user administration.
 
-The mutation-role checks use resource ID `2147483647`, which is intentionally nonexistent. Authorized roles should therefore receive HTTP 404 before any mutation can occur; unauthorized roles should receive HTTP 403. No audit business data should be changed by these probes.
+### Scoped control user
+
+The dedicated scoped VIEWER:
+
+1. `/auth/me` returns VIEWER + its configured branch.
+2. Reads to its assigned branch succeed.
+3. Requests to the second real UAT branch are rejected with HTTP 403.
+
+This proves optional branch restriction still works while the normal/global workflow is flexible.
+
+### Role gates
+
+The non-mutating probe matrix also confirms:
+
+- Finding creation: ADMIN/AUDITOR allowed to reach resource lookup; REVIEWER/VIEWER denied.
+- Finding reopen: ADMIN/REVIEWER allowed; AUDITOR/VIEWER denied.
+- Follow-up verification: ADMIN/REVIEWER allowed; AUDITOR/VIEWER denied.
+
+Mutation probes use intentionally nonexistent resource ID `2147483647`, so authorized roles should receive HTTP 404 and no audit business data is modified.
 
 ## Exit codes
 
 - `0`: all checks passed.
 - `1`: one or more authorization expectations failed.
-- `2`: setup/precondition failure, such as a missing token.
+- `2`: missing/invalid tokens or branch prerequisites.
 
-## Completion evidence
+## Required completion evidence for UAT-01
 
-Attach to UAT-01 (#89):
+Attach to issue #89:
 
-- script summary showing all checks passed,
-- production `/version` response,
-- production `/readiness` response,
-- Supabase role count by role/branch,
+- script PASS/FAIL summary,
+- production `/version`,
+- production `/readiness`,
+- two selected real UAT branch codes,
+- user-role count showing global AUDITOR/REVIEWER/VIEWER and the scoped control VIEWER,
 - any negative-test observations.
 
-Do not attach bearer tokens, passwords, refresh tokens, service keys, or database credentials.
+Do not attach secrets.
+
+## Go-live relationship
+
+Dynamic branch UAT must pass after DEV-31A/B/C are deployed and before PERF-02 policy consolidation is applied.
+
+```text
+DEV-31 dynamic branch
+    -> production deploy
+    -> live dynamic-branch UAT
+    -> PERF-02 RLS consolidation
+    -> repeat same UAT
+    -> GO-LIVE sign-off
+```
