@@ -17,6 +17,8 @@ def test_upload_center_html_contains_supported_modes():
     assert "/documents/bulk-zip" in html
     assert "/documents/drive-import" in html
     assert "/documents/drive-folder-import" in html
+    assert "Branch bersifat dinamis" in html
+    assert "branch baru akan terdaftar otomatis" in html
 
 
 def test_upload_center_route_is_registered():

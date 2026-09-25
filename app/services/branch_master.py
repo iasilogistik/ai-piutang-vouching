@@ -92,7 +92,7 @@ def _branches_html() -> str:
   </style>
 </head>
 <body>
-<header><h1>Branch Management</h1><p>Master resmi cabang untuk AI Piutang Vouching.</p></header>
+<header><h1>Branch Catalog</h1><p>Katalog dinamis cabang yang ditemukan dari upload; ADMIN dapat melengkapi nama, region, area, atau menonaktifkan branch.</p></header>
 <main>
 <section class="panel">
   <h2>Token Admin</h2>
@@ -100,7 +100,7 @@ def _branches_html() -> str:
   <div class="actions"><button id="loadBtn">Muat Cabang</button><a class="button-link secondary" href="/ui/users">User Management</a><a class="button-link secondary" href="/login">Login</a></div>
 </section>
 <section class="panel">
-  <h2>Tambah / Edit Cabang</h2>
+  <h2>Tambah / Edit Metadata Cabang</h2>
   <div class="grid">
     <div><label for="code">Kode Cabang</label><input id="code" placeholder="PASURUAN" /></div>
     <div><label for="name">Nama Cabang</label><input id="name" placeholder="Cabang Pasuruan" /></div>
