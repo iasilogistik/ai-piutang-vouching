@@ -41,7 +41,7 @@ def test_user_management_ui_shell_loads_without_login_bootstrap():
     assert "Password Sementara" in response.text
     assert 'id="password"' in response.text
     assert "Lupa Password" in response.text
-    assert "forgotPassword" in response.text
+    assert "runUserAction" in response.text
     assert "/forgot-password" in response.text
     assert "User ID Supabase" not in response.text
     assert 'id="userId"' not in response.text
