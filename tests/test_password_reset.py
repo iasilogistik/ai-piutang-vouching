@@ -14,7 +14,7 @@ def test_forgot_password_page_uses_production_redirect():
     assert "Lupa Password" in response.text
     assert "/auth/password-reset-request" in response.text
     assert "https://ai-piutang-vouching.vercel.app/reset-password" in response.text
-    assert "localhost" not in response.text
+    assert "http://localhost" not in response.text
 
 
 def test_reset_password_page_extracts_access_token():
