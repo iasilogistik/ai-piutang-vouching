@@ -35,6 +35,7 @@ def login_html() -> str:
     input { width:100%; padding:11px 12px; border:1px solid var(--line); border-radius:10px; font:inherit; }
     button { width:100%; margin-top:18px; padding:12px; border:0; border-radius:10px; background:var(--blue); color:#fff; font-weight:700; cursor:pointer; }
     button:disabled { opacity:.6; cursor:not-allowed; }
+    a { color:var(--blue); font-weight:700; text-decoration:none; }
     .msg { margin-top:14px; padding:10px; border-radius:10px; font-size:14px; display:none; }
     .err { display:block; background:#fef2f2; color:var(--red); border:1px solid #fecaca; }
     .ok { display:block; background:#f0fdf4; color:var(--green); border:1px solid #bbf7d0; }
@@ -53,6 +54,7 @@ def login_html() -> str:
       <button id="loginBtn" type="submit">Login</button>
     </form>
     <div id="message" class="msg"></div>
+    <p class="hint"><a href="/forgot-password">Lupa Password?</a></p>
     <p class="hint">Menu aplikasi, dashboard, upload, review, dan menu admin akan muncul di layout utama setelah login.</p>
     <button id="logoutBtn" type="button" style="background:#475569;">Logout / Hapus Token Browser</button>
   </main>
