@@ -88,6 +88,8 @@ def _users_html() -> str:
     button.secondary, .button-link.secondary { background:#475569; }
     button.danger { background:var(--red); }
     .actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; align-items:center; }
+    .hint { color:var(--muted); font-size:12px; margin:6px 0 0; }
+    .custom-branch { display:none; border:1px dashed var(--line); background:#f8fafc; border-radius:10px; padding:12px; margin-top:12px; }
     table { width:100%; border-collapse:collapse; margin-top:10px; }
     th, td { border-bottom:1px solid var(--line); padding:8px; text-align:left; font-size:13px; vertical-align:top; }
     th { background:#f8fafc; }
@@ -112,6 +114,7 @@ def _users_html() -> str:
       <button type="button" class="secondary" id="logoutBtn">Logout</button>
       <a class="button-link secondary" href="/login">Login</a>
       <a class="button-link secondary" href="/ui/control-evidence">Control Evidence</a>
+      <a class="button-link secondary" href="/ui/branches">Master Cabang</a>
       <span id="sessionStatus" class="muted">Memeriksa sesi...</span>
     </div>
   </section>
@@ -123,8 +126,18 @@ def _users_html() -> str:
       <div><label for="email">Email</label><input id="email" placeholder="nama@perusahaan.co.id" /></div>
       <div><label for="displayName">Nama</label><input id="displayName" placeholder="Nama user" /></div>
       <div><label for="role">Role</label><select id="role"><option>ADMIN</option><option>AUDITOR</option><option>REVIEWER</option><option>VIEWER</option></select></div>
-      <div><label for="branch">Cabang</label><select id="branch"><option value="">-- ADMIN: tanpa cabang --</option></select></div>
+      <div><label for="branch">Cabang</label><select id="branch"><option value="">-- ADMIN: tanpa cabang --</option></select><p class="hint">Pilih master cabang atau pilih "Tambah cabang sendiri".</p></div>
       <div><label for="isActive">Status</label><select id="isActive"><option value="true">Aktif</option><option value="false">Nonaktif</option></select></div>
+    </div>
+    <div id="customBranchPanel" class="custom-branch">
+      <h3>Tambah Cabang Sendiri</h3>
+      <p class="hint">Cabang baru akan otomatis dibuat di master cabang terlebih dahulu, lalu dipakai untuk user ini.</p>
+      <div class="grid">
+        <div><label for="customBranchCode">Kode Cabang Baru</label><input id="customBranchCode" placeholder="contoh: MOJOKERTO" /></div>
+        <div><label for="customBranchName">Nama Cabang Baru</label><input id="customBranchName" placeholder="contoh: Cabang Mojokerto" /></div>
+        <div><label for="customBranchRegion">Region</label><input id="customBranchRegion" placeholder="Opsional" /></div>
+        <div><label for="customBranchArea">Area</label><input id="customBranchArea" placeholder="Opsional" /></div>
+      </div>
     </div>
     <div class="actions">
       <button type="button" id="saveBtn">Simpan User Role</button>
@@ -146,6 +159,7 @@ def _users_html() -> str:
 const rowsEl = document.getElementById('rows');
 const logEl = document.getElementById('log');
 const sessionStatus = document.getElementById('sessionStatus');
+const CUSTOM_BRANCH_VALUE = '__CUSTOM_BRANCH__';
 function getAuditToken() {
   const token = localStorage.getItem('auditToken') || '';
   sessionStatus.textContent = token ? 'Sesi login tersedia.' : 'Belum login. Silakan login terlebih dahulu.';
@@ -164,16 +178,30 @@ function appendLog(label, payload, ok = true) {
   const text = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2);
   logEl.textContent = `[${time}] ${ok ? 'OK' : 'ERROR'} - ${label}\n${text}\n\n` + (logEl.textContent === 'Belum ada aktivitas.' ? '' : logEl.textContent);
 }
+function normalizeBranchCode(value) {
+  return (value || '').trim().toUpperCase();
+}
+function toggleCustomBranchPanel() {
+  const branchSelect = document.getElementById('branch');
+  document.getElementById('customBranchPanel').style.display = branchSelect.value === CUSTOM_BRANCH_VALUE ? 'block' : 'none';
+}
 async function loadBranches(selected = '') {
   try {
     const response = await fetch('/admin/branches?active=true', { headers: authHeaders() });
     const body = await response.json();
     if (!response.ok) throw new Error(body.detail || JSON.stringify(body));
     const select = document.getElementById('branch');
-    select.innerHTML = '<option value="">-- ADMIN: tanpa cabang --</option>' + (body.branches || []).map(
+    const selectedCode = normalizeBranchCode(selected);
+    const branches = body.branches || [];
+    const hasSelected = branches.some(branch => branch.branch_code === selectedCode);
+    select.innerHTML = '<option value="">-- ADMIN: tanpa cabang --</option>' + branches.map(
       branch => `<option value="${branch.branch_code}">${branch.branch_code} - ${branch.branch_name}</option>`
-    ).join('');
-    select.value = selected || '';
+    ).join('') + '<option value="__CUSTOM_BRANCH__">+ Tambah cabang sendiri</option>';
+    if (selectedCode && !hasSelected) {
+      select.insertAdjacentHTML('beforeend', `<option value="${selectedCode}">${selectedCode} - cabang belum ada di master</option>`);
+    }
+    select.value = selectedCode || '';
+    toggleCustomBranchPanel();
   } catch (error) { appendLog('Muat Master Cabang', error.message, false); }
 }
 function setForm(user) {
@@ -181,6 +209,10 @@ function setForm(user) {
   document.getElementById('email').value = user.email || '';
   document.getElementById('displayName').value = user.display_name || '';
   document.getElementById('role').value = user.role || 'VIEWER';
+  document.getElementById('customBranchCode').value = '';
+  document.getElementById('customBranchName').value = '';
+  document.getElementById('customBranchRegion').value = '';
+  document.getElementById('customBranchArea').value = '';
   loadBranches(user.branch || '');
   document.getElementById('isActive').value = String(user.is_active !== false);
 }
@@ -203,14 +235,36 @@ async function loadUsers() {
     appendLog('Muat User', body);
   } catch (error) { appendLog('Muat User', error.message, false); }
 }
+async function ensureSelectedBranch() {
+  const branchSelect = document.getElementById('branch');
+  if (branchSelect.value !== CUSTOM_BRANCH_VALUE) {
+    return branchSelect.value.trim();
+  }
+  const code = normalizeBranchCode(document.getElementById('customBranchCode').value);
+  const name = document.getElementById('customBranchName').value.trim() || code;
+  if (!code) throw new Error('Kode cabang baru wajib diisi.');
+  const form = new FormData();
+  form.append('branch_code', code);
+  form.append('branch_name', name);
+  form.append('region', document.getElementById('customBranchRegion').value.trim());
+  form.append('area', document.getElementById('customBranchArea').value.trim());
+  form.append('active', 'true');
+  const response = await fetch('/admin/branches', { method:'POST', headers: authHeaders(), body: form });
+  const body = await response.json();
+  if (!response.ok && response.status !== 409) throw new Error(body.detail || JSON.stringify(body));
+  appendLog(response.status === 409 ? 'Cabang Sudah Ada' : 'Tambah Cabang Sendiri', body);
+  await loadBranches(code);
+  return code;
+}
 async function saveUser() {
   try {
+    const branchValue = await ensureSelectedBranch();
     const form = new FormData();
     form.append('user_id', document.getElementById('userId').value.trim());
     form.append('email', document.getElementById('email').value.trim());
     form.append('display_name', document.getElementById('displayName').value.trim());
     form.append('role', document.getElementById('role').value);
-    form.append('branch', document.getElementById('branch').value.trim());
+    form.append('branch', branchValue);
     form.append('is_active', document.getElementById('isActive').value);
     const response = await fetch('/admin/users', { method:'POST', headers: authHeaders(), body: form });
     const body = await response.json();
@@ -238,11 +292,13 @@ document.getElementById('logoutBtn').addEventListener('click', () => {
   localStorage.removeItem('auditUser');
   window.location.href = '/login';
 });
+document.getElementById('branch').addEventListener('change', toggleCustomBranchPanel);
 document.getElementById('role').addEventListener('change', () => {
   const branchSelect = document.getElementById('branch');
-  if (document.getElementById('role').value !== 'ADMIN' && !branchSelect.value && branchSelect.options.length > 1) {
+  if (document.getElementById('role').value !== 'ADMIN' && !branchSelect.value && branchSelect.options.length > 2) {
     branchSelect.selectedIndex = 1;
   }
+  toggleCustomBranchPanel();
 });
 if (getAuditToken()) {
   loadBranches();
