@@ -67,7 +67,16 @@ function storeSession(data) {
   if (data.expires_at) localStorage.setItem('auditExpiresAt', String(data.expires_at));
   if (data.user) localStorage.setItem('auditUser', JSON.stringify(data.user));
 }
-function resolvePostLoginDestination() {
+async function resolvePostLoginDestination(accessToken) {
+  try {
+    const response = await fetch('/auth/me', { headers: { Authorization: `Bearer ${accessToken}` } });
+    const profile = await response.json();
+    if (response.ok && profile.role === 'ADMIN') {
+      return '/ui/users';
+    }
+  } catch (error) {
+    return '/ui/main';
+  }
   return '/ui/main';
 }
 form.addEventListener('submit', async (event) => {
@@ -83,7 +92,7 @@ form.addEventListener('submit', async (event) => {
     let body; try { body = JSON.parse(text); } catch { body = text; }
     if (!response.ok) throw new Error(body.detail || JSON.stringify(body));
     storeSession(body);
-    const destination = resolvePostLoginDestination();
+    const destination = await resolvePostLoginDestination(body.access_token || localStorage.getItem('auditToken') || '');
     show(`Login berhasil. Mengarahkan ke layout utama...`, true);
     window.location.replace(destination);
   } catch (error) {
