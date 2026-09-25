@@ -16,7 +16,7 @@ def drive_import_html() -> str:
     main { padding:20px 24px 40px; max-width:1150px; margin:0 auto; }
     .panel { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; margin:14px 0; box-shadow:0 1px 3px rgba(15,23,42,.06); }
     label { display:block; font-size:12px; color:var(--muted); margin:8px 0 5px; }
-    input[type='password'], input[type='url'], select { width:100%; border:1px solid var(--line); border-radius:8px; padding:8px; font:inherit; background:white; }
+    input[type='password'], input[type='text'], input[type='url'], select { width:100%; border:1px solid var(--line); border-radius:8px; padding:8px; font:inherit; background:white; }
     button, .button-link { border:0; border-radius:8px; padding:10px 13px; background:var(--blue); color:white; font-weight:700; cursor:pointer; text-decoration:none; display:inline-block; }
     button.secondary, .button-link.secondary { background:#475569; }
     .actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
@@ -43,6 +43,9 @@ def drive_import_html() -> str:
     </p>
     <label for="token">Bearer Token</label>
     <input id="token" type="password" placeholder="Paste access token production" autocomplete="off" />
+    <label for="branch">Cabang / Scope Upload</label>
+    <input id="branch" type="text" placeholder="Contoh: GRESIK — branch baru boleh langsung diketik" />
+    <p class="notice">Branch bersifat dinamis dan akan terdaftar otomatis saat import.</p>
     <label for="url">Share Link</label>
     <input id="url" type="url" placeholder="https://drive.google.com/file/d/... atau https://drive.google.com/drive/folders/..." />
     <label for="mode">Mode import</label>
@@ -74,6 +77,7 @@ def drive_import_html() -> str:
 <script>
 const tokenInput = document.getElementById('token');
 const urlInput = document.getElementById('url');
+const branchInput = document.getElementById('branch');
 const modeInput = document.getElementById('mode');
 const logEl = document.getElementById('log');
 const resultRows = document.getElementById('resultRows');
@@ -102,6 +106,8 @@ async function importTo(endpoint, label) {
     const form = new FormData();
     form.append('url', url);
     form.append('mode', modeInput.value);
+    const branch = branchInput.value.trim();
+    if (branch) form.append('branch', branch);
     const response = await fetch(endpoint, { method:'POST', headers:authHeaders(), body:form });
     const text = await response.text();
     let body;

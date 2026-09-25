@@ -9,7 +9,7 @@ client = TestClient(app)
 def test_branch_management_ui_shell_loads():
     response = client.get("/ui/branches")
     assert response.status_code == 200
-    assert "Branch Management" in response.text
+    assert "Branch Catalog" in response.text
     assert "/admin/branches" in response.text
 
 

@@ -21,7 +21,7 @@ def combined_upload_html() -> str:
     main { padding: 20px 24px 40px; max-width: 1100px; margin: 0 auto; }
     .panel { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin: 14px 0; box-shadow: 0 1px 3px rgba(15,23,42,.06); }
     label { display:block; font-size:12px; color:var(--muted); margin: 8px 0 5px; }
-    input[type='password'], input[type='file'] { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 8px; font: inherit; background:white; }
+    input[type='password'], input[type='text'], input[type='file'] { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 8px; font: inherit; background:white; }
     button, .button-link { border: 0; border-radius: 8px; padding: 10px 13px; background: var(--blue); color: white; font-weight: 700; cursor: pointer; text-decoration:none; display:inline-block; }
     button.secondary, .button-link.secondary { background: #475569; }
     button:disabled { opacity:.55; cursor:not-allowed; }
@@ -49,12 +49,14 @@ def combined_upload_html() -> str:
     </p>
     <label for="token">Bearer Token</label>
     <input id="token" type="password" placeholder="Paste access token production" autocomplete="off" />
+    <label for="branch">Cabang / Scope Upload</label>
+    <input id="branch" type="text" placeholder="Contoh: GRESIK — branch baru boleh langsung diketik" />
+    <p class="notice">Branch bersifat dinamis dan akan terdaftar otomatis saat upload.</p>
     <label for="combinedFiles">Combined Billing + SPJ files</label>
     <input id="combinedFiles" type="file" accept=".pdf,.png,.jpg,.jpeg" multiple />
     <div class="actions">
       <button type="button" id="uploadBtn">Upload Combined</button>
       <a class="button-link secondary" href="/ui/control-evidence" target="_blank" rel="noopener">Buka Control Evidence</a>
-      <a class="button-link secondary" href="/ui/uat-pasuruan" target="_blank" rel="noopener">Buka UAT Pasuruan</a>
     </div>
   </section>
 
@@ -71,6 +73,7 @@ def combined_upload_html() -> str:
 <script>
 const tokenInput = document.getElementById('token');
 const fileInput = document.getElementById('combinedFiles');
+const branchInput = document.getElementById('branch');
 const logEl = document.getElementById('log');
 const resultRows = document.getElementById('resultRows');
 let rows = [];
@@ -96,6 +99,8 @@ function renderRows() {
 async function uploadOne(file) {
   const form = new FormData();
   form.append('file', file);
+  const branch = branchInput.value.trim();
+  if (branch) form.append('branch', branch);
   const response = await fetch('/documents/combined', { method: 'POST', headers: authHeaders(), body: form });
   const text = await response.text();
   let body;
