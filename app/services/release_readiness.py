@@ -7,6 +7,7 @@ from sqlalchemy import text
 
 from app.config import settings
 from app.database import engine
+from app.services.password_reset_ui import register_password_reset_routes
 
 router = APIRouter()
 _REGISTERED = False
@@ -234,5 +235,6 @@ def register_release_readiness_routes(app) -> None:
     global _REGISTERED
     if _REGISTERED:
         return
+    register_password_reset_routes(app)
     app.include_router(router)
     _REGISTERED = True
