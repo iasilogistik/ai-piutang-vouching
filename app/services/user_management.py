@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.audit_service import record_audit
 from app.auth import CurrentUser, require_roles
 from app.database import SessionLocal
+from app.services.auth_admin import create_auth_user, send_password_recovery, update_auth_user_password
 from app.services.branch_master import normalize_branch_code, register_branch_master_routes
 
 _ALLOWED_ROLES = {"ADMIN", "AUDITOR", "REVIEWER", "VIEWER"}
@@ -71,15 +72,56 @@ def _validated_active_branch(db: Session, branch: str | None) -> str | None:
     return row["branch_code"]
 
 
+def _existing_user_by_email(db: Session, email: str):
+    return db.execute(
+        text("select user_id, email, role::text as role, branch, is_active from public.user_roles where lower(email) = :email order by updated_at desc limit 1"),
+        {"email": email},
+    ).mappings().one_or_none()
+
+
 def _resolve_user_key(db: Session, *, email: str, supplied_user_id: str | None) -> str:
     supplied_user_id = _clean(supplied_user_id)
     if supplied_user_id:
         return supplied_user_id
-    existing = db.execute(
-        text("select user_id from public.user_roles where lower(email) = :email order by updated_at desc limit 1"),
-        {"email": email},
-    ).mappings().one_or_none()
+    existing = _existing_user_by_email(db, email)
     return existing["user_id"] if existing is not None else email
+
+
+def _resolve_auth_user(db: Session, *, email: str, supplied_user_id: str | None,
+                       password: str | None, display_name: str | None) -> tuple[str, dict[str, object]]:
+    password = _clean(password)
+    supplied_user_id = _clean(supplied_user_id)
+    existing = _existing_user_by_email(db, email)
+
+    if not password:
+        return _resolve_user_key(db, email=email, supplied_user_id=supplied_user_id), {"status": "NOT_REQUESTED"}
+
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="password must be at least 8 characters")
+
+    if supplied_user_id:
+        auth_operation = update_auth_user_password(
+            user_id=supplied_user_id,
+            email=email,
+            password=password,
+            display_name=_clean(display_name),
+        )
+        return str(auth_operation.get("user_id") or supplied_user_id), auth_operation
+
+    if existing is not None and existing["user_id"] != email:
+        auth_operation = update_auth_user_password(
+            user_id=existing["user_id"],
+            email=email,
+            password=password,
+            display_name=_clean(display_name),
+        )
+        return str(auth_operation.get("user_id") or existing["user_id"]), auth_operation
+
+    auth_operation = create_auth_user(email=email, password=password, display_name=_clean(display_name))
+    created_user_id = str(auth_operation.get("user_id"))
+    if existing is not None and existing["user_id"] != created_user_id:
+        db.execute(text("delete from public.user_roles where user_id = :old_user_id"), {"old_user_id": existing["user_id"]})
+    return created_user_id, auth_operation
 
 
 def _users_html() -> str:
@@ -91,7 +133,7 @@ def _users_html() -> str:
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>User Management - AI Piutang Vouching</title>
   <style>
-    :root { --bg:#f6f8fb; --card:#fff; --line:#d9e0ea; --text:#182433; --muted:#64748b; --blue:#1f6feb; --green:#188038; --red:#b3261e; }
+    :root { --bg:#f6f8fb; --card:#fff; --line:#d9e0ea; --text:#182433; --muted:#64748b; --blue:#1f6feb; --green:#188038; --red:#b3261e; --amber:#b45309; }
     * { box-sizing:border-box; }
     body { margin:0; font-family:Arial, Helvetica, sans-serif; background:var(--bg); color:var(--text); }
     header { background:#0f172a; color:white; padding:18px 24px; }
@@ -105,6 +147,7 @@ def _users_html() -> str:
     button, .button-link { border:0; border-radius:8px; padding:10px 13px; background:var(--blue); color:white; font-weight:700; cursor:pointer; text-decoration:none; display:inline-block; }
     button.secondary, .button-link.secondary { background:#475569; }
     button.danger { background:var(--red); }
+    button.warning { background:var(--amber); }
     .actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; align-items:center; }
     .hint { color:var(--muted); font-size:12px; margin:6px 0 0; }
     .custom-branch { display:none; border:1px dashed var(--line); background:#f8fafc; border-radius:10px; padding:12px; margin-top:12px; }
@@ -121,7 +164,7 @@ def _users_html() -> str:
 <body>
 <header>
   <h1>User Management</h1>
-  <p>Kelola role aplikasi: ADMIN, AUDITOR, REVIEWER, dan VIEWER.</p>
+  <p>Kelola akun, password awal, lupa password, role, cabang, dan status aktif/nonaktif.</p>
 </header>
 <main>
   <section class="panel">
@@ -138,10 +181,11 @@ def _users_html() -> str:
   </section>
 
   <section class="panel">
-    <h2>Tambah / Ubah Role User</h2>
-    <p class="hint">Tambah user cukup memakai email yang sudah/akan didaftarkan di Supabase Auth. ID teknis Supabase tidak perlu diinput manual.</p>
+    <h2>Tambah / Ubah User</h2>
+    <p class="hint">User baru dapat dibuat dengan email dan password sementara. Password tidak disimpan di database aplikasi.</p>
     <div class="grid">
       <div><label for="email">Email Login</label><input id="email" type="email" placeholder="nama@perusahaan.co.id" /></div>
+      <div><label for="password">Password Sementara / Password Baru</label><input id="password" type="password" autocomplete="new-password" placeholder="Minimal 8 karakter" /><p class="hint">Kosongkan bila tidak ingin mengubah password.</p></div>
       <div><label for="displayName">Nama</label><input id="displayName" placeholder="Nama user" /></div>
       <div><label for="role">Role</label><select id="role"><option>ADMIN</option><option>AUDITOR</option><option>REVIEWER</option><option>VIEWER</option></select></div>
       <div><label for="branch">Cabang</label><select id="branch"><option value="">-- ADMIN: tanpa cabang --</option></select><p class="hint">Pilih master cabang atau pilih "Tambah cabang sendiri".</p></div>
@@ -158,7 +202,7 @@ def _users_html() -> str:
       </div>
     </div>
     <div class="actions">
-      <button type="button" id="saveBtn">Simpan User Role</button>
+      <button type="button" id="saveBtn">Simpan User</button>
       <button type="button" class="secondary" id="clearBtn">Reset Form</button>
     </div>
   </section>
@@ -197,9 +241,7 @@ function appendLog(label, payload, ok = true) {
   const text = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2);
   logEl.textContent = `[${time}] ${ok ? 'OK' : 'ERROR'} - ${label}\n${text}\n\n` + (logEl.textContent === 'Belum ada aktivitas.' ? '' : logEl.textContent);
 }
-function normalizeBranchCode(value) {
-  return (value || '').trim().toUpperCase();
-}
+function normalizeBranchCode(value) { return (value || '').trim().toUpperCase(); }
 function toggleCustomBranchPanel() {
   const branchSelect = document.getElementById('branch');
   document.getElementById('customBranchPanel').style.display = branchSelect.value === CUSTOM_BRANCH_VALUE ? 'block' : 'none';
@@ -226,6 +268,7 @@ async function loadBranches(selected = '') {
 function setForm(user) {
   editingUserId = user.user_id || '';
   document.getElementById('email').value = user.email || '';
+  document.getElementById('password').value = '';
   document.getElementById('displayName').value = user.display_name || '';
   document.getElementById('role').value = user.role || 'VIEWER';
   document.getElementById('customBranchCode').value = '';
@@ -235,16 +278,13 @@ function setForm(user) {
   loadBranches(user.branch || '');
   document.getElementById('isActive').value = String(user.is_active !== false);
 }
-function resetForm() {
-  editingUserId = '';
-  setForm({ role:'VIEWER', is_active:true });
-}
+function resetForm() { editingUserId = ''; setForm({ role:'VIEWER', is_active:true }); }
 function render(users) {
   if (!users.length) { rowsEl.innerHTML = '<tr><td colspan="6">Belum ada user.</td></tr>'; return; }
   rowsEl.innerHTML = users.map(user => `<tr>
     <td>${user.email || user.user_id}</td><td>${user.display_name || '-'}</td>
     <td>${user.role}</td><td>${user.branch || '-'}</td><td class="${user.is_active ? 'ok' : 'err'}">${user.is_active ? 'Aktif' : 'Nonaktif'}</td>
-    <td><button type="button" class="secondary" onclick='editUser(${JSON.stringify(user)})'>Edit</button> <button type="button" class="danger" onclick="deactivateUser('${user.user_id}')">Nonaktifkan</button></td>
+    <td><button type="button" class="secondary" onclick='editUser(${JSON.stringify(user)})'>Edit</button> <button type="button" class="warning" onclick='forgotPassword(${JSON.stringify(user)})'>Lupa Password</button> <button type="button" class="danger" onclick="deactivateUser('${user.user_id}')">Nonaktifkan</button></td>
   </tr>`).join('');
 }
 window.editUser = (user) => setForm(user);
@@ -260,9 +300,7 @@ async function loadUsers() {
 }
 async function ensureSelectedBranch() {
   const branchSelect = document.getElementById('branch');
-  if (branchSelect.value !== CUSTOM_BRANCH_VALUE) {
-    return branchSelect.value.trim();
-  }
+  if (branchSelect.value !== CUSTOM_BRANCH_VALUE) return branchSelect.value.trim();
   const code = normalizeBranchCode(document.getElementById('customBranchCode').value);
   const name = document.getElementById('customBranchName').value.trim() || code;
   if (!code) throw new Error('Kode cabang baru wajib diisi.');
@@ -285,6 +323,8 @@ async function saveUser() {
     const form = new FormData();
     if (editingUserId) form.append('user_id', editingUserId);
     form.append('email', document.getElementById('email').value.trim());
+    const password = document.getElementById('password').value;
+    if (password) form.append('password', password);
     form.append('display_name', document.getElementById('displayName').value.trim());
     form.append('role', document.getElementById('role').value);
     form.append('branch', branchValue);
@@ -292,11 +332,23 @@ async function saveUser() {
     const response = await fetch('/admin/users', { method:'POST', headers: authHeaders(), body: form });
     const body = await response.json();
     if (!response.ok) throw new Error(body.detail || JSON.stringify(body));
-    appendLog('Simpan User Role', body);
+    document.getElementById('password').value = '';
+    appendLog('Simpan User', body);
     editingUserId = body.user_id || '';
     await loadUsers();
-  } catch (error) { appendLog('Simpan User Role', error.message, false); }
+  } catch (error) { appendLog('Simpan User', error.message, false); }
 }
+window.forgotPassword = async (user) => {
+  try {
+    if (!user.email) throw new Error('Email user belum tersedia.');
+    const ok = confirm(`Kirim email lupa password ke ${user.email}?`);
+    if (!ok) return;
+    const response = await fetch(`/admin/users/${encodeURIComponent(user.user_id)}/forgot-password`, { method:'POST', headers: authHeaders() });
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.detail || JSON.stringify(body));
+    appendLog('Lupa Password', body);
+  } catch (error) { appendLog('Lupa Password', error.message, false); }
+};
 window.deactivateUser = async (userId) => {
   try {
     const response = await fetch(`/admin/users/${encodeURIComponent(userId)}/deactivate`, { method:'POST', headers: authHeaders() });
@@ -319,16 +371,10 @@ document.getElementById('logoutBtn').addEventListener('click', () => {
 document.getElementById('branch').addEventListener('change', toggleCustomBranchPanel);
 document.getElementById('role').addEventListener('change', () => {
   const branchSelect = document.getElementById('branch');
-  if (document.getElementById('role').value !== 'ADMIN' && !branchSelect.value && branchSelect.options.length > 2) {
-    branchSelect.selectedIndex = 1;
-  }
+  if (document.getElementById('role').value !== 'ADMIN' && !branchSelect.value && branchSelect.options.length > 2) branchSelect.selectedIndex = 1;
   toggleCustomBranchPanel();
 });
-if (getAuditToken()) {
-  loadBranches();
-} else {
-  appendLog('Sesi Admin', 'Belum login. Token tidak ditampilkan di halaman ini.', false);
-}
+if (getAuditToken()) { loadBranches(); } else { appendLog('Sesi Admin', 'Belum login. Token tidak ditampilkan di halaman ini.', false); }
 </script>
 </body>
 </html>
@@ -358,6 +404,7 @@ def list_users(db: Session = Depends(_db), user: CurrentUser = Depends(require_r
 def upsert_user_role(
     email: str = Form(...),
     user_id: str | None = Form(None),
+    password: str | None = Form(None),
     display_name: str | None = Form(None),
     role: str = Form("VIEWER"),
     branch: str | None = Form(None),
@@ -366,15 +413,22 @@ def upsert_user_role(
     user: CurrentUser = Depends(require_roles("ADMIN")),
 ):
     email = _clean_email(email)
-    user_id = _resolve_user_key(db, email=email, supplied_user_id=user_id)
     role = _require_valid_role(role)
     branch = _validated_active_branch(db, branch)
     if role != "ADMIN" and not branch:
         raise HTTPException(status_code=400, detail="branch is required for non-ADMIN users")
 
+    previous_for_email = _existing_user_by_email(db, email)
+    resolved_user_id, auth_operation = _resolve_auth_user(
+        db,
+        email=email,
+        supplied_user_id=user_id,
+        password=password,
+        display_name=display_name,
+    )
     previous = db.execute(
         text("select role::text as role, branch, is_active from public.user_roles where user_id = :user_id"),
-        {"user_id": user_id},
+        {"user_id": resolved_user_id},
     ).mappings().one_or_none()
 
     db.execute(
@@ -392,7 +446,7 @@ def upsert_user_role(
             """
         ),
         {
-            "user_id": user_id,
+            "user_id": resolved_user_id,
             "email": email,
             "display_name": _clean(display_name),
             "role": role,
@@ -400,23 +454,25 @@ def upsert_user_role(
             "is_active": is_active,
         },
     )
-    previous_branch = previous["branch"] if previous is not None else None
-    action = "BRANCH_REASSIGN" if previous is not None and previous_branch != branch else "USER_ROLE_UPSERT"
+    previous_branch = previous["branch"] if previous is not None else (previous_for_email["branch"] if previous_for_email is not None else None)
+    previous_role = previous["role"] if previous is not None else (previous_for_email["role"] if previous_for_email is not None else None)
+    action = "BRANCH_REASSIGN" if previous_role is not None and previous_branch != branch else "USER_ROLE_UPSERT"
     record_audit(
         db,
         entity_type="USER_ROLE",
         entity_id=None,
         action=action,
         actor=user.user_id,
-        status_from=previous["role"] if previous is not None else None,
+        status_from=previous_role,
         status_to=role,
         metadata={
-            "target_user_id": user_id,
+            "target_user_id": resolved_user_id,
             "target_email": email,
             "old_branch": previous_branch,
             "new_branch": branch,
-            "old_active": bool(previous["is_active"]) if previous is not None else None,
+            "old_active": bool(previous["is_active"]) if previous is not None else (bool(previous_for_email["is_active"]) if previous_for_email is not None else None),
             "new_active": is_active,
+            "auth_operation": auth_operation.get("status"),
         },
         branch=branch or previous_branch,
     )
@@ -428,9 +484,38 @@ def upsert_user_role(
             from public.user_roles where user_id = :user_id
             """
         ),
-        {"user_id": user_id},
+        {"user_id": resolved_user_id},
     ).mappings().one()
-    return _serialize(row)
+    payload = _serialize(row)
+    payload["auth_operation"] = auth_operation
+    return payload
+
+
+@router.post("/admin/users/{user_id}/forgot-password")
+def forgot_password(user_id: str, db: Session = Depends(_db), user: CurrentUser = Depends(require_roles("ADMIN"))):
+    row = db.execute(
+        text("select user_id, email, role::text as role, branch from public.user_roles where user_id = :user_id"),
+        {"user_id": user_id},
+    ).mappings().one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="User role not found")
+    email = _clean(row["email"])
+    if not email:
+        raise HTTPException(status_code=400, detail="User email is required for forgot password")
+    auth_operation = send_password_recovery(email)
+    record_audit(
+        db,
+        entity_type="USER_ROLE",
+        entity_id=None,
+        action="PASSWORD_RECOVERY_SENT",
+        actor=user.user_id,
+        status_from=row["role"],
+        status_to=row["role"],
+        metadata={"target_user_id": user_id, "target_email": email, "auth_operation": auth_operation.get("status")},
+        branch=row["branch"],
+    )
+    db.commit()
+    return {"user_id": user_id, "email": email, **auth_operation}
 
 
 @router.post("/admin/users/{user_id}/deactivate")
