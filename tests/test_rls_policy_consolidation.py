@@ -6,11 +6,11 @@ from alembic.script import ScriptDirectory
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MIGRATION = ROOT / "alembic" / "versions" / "0032_rls_policy_consolidation.py"
+MIGRATION = ROOT / "alembic" / "versions" / "0033_rls_policy_consolidation.py"
 
 
 def _load_migration():
-    spec = importlib.util.spec_from_file_location("rls_0032", MIGRATION)
+    spec = importlib.util.spec_from_file_location("rls_0033", MIGRATION)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
@@ -20,7 +20,7 @@ def _load_migration():
 def test_rls_consolidation_is_single_release_head():
     config = Config(str(ROOT / "alembic.ini"))
     config.set_main_option("script_location", str(ROOT / "alembic"))
-    assert ScriptDirectory.from_config(config).get_heads() == ["0032_rls_policy_consolidation"]
+    assert ScriptDirectory.from_config(config).get_heads() == ["0033_rls_policy_consolidation"]
 
 
 def test_rls_consolidation_covers_exact_current_overlap_set():

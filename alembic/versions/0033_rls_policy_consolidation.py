@@ -1,6 +1,6 @@
 """Consolidate overlapping permissive RLS policies without changing authorization semantics.
 
-Revision ID: 0032_rls_policy_consolidation
+Revision ID: 0033_rls_policy_consolidation
 Revises: 0031_revision_helper_acl
 Create Date: 2026-09-22
 
@@ -12,8 +12,8 @@ authorization matrix is captured.
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0032_rls_policy_consolidation"
-down_revision = "0031_revision_helper_acl"
+revision = "0033_rls_policy_consolidation"
+down_revision = "0032_dynamic_branch_scope"
 branch_labels = None
 depends_on = None
 

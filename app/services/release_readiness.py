@@ -10,7 +10,7 @@ from app.database import engine
 
 router = APIRouter()
 _REGISTERED = False
-EXPECTED_SCHEMA_REVISION = "0032_rls_policy_consolidation"
+EXPECTED_SCHEMA_REVISION = "0033_rls_policy_consolidation"
 REQUIRED_SCHEMA_OBJECTS = {
     "public.documents",
     "public.document_control_evidence",
