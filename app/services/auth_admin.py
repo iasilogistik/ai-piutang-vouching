@@ -36,12 +36,39 @@ def _error_detail(response: httpx.Response, default_detail: str) -> str:
         payload = response.json()
     except ValueError:
         payload = {"message": response.text}
-    return str(payload.get("message") or payload.get("error_description") or payload.get("error") or default_detail)
+    for key in ("message", "msg", "error_description", "error", "detail", "code"):
+        value = payload.get(key)
+        if value:
+            return str(value)
+    if payload:
+        return f"{default_detail}: {payload}"
+    return default_detail
 
 
 def _raise_supabase_error(response: httpx.Response, default_detail: str) -> None:
     detail = _error_detail(response, default_detail)
     raise HTTPException(status_code=response.status_code if response.status_code < 500 else 502, detail=detail)
+
+
+def _app_role_only_result(*, email: str, status: str, detail: str, user_id: str | None = None) -> dict[str, object]:
+    """Return a controlled fallback when Supabase Auth admin API is unavailable.
+
+    User Management should still be able to save the application role/cabang so
+    an ADMIN can continue setup. Login will work when the Supabase Auth user is
+    created separately or when the service-role key is fixed and password reset
+    is run again.
+    """
+    return {
+        "status": status,
+        "user_id": user_id or email,
+        "email": email,
+        "warning": (
+            "Role aplikasi berhasil disimpan, tetapi akun/password Supabase Auth "
+            "belum berhasil dibuat atau diubah. Periksa SUPABASE_SECRET_KEY/service_role "
+            "di Vercel atau buat user tersebut di Supabase Auth, lalu lakukan reset password."
+        ),
+        "detail": detail,
+    }
 
 
 def create_auth_user(*, email: str, password: str, display_name: str | None = None) -> dict[str, object]:
@@ -52,14 +79,24 @@ def create_auth_user(*, email: str, password: str, display_name: str | None = No
     }
     if display_name:
         payload["user_metadata"] = {"display_name": display_name}
-    with httpx.Client(timeout=15.0) as client:
-        response = client.post(f"{_base_url()}/auth/v1/admin/users", headers=_service_headers(), json=payload)
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            response = client.post(f"{_base_url()}/auth/v1/admin/users", headers=_service_headers(), json=payload)
+    except HTTPException as exc:
+        return _app_role_only_result(email=email, status="AUTH_CREATE_FAILED_APP_ROLE_SAVED", detail=str(exc.detail))
+    except httpx.HTTPError as exc:
+        return _app_role_only_result(email=email, status="AUTH_CREATE_FAILED_APP_ROLE_SAVED", detail=str(exc))
     if response.status_code not in {200, 201}:
-        _raise_supabase_error(response, "Failed to create Supabase Auth user")
+        detail = _error_detail(response, "Failed to create Supabase Auth user")
+        return _app_role_only_result(email=email, status="AUTH_CREATE_FAILED_APP_ROLE_SAVED", detail=detail)
     body = response.json()
     user_id = body.get("id")
     if not user_id:
-        raise HTTPException(status_code=502, detail="Supabase Auth did not return a user id")
+        return _app_role_only_result(
+            email=email,
+            status="AUTH_CREATE_FAILED_APP_ROLE_SAVED",
+            detail="Supabase Auth did not return a user id",
+        )
     return {"status": "CREATED", "user_id": str(user_id), "email": body.get("email") or email}
 
 
@@ -70,10 +107,31 @@ def update_auth_user_password(*, user_id: str, password: str, email: str | None 
         payload["email"] = email
     if display_name:
         payload["user_metadata"] = {"display_name": display_name}
-    with httpx.Client(timeout=15.0) as client:
-        response = client.put(f"{_base_url()}/auth/v1/admin/users/{user_id}", headers=_service_headers(), json=payload)
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            response = client.put(f"{_base_url()}/auth/v1/admin/users/{user_id}", headers=_service_headers(), json=payload)
+    except HTTPException as exc:
+        return _app_role_only_result(
+            email=email or user_id,
+            user_id=user_id,
+            status="PASSWORD_UPDATE_FAILED_APP_ROLE_SAVED",
+            detail=str(exc.detail),
+        )
+    except httpx.HTTPError as exc:
+        return _app_role_only_result(
+            email=email or user_id,
+            user_id=user_id,
+            status="PASSWORD_UPDATE_FAILED_APP_ROLE_SAVED",
+            detail=str(exc),
+        )
     if response.status_code not in {200, 201}:
-        _raise_supabase_error(response, "Failed to update Supabase Auth password")
+        detail = _error_detail(response, "Failed to update Supabase Auth password")
+        return _app_role_only_result(
+            email=email or user_id,
+            user_id=user_id,
+            status="PASSWORD_UPDATE_FAILED_APP_ROLE_SAVED",
+            detail=detail,
+        )
     body = response.json()
     return {"status": "PASSWORD_UPDATED", "user_id": str(body.get("id") or user_id), "email": body.get("email") or email}
 
