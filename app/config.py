@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     supabase_storage_bucket: str = "audit-documents"
     google_drive_api_key: str | None = None
     auth_required: bool = False
+    app_base_url: str = "https://ai-piutang-vouching.vercel.app"
+    password_reset_redirect_url: str | None = None
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     @property
