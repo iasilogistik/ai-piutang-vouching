@@ -21,6 +21,8 @@ def scoped_branch(user: CurrentUser, requested_branch: str | None = None) -> str
     A non-null user branch is an optional restriction and remains pinned.
     """
     requested = normalize_branch(requested_branch)
+    if user.role == "ADMIN":
+        return requested
     assigned = normalize_branch(user.branch)
     if assigned is None:
         return requested
@@ -33,6 +35,11 @@ def write_branch(user: CurrentUser, requested_branch: str | None = None) -> str:
     """Return the branch that must own newly-created data."""
     requested = normalize_branch(requested_branch)
     assigned = normalize_branch(user.branch)
+    if user.role == "ADMIN":
+        resolved = requested or assigned
+        if resolved is None:
+            raise HTTPException(status_code=400, detail="branch is required for write operations")
+        return resolved
     if assigned is None:
         if requested is None:
             raise HTTPException(status_code=400, detail="branch is required when user has global branch scope")
@@ -44,6 +51,8 @@ def write_branch(user: CurrentUser, requested_branch: str | None = None) -> str:
 
 def ensure_branch_access(user: CurrentUser, resource_branch: str | None) -> None:
     """Hide resources outside the caller branch to avoid cross-branch enumeration."""
+    if user.role == "ADMIN":
+        return
     assigned = normalize_branch(user.branch)
     if assigned is None:
         return
