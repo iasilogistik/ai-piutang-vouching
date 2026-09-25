@@ -74,7 +74,11 @@ def _validated_active_branch(db: Session, branch: str | None) -> str | None:
 
 def _existing_user_by_email(db: Session, email: str):
     return db.execute(
-        text("select user_id, email, role::text as role, branch, is_active from public.user_roles where lower(email) = :email order by updated_at desc limit 1"),
+        text(
+            "select user_id, email, role::text as role, branch, is_active "
+            "from public.user_roles where lower(email) = :email "
+            "order by updated_at desc limit 1"
+        ),
         {"email": email},
     ).mappings().one_or_none()
 
@@ -87,18 +91,21 @@ def _resolve_user_key(db: Session, *, email: str, supplied_user_id: str | None) 
     return existing["user_id"] if existing is not None else email
 
 
-def _resolve_auth_user(db: Session, *, email: str, supplied_user_id: str | None,
-                       password: str | None, display_name: str | None) -> tuple[str, dict[str, object]]:
+def _resolve_auth_user(
+    db: Session,
+    *,
+    email: str,
+    supplied_user_id: str | None,
+    password: str | None,
+    display_name: str | None,
+) -> tuple[str, dict[str, object]]:
     password = _clean(password)
     supplied_user_id = _clean(supplied_user_id)
     existing = _existing_user_by_email(db, email)
-
     if not password:
         return _resolve_user_key(db, email=email, supplied_user_id=supplied_user_id), {"status": "NOT_REQUESTED"}
-
     if len(password) < 8:
         raise HTTPException(status_code=400, detail="password must be at least 8 characters")
-
     if supplied_user_id:
         auth_operation = update_auth_user_password(
             user_id=supplied_user_id,
@@ -107,7 +114,6 @@ def _resolve_auth_user(db: Session, *, email: str, supplied_user_id: str | None,
             display_name=_clean(display_name),
         )
         return str(auth_operation.get("user_id") or supplied_user_id), auth_operation
-
     if existing is not None and existing["user_id"] != email:
         auth_operation = update_auth_user_password(
             user_id=existing["user_id"],
@@ -116,7 +122,6 @@ def _resolve_auth_user(db: Session, *, email: str, supplied_user_id: str | None,
             display_name=_clean(display_name),
         )
         return str(auth_operation.get("user_id") or existing["user_id"]), auth_operation
-
     auth_operation = create_auth_user(email=email, password=password, display_name=_clean(display_name))
     created_user_id = str(auth_operation.get("user_id"))
     if existing is not None and existing["user_id"] != created_user_id:
@@ -177,7 +182,6 @@ def _users_html() -> str:
       <button type="button" class="secondary" id="logoutBtn">Logout</button>
       <a class="button-link secondary" href="/login?next=/ui/users">Login Ulang</a>
       <a class="button-link secondary" href="/ui/control-evidence">Control Evidence</a>
-      <a class="button-link secondary" href="/ui/branches">Master Cabang</a>
       <span id="sessionStatus" class="muted">Memeriksa sesi...</span>
     </div>
     <div id="sessionNotice" class="notice"></div>
@@ -227,10 +231,9 @@ const sessionStatus = document.getElementById('sessionStatus');
 const sessionNotice = document.getElementById('sessionNotice');
 const CUSTOM_BRANCH_VALUE = '__CUSTOM_BRANCH__';
 let editingUserId = '';
+let userCache = [];
 
-function nextLoginUrl() {
-  return `/login?next=${encodeURIComponent('/ui/users')}`;
-}
+function nextLoginUrl() { return `/login?next=${encodeURIComponent('/ui/users')}`; }
 function storeSession(data) {
   localStorage.setItem('auditToken', data.access_token || '');
   if (data.refresh_token) localStorage.setItem('auditRefreshToken', data.refresh_token);
@@ -247,10 +250,7 @@ function showSessionNotice(message) {
   sessionNotice.innerHTML = `${message} <a href="${nextLoginUrl()}">Login ulang</a>`;
   sessionNotice.style.display = 'block';
 }
-function hideSessionNotice() {
-  sessionNotice.style.display = 'none';
-  sessionNotice.textContent = '';
-}
+function hideSessionNotice() { sessionNotice.style.display = 'none'; sessionNotice.textContent = ''; }
 function getAuditToken() {
   const token = localStorage.getItem('auditToken') || '';
   sessionStatus.textContent = token ? 'Sesi login tersedia.' : 'Belum login. Silakan login terlebih dahulu.';
@@ -258,10 +258,7 @@ function getAuditToken() {
 }
 function authHeaders() {
   const token = getAuditToken();
-  if (!token) {
-    showSessionNotice('Sesi belum tersedia.');
-    throw new Error('Silakan login sebagai ADMIN terlebih dahulu.');
-  }
+  if (!token) { showSessionNotice('Sesi belum tersedia.'); throw new Error('Silakan login sebagai ADMIN terlebih dahulu.'); }
   return { Authorization: `Bearer ${token}` };
 }
 function appendLog(label, payload, ok = true) {
@@ -311,9 +308,7 @@ async function fetchWithAuth(url, options = {}, label = 'Request') {
       body = await parseResponse(response);
     }
   }
-  if (response.status === 401 && isExpiredAuth(body)) {
-    handleAuthFailure(label, body);
-  }
+  if (response.status === 401 && isExpiredAuth(body)) handleAuthFailure(label, body);
   return { response, body };
 }
 function normalizeBranchCode(value) { return (value || '').trim().toUpperCase(); }
@@ -332,9 +327,7 @@ async function loadBranches(selected = '') {
     select.innerHTML = '<option value="">-- ADMIN: tanpa cabang --</option>' + branches.map(
       branch => `<option value="${branch.branch_code}">${branch.branch_code} - ${branch.branch_name}</option>`
     ).join('') + '<option value="__CUSTOM_BRANCH__">+ Tambah cabang sendiri</option>';
-    if (selectedCode && !hasSelected) {
-      select.insertAdjacentHTML('beforeend', `<option value="${selectedCode}">${selectedCode} - cabang belum ada di master</option>`);
-    }
+    if (selectedCode && !hasSelected) select.insertAdjacentHTML('beforeend', `<option value="${selectedCode}">${selectedCode} - cabang belum ada di master</option>`);
     select.value = selectedCode || '';
     toggleCustomBranchPanel();
   } catch (error) { appendLog('Muat Master Cabang', error.message, false); }
@@ -351,17 +344,19 @@ function setForm(user) {
   document.getElementById('customBranchArea').value = '';
   loadBranches(user.branch || '');
   document.getElementById('isActive').value = String(user.is_active !== false);
+  appendLog('Edit User', { email: user.email, role: user.role, branch: user.branch });
 }
 function resetForm() { editingUserId = ''; setForm({ role:'VIEWER', is_active:true }); }
 function render(users) {
-  if (!users.length) { rowsEl.innerHTML = '<tr><td colspan="6">Belum ada user.</td></tr>'; return; }
-  rowsEl.innerHTML = users.map(user => `<tr>
+  userCache = users || [];
+  if (!userCache.length) { rowsEl.innerHTML = '<tr><td colspan="6">Belum ada user.</td></tr>'; return; }
+  rowsEl.innerHTML = userCache.map((user, index) => `<tr>
     <td>${user.email || user.user_id}</td><td>${user.display_name || '-'}</td>
     <td>${user.role}</td><td>${user.branch || '-'}</td><td class="${user.is_active ? 'ok' : 'err'}">${user.is_active ? 'Aktif' : 'Nonaktif'}</td>
-    <td><button type="button" class="secondary" onclick='editUser(${JSON.stringify(user)})'>Edit</button> <button type="button" class="warning" onclick='forgotPassword(${JSON.stringify(user)})'>Lupa Password</button> <button type="button" class="danger" onclick="deactivateUser('${user.user_id}')">Nonaktifkan</button></td>
+    <td><button type="button" class="secondary" data-action="edit" data-index="${index}">Edit</button> <button type="button" class="warning" data-action="forgot" data-index="${index}">Lupa Password</button> <button type="button" class="danger" data-action="deactivate" data-index="${index}">Nonaktifkan</button> <button type="button" class="danger" data-action="delete" data-index="${index}">Delete</button></td>
   </tr>`).join('');
 }
-window.editUser = (user) => setForm(user);
+window.editUser = (index) => setForm(userCache[index] || {});
 async function loadUsers() {
   try {
     const { response, body } = await fetchWithAuth('/admin/users', {}, 'Muat User');
@@ -419,28 +414,48 @@ window.forgotPassword = async (user) => {
     appendLog('Lupa Password', body);
   } catch (error) { appendLog('Lupa Password', error.message, false); }
 };
-window.deactivateUser = async (userId) => {
+window.deactivateUser = async (user) => {
   try {
-    const { response, body } = await fetchWithAuth(`/admin/users/${encodeURIComponent(userId)}/deactivate`, { method:'POST' }, 'Nonaktifkan User');
+    const ok = confirm(`Nonaktifkan user ${user.email || user.user_id}?`);
+    if (!ok) return;
+    const { response, body } = await fetchWithAuth(`/admin/users/${encodeURIComponent(user.user_id)}/deactivate`, { method:'POST' }, 'Nonaktifkan User');
     if (!response.ok) throw new Error(body.detail || JSON.stringify(body));
     appendLog('Nonaktifkan User', body);
     await loadUsers();
   } catch (error) { appendLog('Nonaktifkan User', error.message, false); }
 };
+window.deleteUser = async (user) => {
+  try {
+    const ok = confirm(`Delete user ${user.email || user.user_id} dari daftar aplikasi? Akun Supabase Auth tidak ikut dihapus.`);
+    if (!ok) return;
+    const { response, body } = await fetchWithAuth(`/admin/users/${encodeURIComponent(user.user_id)}`, { method:'DELETE' }, 'Delete User');
+    if (!response.ok) throw new Error(body.detail || JSON.stringify(body));
+    appendLog('Delete User', body);
+    if (editingUserId === user.user_id) resetForm();
+    await loadUsers();
+  } catch (error) { appendLog('Delete User', error.message, false); }
+};
+rowsEl.addEventListener('click', (event) => {
+  const button = event.target.closest('button[data-action]');
+  if (!button) return;
+  const user = userCache[Number(button.dataset.index)];
+  if (!user) return;
+  if (button.dataset.action === 'edit') setForm(user);
+  if (button.dataset.action === 'forgot') window.forgotPassword(user);
+  if (button.dataset.action === 'deactivate') window.deactivateUser(user);
+  if (button.dataset.action === 'delete') window.deleteUser(user);
+});
 document.getElementById('loadBtn').addEventListener('click', loadUsers);
 document.getElementById('saveBtn').addEventListener('click', saveUser);
 document.getElementById('clearBtn').addEventListener('click', resetForm);
-document.getElementById('logoutBtn').addEventListener('click', () => {
-  clearSession();
-  window.location.href = nextLoginUrl();
-});
+document.getElementById('logoutBtn').addEventListener('click', () => { clearSession(); window.location.href = nextLoginUrl(); });
 document.getElementById('branch').addEventListener('change', toggleCustomBranchPanel);
 document.getElementById('role').addEventListener('change', () => {
   const branchSelect = document.getElementById('branch');
   if (document.getElementById('role').value !== 'ADMIN' && !branchSelect.value && branchSelect.options.length > 2) branchSelect.selectedIndex = 1;
   toggleCustomBranchPanel();
 });
-if (getAuditToken()) { loadBranches(); } else { appendLog('Sesi Admin', 'Belum login. Silakan klik Login Ulang terlebih dahulu.', false); showSessionNotice('Belum login sebagai ADMIN.'); }
+if (getAuditToken()) { loadUsers(); } else { appendLog('Sesi Admin', 'Belum login. Silakan klik Login Ulang terlebih dahulu.', false); showSessionNotice('Belum login sebagai ADMIN.'); }
 </script>
 </body>
 </html>
@@ -612,6 +627,40 @@ def deactivate_user_role(user_id: str, db: Session = Depends(_db), user: Current
     )
     db.commit()
     return _serialize(row)
+
+
+@router.delete("/admin/users/{user_id}")
+def delete_user_role(user_id: str, db: Session = Depends(_db), user: CurrentUser = Depends(require_roles("ADMIN"))):
+    if user_id == user.user_id:
+        raise HTTPException(status_code=400, detail="Current logged-in admin user cannot delete their own application role")
+    row = db.execute(
+        text(
+            """
+            delete from public.user_roles
+            where user_id = :user_id
+            returning user_id, email, display_name, role::text as role, branch, is_active, created_at, updated_at
+            """
+        ),
+        {"user_id": user_id},
+    ).mappings().one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="User role not found")
+    record_audit(
+        db,
+        entity_type="USER_ROLE",
+        entity_id=None,
+        action="USER_ROLE_DELETE",
+        actor=user.user_id,
+        status_from=row["role"],
+        status_to="DELETED",
+        metadata={"target_user_id": row["user_id"], "target_email": row["email"], "deleted_from_app_roles": True},
+        branch=row["branch"],
+    )
+    db.commit()
+    payload = _serialize(row)
+    payload["deleted"] = True
+    payload["auth_user_deleted"] = False
+    return payload
 
 
 def register_user_management_routes(app) -> None:
