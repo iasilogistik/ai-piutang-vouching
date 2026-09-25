@@ -26,7 +26,7 @@ def _db():
         db.close()
 
 
-def _verify_token(token: str) -> str:
+def _verify_token(token: str) -> dict[str, str | None]:
     if not settings.supabase_url or not settings.supabase_publishable_key:
         raise HTTPException(status_code=503, detail="Authentication is not configured")
     with httpx.Client(timeout=10.0) as client:
@@ -36,10 +36,12 @@ def _verify_token(token: str) -> str:
         )
     if response.status_code != 200:
         raise HTTPException(status_code=401, detail="Invalid or expired access token")
-    user_id = response.json().get("id")
+    payload = response.json()
+    user_id = payload.get("id")
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid access token")
-    return str(user_id)
+    email = payload.get("email")
+    return {"user_id": str(user_id), "email": str(email).lower() if email else None}
 
 
 def current_user(authorization: str | None = Header(default=None), db: Session = Depends(_db)) -> CurrentUser:
@@ -47,15 +49,24 @@ def current_user(authorization: str | None = Header(default=None), db: Session =
         return CurrentUser(user_id="development-user", role="ADMIN", branch=None)
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="Bearer access token required")
-    user_id = _verify_token(authorization.split(" ", 1)[1].strip())
+    identity = _verify_token(authorization.split(" ", 1)[1].strip())
     row = db.execute(
-        text("select role::text as role, branch, coalesce(is_active, true) as is_active from public.user_roles where user_id = :user_id"),
-        {"user_id": user_id},
+        text(
+            """
+            select role::text as role, branch, coalesce(is_active, true) as is_active
+            from public.user_roles
+            where user_id = :user_id
+               or (:email is not null and lower(email) = :email)
+            order by case when user_id = :user_id then 0 else 1 end
+            limit 1
+            """
+        ),
+        {"user_id": identity["user_id"], "email": identity["email"]},
     ).mappings().one_or_none()
     if row is not None and not row["is_active"]:
         raise HTTPException(status_code=403, detail="Application user is inactive")
     role = row["role"] if row is not None else "VIEWER"
-    return CurrentUser(user_id=user_id, role=role, branch=row["branch"] if row is not None else None)
+    return CurrentUser(user_id=identity["user_id"] or "", role=role, branch=row["branch"] if row is not None else None)
 
 
 def require_roles(*roles: str):
