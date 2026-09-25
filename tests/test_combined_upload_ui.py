@@ -13,6 +13,9 @@ def test_combined_upload_ui_shell_loads():
     assert "text/html" in response.headers["content-type"]
     assert "Combined Billing + SPJ Upload" in response.text
     assert "/documents/combined" in response.text
+    assert 'id="branch"' in response.text
+    assert "branch baru boleh langsung diketik" in response.text
+    assert "form.append('branch', branch)" in response.text
     assert "Buka Control Evidence" in response.text
 
 
