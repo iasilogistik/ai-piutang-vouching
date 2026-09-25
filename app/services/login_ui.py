@@ -67,7 +67,15 @@ function storeSession(data) {
   if (data.expires_at) localStorage.setItem('auditExpiresAt', String(data.expires_at));
   if (data.user) localStorage.setItem('auditUser', JSON.stringify(data.user));
 }
+function requestedNextPath() {
+  const params = new URLSearchParams(window.location.search);
+  const next = params.get('next');
+  if (next && next.startsWith('/') && !next.startsWith('//')) return next;
+  return '';
+}
 async function resolvePostLoginDestination(accessToken) {
+  const next = requestedNextPath();
+  if (next) return next;
   try {
     const response = await fetch('/auth/me', { headers: { Authorization: `Bearer ${accessToken}` } });
     const profile = await response.json();
@@ -93,7 +101,7 @@ form.addEventListener('submit', async (event) => {
     if (!response.ok) throw new Error(body.detail || JSON.stringify(body));
     storeSession(body);
     const destination = await resolvePostLoginDestination(body.access_token || localStorage.getItem('auditToken') || '');
-    show(`Login berhasil. Mengarahkan ke layout utama...`, true);
+    show(`Login berhasil. Mengarahkan ke halaman tujuan...`, true);
     window.location.replace(destination);
   } catch (error) {
     show(error.message || 'Login gagal.', false);
