@@ -5,10 +5,11 @@ from app.auth import CurrentUser
 from app.branch_access import scoped_branch, write_branch
 
 
-def test_admin_can_filter_reads_to_one_branch_or_all():
-    admin = CurrentUser(user_id="admin", role="ADMIN", branch=None)
-    assert scoped_branch(admin) is None
-    assert scoped_branch(admin, " Pasuruan ") == "PASURUAN"
+def test_global_user_can_filter_reads_to_one_branch_or_all():
+    for role in ("ADMIN", "AUDITOR", "REVIEWER", "VIEWER"):
+        user = CurrentUser(user_id=role.lower(), role=role, branch=None)
+        assert scoped_branch(user) is None
+        assert scoped_branch(user, " Pasuruan ") == "PASURUAN"
 
 
 def test_scoped_user_cannot_request_another_branch():
@@ -20,12 +21,13 @@ def test_scoped_user_cannot_request_another_branch():
     assert exc.value.status_code == 403
 
 
-def test_admin_write_requires_branch_when_no_default_is_assigned():
-    admin = CurrentUser(user_id="admin", role="ADMIN", branch=None)
-    with pytest.raises(HTTPException) as exc:
-        write_branch(admin)
-    assert exc.value.status_code == 400
-    assert write_branch(admin, "Gresik") == "GRESIK"
+def test_global_write_requires_resolved_branch_for_all_roles():
+    for role in ("ADMIN", "AUDITOR", "REVIEWER"):
+        user = CurrentUser(user_id=role.lower(), role=role, branch=None)
+        with pytest.raises(HTTPException) as exc:
+            write_branch(user)
+        assert exc.value.status_code == 400
+        assert write_branch(user, "Gresik") == "GRESIK"
 
 
 def test_scoped_write_is_always_pinned_to_assigned_branch():
@@ -34,3 +36,9 @@ def test_scoped_write_is_always_pinned_to_assigned_branch():
     with pytest.raises(HTTPException) as exc:
         write_branch(reviewer, "Tangerang")
     assert exc.value.status_code == 403
+
+
+def test_global_user_is_not_pinned_to_a_branch():
+    viewer = CurrentUser(user_id="global-viewer", role="VIEWER", branch=None)
+    assert scoped_branch(viewer, "GRESIK") == "GRESIK"
+    assert scoped_branch(viewer, "TANGERANG") == "TANGERANG"
