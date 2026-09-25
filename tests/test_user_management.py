@@ -36,6 +36,10 @@ def test_user_management_ui_shell_loads_without_login_bootstrap():
     assert "User Management" in response.text
     assert "/admin/users" in response.text
     assert "Simpan User Role" in response.text
+    assert "Email Login" in response.text
+    assert "User ID Supabase" not in response.text
+    assert 'id="userId"' not in response.text
+    assert "ID teknis Supabase tidak perlu diinput manual" in response.text
     assert '<select id="branch">' in response.text
     assert "/admin/branches?active=true" in response.text
     assert "Tambah cabang sendiri" in response.text
@@ -52,7 +56,6 @@ def test_admin_can_upsert_list_and_deactivate_user_role_when_auth_disabled():
     _bootstrap_user_routes()
     _ensure_branch("PASURUAN", "Cabang Pasuruan")
     payload = {
-        "user_id": "test-user-001",
         "email": "auditor@example.com",
         "display_name": "Auditor Test",
         "role": "AUDITOR",
@@ -62,15 +65,16 @@ def test_admin_can_upsert_list_and_deactivate_user_role_when_auth_disabled():
 
     upsert = client.post("/admin/users", data=payload)
     assert upsert.status_code == 200
+    assert upsert.json()["user_id"] == "auditor@example.com"
     assert upsert.json()["role"] == "AUDITOR"
     assert upsert.json()["branch"] == "PASURUAN"
     assert upsert.json()["is_active"] is True
 
     listing = client.get("/admin/users")
     assert listing.status_code == 200
-    assert any(row["user_id"] == "test-user-001" for row in listing.json()["users"])
+    assert any(row["email"] == "auditor@example.com" for row in listing.json()["users"])
 
-    deactivate = client.post("/admin/users/test-user-001/deactivate")
+    deactivate = client.post("/admin/users/auditor@example.com/deactivate")
     assert deactivate.status_code == 200
     assert deactivate.json()["is_active"] is False
 
@@ -79,11 +83,21 @@ def test_admin_rejects_invalid_role():
     _bootstrap_user_routes()
     response = client.post(
         "/admin/users",
-        data={"user_id": "bad-role-user", "email": "bad@example.com", "role": "SUPERUSER"},
+        data={"email": "bad@example.com", "role": "SUPERUSER"},
     )
 
     assert response.status_code == 400
     assert "role must be" in response.text
+
+
+def test_admin_requires_email():
+    _bootstrap_user_routes()
+    response = client.post(
+        "/admin/users",
+        data={"role": "ADMIN", "branch": "", "is_active": "true"},
+    )
+
+    assert response.status_code == 422
 
 
 def test_non_admin_user_requires_branch_assignment():
@@ -91,7 +105,6 @@ def test_non_admin_user_requires_branch_assignment():
     response = client.post(
         "/admin/users",
         data={
-            "user_id": "branchless-user",
             "email": "branchless@example.com",
             "role": "VIEWER",
             "branch": "",
@@ -108,7 +121,6 @@ def test_admin_branch_assignment_is_optional():
     response = client.post(
         "/admin/users",
         data={
-            "user_id": "admin-no-branch",
             "email": "admin-no-branch@example.com",
             "role": "ADMIN",
             "branch": "",
@@ -116,7 +128,23 @@ def test_admin_branch_assignment_is_optional():
         },
     )
     assert response.status_code == 200
+    assert response.json()["user_id"] == "admin-no-branch@example.com"
     assert response.json()["branch"] is None
+
+
+def test_optional_supabase_user_id_is_still_supported_for_existing_integrations():
+    response = client.post(
+        "/admin/users",
+        data={
+            "user_id": "supabase-uuid-001",
+            "email": "uuid-linked@example.com",
+            "role": "ADMIN",
+            "branch": "",
+            "is_active": "true",
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["user_id"] == "supabase-uuid-001"
 
 
 def test_inactive_branch_cannot_be_assigned():
@@ -127,7 +155,6 @@ def test_inactive_branch_cannot_be_assigned():
     response = client.post(
         "/admin/users",
         data={
-            "user_id": "inactive-branch-user",
             "email": "inactive@example.com",
             "role": "AUDITOR",
             "branch": "UM-INACTIVE",
@@ -145,7 +172,6 @@ def test_branch_reassignment_is_normalized_and_audited():
     first = client.post(
         "/admin/users",
         data={
-            "user_id": "reassign-user",
             "email": "reassign@example.com",
             "role": "AUDITOR",
             "branch": "pasuruan",
@@ -153,12 +179,12 @@ def test_branch_reassignment_is_normalized_and_audited():
         },
     )
     assert first.status_code == 200
+    assert first.json()["user_id"] == "reassign@example.com"
     assert first.json()["branch"] == "PASURUAN"
 
     second = client.post(
         "/admin/users",
         data={
-            "user_id": "reassign-user",
             "email": "reassign@example.com",
             "role": "AUDITOR",
             "branch": " sidoarjo ",
@@ -175,7 +201,7 @@ def test_branch_reassignment_is_normalized_and_audited():
     assert trail.status_code == 200
     matching = [
         row for row in trail.json()["entries"]
-        if (row.get("metadata") or {}).get("target_user_id") == "reassign-user"
+        if (row.get("metadata") or {}).get("target_email") == "reassign@example.com"
     ]
     assert matching
     assert any(
