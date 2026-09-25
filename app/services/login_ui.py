@@ -44,7 +44,7 @@ def login_html() -> str:
 <body>
   <main class="card">
     <h1>AI Piutang Vouching</h1>
-    <p>Login khusus role ADMIN dan AUDITOR. Setelah login berhasil, sistem akan langsung mengarahkan ke halaman kerja sesuai role.</p>
+    <p>Login menggunakan akun aplikasi. Setelah berhasil, sistem langsung masuk ke layout utama berisi dashboard dan menu sesuai role.</p>
     <form id="loginForm">
       <label for="email">Email</label>
       <input id="email" type="email" autocomplete="username" placeholder="nama@perusahaan.co.id" required />
@@ -53,7 +53,7 @@ def login_html() -> str:
       <button id="loginBtn" type="submit">Login</button>
     </form>
     <div id="message" class="msg"></div>
-    <p class="hint">Halaman ini hanya untuk login. Menu aplikasi akan muncul setelah masuk ke halaman tujuan.</p>
+    <p class="hint">Menu aplikasi, dashboard, upload, review, dan menu admin akan muncul di layout utama setelah login.</p>
     <button id="logoutBtn" type="button" style="background:#475569;">Logout / Hapus Token Browser</button>
   </main>
 <script>
@@ -67,17 +67,8 @@ function storeSession(data) {
   if (data.expires_at) localStorage.setItem('auditExpiresAt', String(data.expires_at));
   if (data.user) localStorage.setItem('auditUser', JSON.stringify(data.user));
 }
-async function resolvePostLoginDestination(accessToken) {
-  if (!accessToken) return '/ui/users';
-  try {
-    const response = await fetch('/auth/me', { headers:{ Authorization:`Bearer ${accessToken}` } });
-    if (!response.ok) return '/ui/users';
-    const profile = await response.json();
-    if (profile.role === 'ADMIN' || profile.role === 'AUDITOR') return '/ui/users';
-    return '/login';
-  } catch {
-    return '/ui/users';
-  }
+function resolvePostLoginDestination() {
+  return '/ui/main';
 }
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -92,8 +83,8 @@ form.addEventListener('submit', async (event) => {
     let body; try { body = JSON.parse(text); } catch { body = text; }
     if (!response.ok) throw new Error(body.detail || JSON.stringify(body));
     storeSession(body);
-    const destination = await resolvePostLoginDestination(body.access_token || '');
-    show(`Login berhasil. Mengarahkan ke ${destination}...`, true);
+    const destination = resolvePostLoginDestination();
+    show(`Login berhasil. Mengarahkan ke layout utama...`, true);
     window.location.replace(destination);
   } catch (error) {
     show(error.message || 'Login gagal.', false);
