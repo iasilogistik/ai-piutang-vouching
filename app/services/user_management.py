@@ -123,7 +123,7 @@ def _users_html() -> str:
       <div><label for="email">Email</label><input id="email" placeholder="nama@perusahaan.co.id" /></div>
       <div><label for="displayName">Nama</label><input id="displayName" placeholder="Nama user" /></div>
       <div><label for="role">Role</label><select id="role"><option>ADMIN</option><option>AUDITOR</option><option>REVIEWER</option><option>VIEWER</option></select></div>
-      <div><label for="branch">Cabang</label><select id="branch"><option value="">-- ADMIN: tanpa cabang --</option></select></div>
+      <div><label for="branch">Scope Cabang (opsional)</label><select id="branch"><option value="">Semua cabang (dinamis)</option></select></div>
       <div><label for="isActive">Status</label><select id="isActive"><option value="true">Aktif</option><option value="false">Nonaktif</option></select></div>
     </div>
     <div class="actions">
@@ -170,7 +170,7 @@ async function loadBranches(selected = '') {
     const body = await response.json();
     if (!response.ok) throw new Error(body.detail || JSON.stringify(body));
     const select = document.getElementById('branch');
-    select.innerHTML = '<option value="">-- ADMIN: tanpa cabang --</option>' + (body.branches || []).map(
+    select.innerHTML = '<option value="">Semua cabang (dinamis)</option>' + (body.branches || []).map(
       branch => `<option value="${branch.branch_code}">${branch.branch_code} - ${branch.branch_name}</option>`
     ).join('');
     select.value = selected || '';
@@ -188,7 +188,7 @@ function render(users) {
   if (!users.length) { rowsEl.innerHTML = '<tr><td colspan="7">Belum ada user.</td></tr>'; return; }
   rowsEl.innerHTML = users.map(user => `<tr>
     <td>${user.user_id}</td><td>${user.email || '-'}</td><td>${user.display_name || '-'}</td>
-    <td>${user.role}</td><td>${user.branch || '-'}</td><td class="${user.is_active ? 'ok' : 'err'}">${user.is_active ? 'Aktif' : 'Nonaktif'}</td>
+    <td>${user.role}</td><td>${user.branch || 'Semua cabang (dinamis)'}</td><td class="${user.is_active ? 'ok' : 'err'}">${user.is_active ? 'Aktif' : 'Nonaktif'}</td>
     <td><button type="button" class="secondary" onclick='editUser(${JSON.stringify(user)})'>Edit</button> <button type="button" class="danger" onclick="deactivateUser('${user.user_id}')">Nonaktifkan</button></td>
   </tr>`).join('');
 }
@@ -238,12 +238,6 @@ document.getElementById('logoutBtn').addEventListener('click', () => {
   localStorage.removeItem('auditUser');
   window.location.href = '/login';
 });
-document.getElementById('role').addEventListener('change', () => {
-  const branchSelect = document.getElementById('branch');
-  if (document.getElementById('role').value !== 'ADMIN' && !branchSelect.value && branchSelect.options.length > 1) {
-    branchSelect.selectedIndex = 1;
-  }
-});
 if (getAuditToken()) {
   loadBranches();
 } else {
@@ -290,8 +284,6 @@ def upsert_user_role(
         raise HTTPException(status_code=400, detail="user_id is required")
     role = _require_valid_role(role)
     branch = _validated_active_branch(db, branch)
-    if role != "ADMIN" and not branch:
-        raise HTTPException(status_code=400, detail="branch is required for non-ADMIN users")
 
     previous = db.execute(
         text("select role::text as role, branch, is_active from public.user_roles where user_id = :user_id"),
