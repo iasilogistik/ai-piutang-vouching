@@ -196,7 +196,8 @@ def _install_scope_helper() -> None:
             where ur.user_id::text = (select auth.uid())::text
               and coalesce(ur.is_active, true)
               and (
-                ur.branch is null
+                ur.role = 'ADMIN'::public.app_role
+                or ur.branch is null
                 or trim(ur.branch) = ''
                 or upper(trim(ur.branch)) = upper(trim(resource_branch))
               )
