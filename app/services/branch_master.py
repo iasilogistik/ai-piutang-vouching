@@ -38,6 +38,29 @@ def _clean(value: str | None) -> str | None:
     return value or None
 
 
+def ensure_branch_catalog(db: Session, branch_code: str) -> str:
+    """Register a normalized branch discovered from an upload.
+
+    Existing curated metadata is preserved. A previously inactive known branch
+    is reactivated because new audit data for that branch has been received.
+    """
+    code = normalize_branch_code(branch_code)
+    db.execute(
+        text(
+            """
+            insert into public.branches (branch_code, branch_name, active, updated_at)
+            values (:code, :code, true, now())
+            on conflict (branch_code) do update set
+                active = true,
+                updated_at = now()
+            """
+        ),
+        {"code": code},
+    )
+    db.flush()
+    return code
+
+
 def _serialize(row) -> dict[str, object]:
     return {
         "id": row["id"],
