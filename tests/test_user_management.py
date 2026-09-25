@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.services import user_management
 
 
 client = TestClient(app)
@@ -35,11 +36,16 @@ def test_user_management_ui_shell_loads_without_login_bootstrap():
     assert response.status_code == 200
     assert "User Management" in response.text
     assert "/admin/users" in response.text
-    assert "Simpan User Role" in response.text
+    assert "Simpan User" in response.text
     assert "Email Login" in response.text
+    assert "Password Sementara" in response.text
+    assert 'id="password"' in response.text
+    assert "Lupa Password" in response.text
+    assert "forgotPassword" in response.text
+    assert "/forgot-password" in response.text
     assert "User ID Supabase" not in response.text
     assert 'id="userId"' not in response.text
-    assert "ID teknis Supabase tidak perlu diinput manual" in response.text
+    assert "ID teknis Supabase" not in response.text
     assert '<select id="branch">' in response.text
     assert "/admin/branches?active=true" in response.text
     assert "Tambah cabang sendiri" in response.text
@@ -69,6 +75,7 @@ def test_admin_can_upsert_list_and_deactivate_user_role_when_auth_disabled():
     assert upsert.json()["role"] == "AUDITOR"
     assert upsert.json()["branch"] == "PASURUAN"
     assert upsert.json()["is_active"] is True
+    assert upsert.json()["auth_operation"]["status"] == "NOT_REQUESTED"
 
     listing = client.get("/admin/users")
     assert listing.status_code == 200
@@ -77,6 +84,84 @@ def test_admin_can_upsert_list_and_deactivate_user_role_when_auth_disabled():
     deactivate = client.post("/admin/users/auditor@example.com/deactivate")
     assert deactivate.status_code == 200
     assert deactivate.json()["is_active"] is False
+
+
+def test_admin_can_create_supabase_auth_user_with_password(monkeypatch):
+    created = {}
+
+    def fake_create_auth_user(*, email: str, password: str, display_name: str | None = None):
+        created["email"] = email
+        created["password"] = password
+        created["display_name"] = display_name
+        return {"status": "CREATED", "user_id": "supabase-created-001", "email": email}
+
+    monkeypatch.setattr(user_management, "create_auth_user", fake_create_auth_user)
+
+    response = client.post(
+        "/admin/users",
+        data={
+            "email": "new.user@example.com",
+            "password": "Password123!",
+            "display_name": "New User",
+            "role": "ADMIN",
+            "branch": "",
+            "is_active": "true",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["user_id"] == "supabase-created-001"
+    assert response.json()["auth_operation"]["status"] == "CREATED"
+    assert "password" not in response.json()
+    assert created == {
+        "email": "new.user@example.com",
+        "password": "Password123!",
+        "display_name": "New User",
+    }
+
+
+def test_admin_can_send_forgot_password_email(monkeypatch):
+    sent = {}
+
+    def fake_send_password_recovery(email: str):
+        sent["email"] = email
+        return {"status": "PASSWORD_RECOVERY_SENT", "email": email}
+
+    monkeypatch.setattr(user_management, "send_password_recovery", fake_send_password_recovery)
+
+    upsert = client.post(
+        "/admin/users",
+        data={
+            "email": "forgot@example.com",
+            "role": "ADMIN",
+            "branch": "",
+            "is_active": "true",
+        },
+    )
+    assert upsert.status_code == 200
+
+    response = client.post("/admin/users/forgot@example.com/forgot-password")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "PASSWORD_RECOVERY_SENT"
+    assert response.json()["email"] == "forgot@example.com"
+    assert sent == {"email": "forgot@example.com"}
+
+
+def test_admin_rejects_short_password():
+    response = client.post(
+        "/admin/users",
+        data={
+            "email": "short-password@example.com",
+            "password": "short",
+            "role": "ADMIN",
+            "branch": "",
+            "is_active": "true",
+        },
+    )
+
+    assert response.status_code == 400
+    assert "password must be at least 8 characters" in response.text
 
 
 def test_admin_rejects_invalid_role():
@@ -114,7 +199,6 @@ def test_non_admin_user_requires_branch_assignment():
 
     assert response.status_code == 400
     assert "branch is required" in response.text
-
 
 
 def test_admin_branch_assignment_is_optional():
