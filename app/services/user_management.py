@@ -50,6 +50,13 @@ def _clean(value: str | None) -> str | None:
     return value or None
 
 
+def _clean_email(value: str | None) -> str:
+    email = _clean(value)
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="email is required")
+    return email.lower()
+
+
 def _validated_active_branch(db: Session, branch: str | None) -> str | None:
     branch = _clean(branch)
     if branch is None:
@@ -62,6 +69,17 @@ def _validated_active_branch(db: Session, branch: str | None) -> str | None:
     if row is None:
         raise HTTPException(status_code=400, detail="branch must reference an active branch")
     return row["branch_code"]
+
+
+def _resolve_user_key(db: Session, *, email: str, supplied_user_id: str | None) -> str:
+    supplied_user_id = _clean(supplied_user_id)
+    if supplied_user_id:
+        return supplied_user_id
+    existing = db.execute(
+        text("select user_id from public.user_roles where lower(email) = :email order by updated_at desc limit 1"),
+        {"email": email},
+    ).mappings().one_or_none()
+    return existing["user_id"] if existing is not None else email
 
 
 def _users_html() -> str:
@@ -121,9 +139,9 @@ def _users_html() -> str:
 
   <section class="panel">
     <h2>Tambah / Ubah Role User</h2>
+    <p class="hint">Tambah user cukup memakai email yang sudah/akan didaftarkan di Supabase Auth. ID teknis Supabase tidak perlu diinput manual.</p>
     <div class="grid">
-      <div><label for="userId">User ID Supabase</label><input id="userId" placeholder="UUID user Supabase Auth" /></div>
-      <div><label for="email">Email</label><input id="email" placeholder="nama@perusahaan.co.id" /></div>
+      <div><label for="email">Email Login</label><input id="email" type="email" placeholder="nama@perusahaan.co.id" /></div>
       <div><label for="displayName">Nama</label><input id="displayName" placeholder="Nama user" /></div>
       <div><label for="role">Role</label><select id="role"><option>ADMIN</option><option>AUDITOR</option><option>REVIEWER</option><option>VIEWER</option></select></div>
       <div><label for="branch">Cabang</label><select id="branch"><option value="">-- ADMIN: tanpa cabang --</option></select><p class="hint">Pilih master cabang atau pilih "Tambah cabang sendiri".</p></div>
@@ -148,8 +166,8 @@ def _users_html() -> str:
   <section class="panel">
     <h2>Daftar User</h2>
     <table>
-      <thead><tr><th>User ID</th><th>Email</th><th>Nama</th><th>Role</th><th>Cabang</th><th>Status</th><th>Aksi</th></tr></thead>
-      <tbody id="rows"><tr><td colspan="7">Belum dimuat.</td></tr></tbody>
+      <thead><tr><th>Email</th><th>Nama</th><th>Role</th><th>Cabang</th><th>Status</th><th>Aksi</th></tr></thead>
+      <tbody id="rows"><tr><td colspan="6">Belum dimuat.</td></tr></tbody>
     </table>
     <h3>Log</h3>
     <pre id="log">Belum ada aktivitas.</pre>
@@ -160,6 +178,7 @@ const rowsEl = document.getElementById('rows');
 const logEl = document.getElementById('log');
 const sessionStatus = document.getElementById('sessionStatus');
 const CUSTOM_BRANCH_VALUE = '__CUSTOM_BRANCH__';
+let editingUserId = '';
 function getAuditToken() {
   const token = localStorage.getItem('auditToken') || '';
   sessionStatus.textContent = token ? 'Sesi login tersedia.' : 'Belum login. Silakan login terlebih dahulu.';
@@ -205,7 +224,7 @@ async function loadBranches(selected = '') {
   } catch (error) { appendLog('Muat Master Cabang', error.message, false); }
 }
 function setForm(user) {
-  document.getElementById('userId').value = user.user_id || '';
+  editingUserId = user.user_id || '';
   document.getElementById('email').value = user.email || '';
   document.getElementById('displayName').value = user.display_name || '';
   document.getElementById('role').value = user.role || 'VIEWER';
@@ -216,10 +235,14 @@ function setForm(user) {
   loadBranches(user.branch || '');
   document.getElementById('isActive').value = String(user.is_active !== false);
 }
+function resetForm() {
+  editingUserId = '';
+  setForm({ role:'VIEWER', is_active:true });
+}
 function render(users) {
-  if (!users.length) { rowsEl.innerHTML = '<tr><td colspan="7">Belum ada user.</td></tr>'; return; }
+  if (!users.length) { rowsEl.innerHTML = '<tr><td colspan="6">Belum ada user.</td></tr>'; return; }
   rowsEl.innerHTML = users.map(user => `<tr>
-    <td>${user.user_id}</td><td>${user.email || '-'}</td><td>${user.display_name || '-'}</td>
+    <td>${user.email || user.user_id}</td><td>${user.display_name || '-'}</td>
     <td>${user.role}</td><td>${user.branch || '-'}</td><td class="${user.is_active ? 'ok' : 'err'}">${user.is_active ? 'Aktif' : 'Nonaktif'}</td>
     <td><button type="button" class="secondary" onclick='editUser(${JSON.stringify(user)})'>Edit</button> <button type="button" class="danger" onclick="deactivateUser('${user.user_id}')">Nonaktifkan</button></td>
   </tr>`).join('');
@@ -260,7 +283,7 @@ async function saveUser() {
   try {
     const branchValue = await ensureSelectedBranch();
     const form = new FormData();
-    form.append('user_id', document.getElementById('userId').value.trim());
+    if (editingUserId) form.append('user_id', editingUserId);
     form.append('email', document.getElementById('email').value.trim());
     form.append('display_name', document.getElementById('displayName').value.trim());
     form.append('role', document.getElementById('role').value);
@@ -270,6 +293,7 @@ async function saveUser() {
     const body = await response.json();
     if (!response.ok) throw new Error(body.detail || JSON.stringify(body));
     appendLog('Simpan User Role', body);
+    editingUserId = body.user_id || '';
     await loadUsers();
   } catch (error) { appendLog('Simpan User Role', error.message, false); }
 }
@@ -284,7 +308,7 @@ window.deactivateUser = async (userId) => {
 };
 document.getElementById('loadBtn').addEventListener('click', loadUsers);
 document.getElementById('saveBtn').addEventListener('click', saveUser);
-document.getElementById('clearBtn').addEventListener('click', () => setForm({ role:'VIEWER', is_active:true }));
+document.getElementById('clearBtn').addEventListener('click', resetForm);
 document.getElementById('logoutBtn').addEventListener('click', () => {
   localStorage.removeItem('auditToken');
   localStorage.removeItem('auditRefreshToken');
@@ -332,8 +356,8 @@ def list_users(db: Session = Depends(_db), user: CurrentUser = Depends(require_r
 
 @router.post("/admin/users")
 def upsert_user_role(
-    user_id: str = Form(...),
-    email: str | None = Form(None),
+    email: str = Form(...),
+    user_id: str | None = Form(None),
     display_name: str | None = Form(None),
     role: str = Form("VIEWER"),
     branch: str | None = Form(None),
@@ -341,9 +365,8 @@ def upsert_user_role(
     db: Session = Depends(_db),
     user: CurrentUser = Depends(require_roles("ADMIN")),
 ):
-    user_id = user_id.strip()
-    if not user_id:
-        raise HTTPException(status_code=400, detail="user_id is required")
+    email = _clean_email(email)
+    user_id = _resolve_user_key(db, email=email, supplied_user_id=user_id)
     role = _require_valid_role(role)
     branch = _validated_active_branch(db, branch)
     if role != "ADMIN" and not branch:
@@ -370,7 +393,7 @@ def upsert_user_role(
         ),
         {
             "user_id": user_id,
-            "email": _clean(email),
+            "email": email,
             "display_name": _clean(display_name),
             "role": role,
             "branch": branch,
@@ -389,6 +412,7 @@ def upsert_user_role(
         status_to=role,
         metadata={
             "target_user_id": user_id,
+            "target_email": email,
             "old_branch": previous_branch,
             "new_branch": branch,
             "old_active": bool(previous["is_active"]) if previous is not None else None,
@@ -424,6 +448,17 @@ def deactivate_user_role(user_id: str, db: Session = Depends(_db), user: Current
     ).mappings().one_or_none()
     if row is None:
         raise HTTPException(status_code=404, detail="User role not found")
+    record_audit(
+        db,
+        entity_type="USER_ROLE",
+        entity_id=None,
+        action="USER_DEACTIVATE",
+        actor=user.user_id,
+        status_from=row["role"],
+        status_to=row["role"],
+        metadata={"target_user_id": row["user_id"], "target_email": row["email"]},
+        branch=row["branch"],
+    )
     db.commit()
     return _serialize(row)
 
