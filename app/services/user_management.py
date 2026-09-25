@@ -130,8 +130,7 @@ def _resolve_auth_user(
 
 
 def _users_html() -> str:
-    return """
-<!doctype html>
+    return """<!doctype html>
 <html lang="id">
 <head>
   <meta charset="utf-8" />
@@ -153,10 +152,14 @@ def _users_html() -> str:
     button.secondary, .button-link.secondary { background:#475569; }
     button.danger { background:var(--red); }
     button.warning { background:var(--amber); }
+    button[disabled] { opacity:.55; cursor:not-allowed; }
     .actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; align-items:center; }
     .hint { color:var(--muted); font-size:12px; margin:6px 0 0; }
     .notice { display:none; margin-top:12px; padding:11px 12px; border-radius:10px; border:1px solid #fed7aa; background:#fff7ed; color:#9a3412; font-size:13px; }
     .notice a { color:#1f6feb; font-weight:700; }
+    .status-banner { display:none; margin-top:12px; padding:12px; border-radius:10px; font-weight:700; }
+    .status-ok { display:block; color:#166534; background:#dcfce7; border:1px solid #86efac; }
+    .status-err { display:block; color:#991b1b; background:#fee2e2; border:1px solid #fca5a5; }
     .custom-branch { display:none; border:1px dashed var(--line); background:#f8fafc; border-radius:10px; padding:12px; margin-top:12px; }
     table { width:100%; border-collapse:collapse; margin-top:10px; }
     th, td { border-bottom:1px solid var(--line); padding:8px; text-align:left; font-size:13px; vertical-align:top; }
@@ -185,6 +188,7 @@ def _users_html() -> str:
       <span id="sessionStatus" class="muted">Memeriksa sesi...</span>
     </div>
     <div id="sessionNotice" class="notice"></div>
+    <div id="actionStatus" class="status-banner"></div>
   </section>
 
   <section class="panel">
@@ -229,6 +233,7 @@ const rowsEl = document.getElementById('rows');
 const logEl = document.getElementById('log');
 const sessionStatus = document.getElementById('sessionStatus');
 const sessionNotice = document.getElementById('sessionNotice');
+const actionStatus = document.getElementById('actionStatus');
 const CUSTOM_BRANCH_VALUE = '__CUSTOM_BRANCH__';
 let editingUserId = '';
 let userCache = [];
@@ -245,6 +250,11 @@ function clearSession() {
   localStorage.removeItem('auditRefreshToken');
   localStorage.removeItem('auditExpiresAt');
   localStorage.removeItem('auditUser');
+}
+function showActionStatus(message, ok = true) {
+  actionStatus.textContent = message;
+  actionStatus.className = `status-banner ${ok ? 'status-ok' : 'status-err'}`;
+  actionStatus.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 }
 function showSessionNotice(message) {
   sessionNotice.innerHTML = `${message} <a href="${nextLoginUrl()}">Login ulang</a>`;
@@ -294,6 +304,7 @@ function handleAuthFailure(label, body) {
   clearSession();
   sessionStatus.textContent = 'Sesi expired. Login ulang diperlukan.';
   showSessionNotice('Sesi login sudah expired atau token tidak valid.');
+  showActionStatus('Sesi login sudah expired atau token tidak valid. Silakan Login Ulang.', false);
   appendLog(label, 'Sesi login sudah expired atau token tidak valid. Silakan klik Login Ulang, lalu ulangi proses.', false);
   const detail = body && (body.detail || body.message || body.error_description || body.error);
   if (detail) appendLog('Detail Autentikasi', String(detail), false);
@@ -353,18 +364,19 @@ function render(users) {
   rowsEl.innerHTML = userCache.map((user, index) => `<tr>
     <td>${user.email || user.user_id}</td><td>${user.display_name || '-'}</td>
     <td>${user.role}</td><td>${user.branch || '-'}</td><td class="${user.is_active ? 'ok' : 'err'}">${user.is_active ? 'Aktif' : 'Nonaktif'}</td>
-    <td><button type="button" class="secondary" data-action="edit" data-index="${index}">Edit</button> <button type="button" class="warning" data-action="forgot" data-index="${index}">Lupa Password</button> <button type="button" class="danger" data-action="deactivate" data-index="${index}">Nonaktifkan</button> <button type="button" class="danger" data-action="delete" data-index="${index}">Delete</button></td>
+    <td><button type="button" class="secondary" data-action="edit" data-index="${index}">Edit</button> <button type="button" class="warning" data-action="forgot" data-index="${index}">Lupa Password</button> <button type="button" class="danger" data-action="deactivate" data-index="${index}" ${user.is_active ? '' : 'disabled'}>${user.is_active ? 'Nonaktifkan' : 'Sudah Nonaktif'}</button> <button type="button" class="danger" data-action="delete" data-index="${index}">Delete</button></td>
   </tr>`).join('');
 }
-window.editUser = (index) => setForm(userCache[index] || {});
 async function loadUsers() {
   try {
+    showActionStatus('Memuat daftar user...', true);
     const { response, body } = await fetchWithAuth('/admin/users', {}, 'Muat User');
     if (!response.ok) throw new Error(body.detail || JSON.stringify(body));
     await loadBranches(document.getElementById('branch').value);
     render(body.users || []);
+    showActionStatus(`Berhasil memuat ${body.total || 0} user.`, true);
     appendLog('Muat User', body);
-  } catch (error) { appendLog('Muat User', error.message, false); }
+  } catch (error) { showActionStatus(error.message, false); appendLog('Muat User', error.message, false); }
 }
 async function ensureSelectedBranch() {
   const branchSelect = document.getElementById('branch');
@@ -386,6 +398,7 @@ async function ensureSelectedBranch() {
 }
 async function saveUser() {
   try {
+    showActionStatus('Menyimpan user...', true);
     const branchValue = await ensureSelectedBranch();
     const form = new FormData();
     if (editingUserId) form.append('user_id', editingUserId);
@@ -399,51 +412,63 @@ async function saveUser() {
     const { response, body } = await fetchWithAuth('/admin/users', { method:'POST', body: form }, 'Simpan User');
     if (!response.ok) throw new Error(body.detail || JSON.stringify(body));
     document.getElementById('password').value = '';
-    appendLog('Simpan User', body);
     editingUserId = body.user_id || '';
+    showActionStatus(`User ${body.email || body.user_id} berhasil disimpan.`, true);
+    appendLog('Simpan User', body);
     await loadUsers();
-  } catch (error) { appendLog('Simpan User', error.message, false); }
+  } catch (error) { showActionStatus(error.message, false); appendLog('Simpan User', error.message, false); }
 }
-window.forgotPassword = async (user) => {
+async function runUserAction(action, user, button) {
+  const label = user.email || user.user_id;
+  const oldText = button ? button.textContent : '';
   try {
-    if (!user.email) throw new Error('Email user belum tersedia.');
-    const ok = confirm(`Kirim email lupa password ke ${user.email}?`);
-    if (!ok) return;
-    const { response, body } = await fetchWithAuth(`/admin/users/${encodeURIComponent(user.user_id)}/forgot-password`, { method:'POST' }, 'Lupa Password');
+    if (button) { button.disabled = true; button.textContent = 'Memproses...'; }
+    let url = '';
+    let message = '';
+    let success = '';
+    if (action === 'forgot') {
+      if (!user.email) throw new Error('Email user belum tersedia.');
+      if (!confirm(`Kirim email lupa password ke ${user.email}?`)) return;
+      url = `/admin/users/${encodeURIComponent(user.user_id)}/forgot-password`;
+      message = 'Lupa Password';
+      success = `Email reset password dikirim ke ${user.email}.`;
+    } else if (action === 'deactivate') {
+      if (!confirm(`Nonaktifkan user ${label}?`)) return;
+      url = `/admin/users/${encodeURIComponent(user.user_id)}/deactivate`;
+      message = 'Nonaktifkan User';
+      success = `User ${label} berhasil dinonaktifkan.`;
+    } else if (action === 'delete') {
+      if (!confirm(`Delete user ${label} dari daftar aplikasi? Akun Supabase Auth tidak ikut dihapus.`)) return;
+      url = `/admin/users/${encodeURIComponent(user.user_id)}/delete`;
+      message = 'Delete User';
+      success = `User ${label} berhasil dihapus dari role aplikasi.`;
+    } else if (action === 'edit') {
+      setForm(user);
+      showActionStatus(`User ${label} siap diedit.`, true);
+      return;
+    } else {
+      throw new Error(`Aksi tidak dikenal: ${action}`);
+    }
+    showActionStatus(`${message} sedang diproses untuk ${label}...`, true);
+    const { response, body } = await fetchWithAuth(url, { method:'POST' }, message);
     if (!response.ok) throw new Error(body.detail || JSON.stringify(body));
-    appendLog('Lupa Password', body);
-  } catch (error) { appendLog('Lupa Password', error.message, false); }
-};
-window.deactivateUser = async (user) => {
-  try {
-    const ok = confirm(`Nonaktifkan user ${user.email || user.user_id}?`);
-    if (!ok) return;
-    const { response, body } = await fetchWithAuth(`/admin/users/${encodeURIComponent(user.user_id)}/deactivate`, { method:'POST' }, 'Nonaktifkan User');
-    if (!response.ok) throw new Error(body.detail || JSON.stringify(body));
-    appendLog('Nonaktifkan User', body);
+    showActionStatus(success, true);
+    appendLog(message, body);
+    if (action === 'delete' && editingUserId === user.user_id) resetForm();
     await loadUsers();
-  } catch (error) { appendLog('Nonaktifkan User', error.message, false); }
-};
-window.deleteUser = async (user) => {
-  try {
-    const ok = confirm(`Delete user ${user.email || user.user_id} dari daftar aplikasi? Akun Supabase Auth tidak ikut dihapus.`);
-    if (!ok) return;
-    const { response, body } = await fetchWithAuth(`/admin/users/${encodeURIComponent(user.user_id)}`, { method:'DELETE' }, 'Delete User');
-    if (!response.ok) throw new Error(body.detail || JSON.stringify(body));
-    appendLog('Delete User', body);
-    if (editingUserId === user.user_id) resetForm();
-    await loadUsers();
-  } catch (error) { appendLog('Delete User', error.message, false); }
-};
+  } catch (error) {
+    showActionStatus(error.message, false);
+    appendLog(action, error.message, false);
+  } finally {
+    if (button) { button.disabled = false; button.textContent = oldText; }
+  }
+}
 rowsEl.addEventListener('click', (event) => {
   const button = event.target.closest('button[data-action]');
-  if (!button) return;
+  if (!button || button.disabled) return;
   const user = userCache[Number(button.dataset.index)];
-  if (!user) return;
-  if (button.dataset.action === 'edit') setForm(user);
-  if (button.dataset.action === 'forgot') window.forgotPassword(user);
-  if (button.dataset.action === 'deactivate') window.deactivateUser(user);
-  if (button.dataset.action === 'delete') window.deleteUser(user);
+  if (!user) { showActionStatus('Data user tidak ditemukan. Klik Muat User lalu ulangi aksi.', false); return; }
+  runUserAction(button.dataset.action, user, button);
 });
 document.getElementById('loadBtn').addEventListener('click', loadUsers);
 document.getElementById('saveBtn').addEventListener('click', saveUser);
@@ -601,6 +626,8 @@ def forgot_password(user_id: str, db: Session = Depends(_db), user: CurrentUser 
 
 @router.post("/admin/users/{user_id}/deactivate")
 def deactivate_user_role(user_id: str, db: Session = Depends(_db), user: CurrentUser = Depends(require_roles("ADMIN"))):
+    if user_id == user.user_id:
+        raise HTTPException(status_code=400, detail="Current logged-in admin user cannot deactivate their own application role")
     row = db.execute(
         text(
             """
@@ -629,8 +656,7 @@ def deactivate_user_role(user_id: str, db: Session = Depends(_db), user: Current
     return _serialize(row)
 
 
-@router.delete("/admin/users/{user_id}")
-def delete_user_role(user_id: str, db: Session = Depends(_db), user: CurrentUser = Depends(require_roles("ADMIN"))):
+def _delete_user_role(user_id: str, db: Session, user: CurrentUser) -> dict[str, object]:
     if user_id == user.user_id:
         raise HTTPException(status_code=400, detail="Current logged-in admin user cannot delete their own application role")
     row = db.execute(
@@ -661,6 +687,16 @@ def delete_user_role(user_id: str, db: Session = Depends(_db), user: CurrentUser
     payload["deleted"] = True
     payload["auth_user_deleted"] = False
     return payload
+
+
+@router.delete("/admin/users/{user_id}")
+def delete_user_role(user_id: str, db: Session = Depends(_db), user: CurrentUser = Depends(require_roles("ADMIN"))):
+    return _delete_user_role(user_id, db, user)
+
+
+@router.post("/admin/users/{user_id}/delete")
+def delete_user_role_post(user_id: str, db: Session = Depends(_db), user: CurrentUser = Depends(require_roles("ADMIN"))):
+    return _delete_user_role(user_id, db, user)
 
 
 def register_user_management_routes(app) -> None:
