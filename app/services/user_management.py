@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import logging
+from typing import Any
+
 from fastapi import APIRouter, Depends, Form, HTTPException
 from fastapi.responses import HTMLResponse
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.audit_service import record_audit
@@ -10,6 +14,8 @@ from app.auth import CurrentUser, require_roles
 from app.database import SessionLocal
 from app.services.auth_admin import create_auth_user, send_password_recovery, update_auth_user_password
 from app.services.branch_master import normalize_branch_code, register_branch_master_routes
+
+logger = logging.getLogger(__name__)
 
 _ALLOWED_ROLES = {"ADMIN", "AUDITOR", "REVIEWER", "VIEWER"}
 _REGISTERED = False
@@ -24,6 +30,14 @@ def _db():
         db.close()
 
 
+def _iso(value: Any) -> str | None:
+    if value is None:
+        return None
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
+
+
 def _serialize(row) -> dict[str, object]:
     return {
         "user_id": row["user_id"],
@@ -32,8 +46,8 @@ def _serialize(row) -> dict[str, object]:
         "role": row["role"],
         "branch": row["branch"],
         "is_active": bool(row["is_active"]),
-        "created_at": row["created_at"].isoformat() if row["created_at"] else None,
-        "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
+        "created_at": _iso(row["created_at"]),
+        "updated_at": _iso(row["updated_at"]),
     }
 
 
@@ -127,6 +141,54 @@ def _resolve_auth_user(
     if existing is not None and existing["user_id"] != created_user_id:
         db.execute(text("delete from public.user_roles where user_id = :old_user_id"), {"old_user_id": existing["user_id"]})
     return created_user_id, auth_operation
+
+
+def _commit_or_conflict(db: Session, message: str) -> None:
+    try:
+        db.commit()
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.exception("user management database action failed: %s", message)
+        raise HTTPException(status_code=409, detail=message) from exc
+
+
+def _record_user_audit_best_effort(
+    db: Session,
+    *,
+    action: str,
+    actor: str | None,
+    role: str | None,
+    branch: str | None,
+    target_user_id: str,
+    target_email: str | None,
+    status_to: str | None = None,
+    metadata_extra: dict[str, object] | None = None,
+) -> None:
+    """Record an audit event without breaking the completed admin action.
+
+    Delete/deactivate must not show Internal Server Error only because the
+    supplemental audit/notification layer has an issue. The business action is
+    committed first; this writes the audit event in a separate transaction.
+    """
+    try:
+        metadata = {"target_user_id": target_user_id, "target_email": target_email}
+        if metadata_extra:
+            metadata.update(metadata_extra)
+        record_audit(
+            db,
+            entity_type="USER_ROLE",
+            entity_id=None,
+            action=action,
+            actor=actor,
+            status_from=role,
+            status_to=status_to or role,
+            metadata=metadata,
+            branch=branch,
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("best-effort user role audit failed for action=%s target=%s", action, target_user_id)
 
 
 def _users_html() -> str:
@@ -582,7 +644,7 @@ def upsert_user_role(
         },
         branch=branch or previous_branch,
     )
-    db.commit()
+    _commit_or_conflict(db, "Tidak dapat menyimpan user role.")
     row = db.execute(
         text(
             """
@@ -620,7 +682,7 @@ def forgot_password(user_id: str, db: Session = Depends(_db), user: CurrentUser 
         metadata={"target_user_id": user_id, "target_email": email, "auth_operation": auth_operation.get("status")},
         branch=row["branch"],
     )
-    db.commit()
+    _commit_or_conflict(db, "Tidak dapat mencatat pengiriman email reset password.")
     return {"user_id": user_id, "email": email, **auth_operation}
 
 
@@ -641,19 +703,18 @@ def deactivate_user_role(user_id: str, db: Session = Depends(_db), user: Current
     ).mappings().one_or_none()
     if row is None:
         raise HTTPException(status_code=404, detail="User role not found")
-    record_audit(
+    payload = _serialize(row)
+    _commit_or_conflict(db, "Tidak dapat menonaktifkan user role. Silakan muat ulang daftar user dan coba lagi.")
+    _record_user_audit_best_effort(
         db,
-        entity_type="USER_ROLE",
-        entity_id=None,
         action="USER_DEACTIVATE",
         actor=user.user_id,
-        status_from=row["role"],
-        status_to=row["role"],
-        metadata={"target_user_id": row["user_id"], "target_email": row["email"]},
-        branch=row["branch"],
+        role=payload["role"],
+        branch=payload["branch"],
+        target_user_id=str(payload["user_id"]),
+        target_email=payload["email"],
     )
-    db.commit()
-    return _serialize(row)
+    return payload
 
 
 def _delete_user_role(user_id: str, db: Session, user: CurrentUser) -> dict[str, object]:
@@ -662,28 +723,29 @@ def _delete_user_role(user_id: str, db: Session, user: CurrentUser) -> dict[str,
     row = db.execute(
         text(
             """
-            delete from public.user_roles
+            select user_id, email, display_name, role::text as role, branch, is_active, created_at, updated_at
+            from public.user_roles
             where user_id = :user_id
-            returning user_id, email, display_name, role::text as role, branch, is_active, created_at, updated_at
             """
         ),
         {"user_id": user_id},
     ).mappings().one_or_none()
     if row is None:
         raise HTTPException(status_code=404, detail="User role not found")
-    record_audit(
+    payload = _serialize(row)
+    db.execute(text("delete from public.user_roles where user_id = :user_id"), {"user_id": user_id})
+    _commit_or_conflict(db, "Tidak dapat menghapus user role. User kemungkinan masih direferensikan oleh data audit lain.")
+    _record_user_audit_best_effort(
         db,
-        entity_type="USER_ROLE",
-        entity_id=None,
         action="USER_ROLE_DELETE",
         actor=user.user_id,
-        status_from=row["role"],
+        role=payload["role"],
         status_to="DELETED",
-        metadata={"target_user_id": row["user_id"], "target_email": row["email"], "deleted_from_app_roles": True},
-        branch=row["branch"],
+        branch=payload["branch"],
+        target_user_id=str(payload["user_id"]),
+        target_email=payload["email"],
+        metadata_extra={"deleted_from_app_roles": True},
     )
-    db.commit()
-    payload = _serialize(row)
     payload["deleted"] = True
     payload["auth_user_deleted"] = False
     return payload
