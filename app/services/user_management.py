@@ -261,7 +261,7 @@ def _users_html() -> str:
       <div><label for="password">Password Sementara / Password Baru</label><input id="password" type="password" autocomplete="new-password" placeholder="Minimal 8 karakter" /><p class="hint">Kosongkan bila tidak ingin mengubah password.</p></div>
       <div><label for="displayName">Nama</label><input id="displayName" placeholder="Nama user" /></div>
       <div><label for="role">Role</label><select id="role"><option>ADMIN</option><option>AUDITOR</option><option>REVIEWER</option><option>VIEWER</option></select></div>
-      <div><label for="branch">Cabang</label><select id="branch"><option value="">-- ADMIN: tanpa cabang --</option></select><p class="hint">Pilih master cabang atau pilih "Tambah cabang sendiri".</p></div>
+      <div><label for="branch">Scope Cabang (opsional)</label><select id="branch"><option value="">Semua cabang (dinamis)</option></select><p class="hint">Kosong berarti semua cabang (dinamis). Pilih cabang untuk pembatasan, atau pilih "Tambah cabang sendiri".</p></div>
       <div><label for="isActive">Status</label><select id="isActive"><option value="true">Aktif</option><option value="false">Nonaktif</option></select></div>
     </div>
     <div id="customBranchPanel" class="custom-branch">
@@ -397,7 +397,7 @@ async function loadBranches(selected = '') {
     const selectedCode = normalizeBranchCode(selected);
     const branches = body.branches || [];
     const hasSelected = branches.some(branch => branch.branch_code === selectedCode);
-    select.innerHTML = '<option value="">-- ADMIN: tanpa cabang --</option>' + branches.map(
+    select.innerHTML = '<option value="">Semua cabang (dinamis)</option>' + branches.map(
       branch => `<option value="${branch.branch_code}">${branch.branch_code} - ${branch.branch_name}</option>`
     ).join('') + '<option value="__CUSTOM_BRANCH__">+ Tambah cabang sendiri</option>';
     if (selectedCode && !hasSelected) select.insertAdjacentHTML('beforeend', `<option value="${selectedCode}">${selectedCode} - cabang belum ada di master</option>`);
@@ -425,7 +425,7 @@ function render(users) {
   if (!userCache.length) { rowsEl.innerHTML = '<tr><td colspan="6">Belum ada user.</td></tr>'; return; }
   rowsEl.innerHTML = userCache.map((user, index) => `<tr>
     <td>${user.email || user.user_id}</td><td>${user.display_name || '-'}</td>
-    <td>${user.role}</td><td>${user.branch || '-'}</td><td class="${user.is_active ? 'ok' : 'err'}">${user.is_active ? 'Aktif' : 'Nonaktif'}</td>
+    <td>${user.role}</td><td>${user.branch || 'Semua cabang (dinamis)'}</td><td class="${user.is_active ? 'ok' : 'err'}">${user.is_active ? 'Aktif' : 'Nonaktif'}</td>
     <td><button type="button" class="secondary" data-action="edit" data-index="${index}">Edit</button> <button type="button" class="warning" data-action="forgot" data-index="${index}">Lupa Password</button> <button type="button" class="danger" data-action="deactivate" data-index="${index}" ${user.is_active ? '' : 'disabled'}>${user.is_active ? 'Nonaktifkan' : 'Sudah Nonaktif'}</button> <button type="button" class="danger" data-action="delete" data-index="${index}">Delete</button></td>
   </tr>`).join('');
 }
@@ -538,8 +538,6 @@ document.getElementById('clearBtn').addEventListener('click', resetForm);
 document.getElementById('logoutBtn').addEventListener('click', () => { clearSession(); window.location.href = nextLoginUrl(); });
 document.getElementById('branch').addEventListener('change', toggleCustomBranchPanel);
 document.getElementById('role').addEventListener('change', () => {
-  const branchSelect = document.getElementById('branch');
-  if (document.getElementById('role').value !== 'ADMIN' && !branchSelect.value && branchSelect.options.length > 2) branchSelect.selectedIndex = 1;
   toggleCustomBranchPanel();
 });
 if (getAuditToken()) { loadUsers(); } else { appendLog('Sesi Admin', 'Belum login. Silakan klik Login Ulang terlebih dahulu.', false); showSessionNotice('Belum login sebagai ADMIN.'); }
@@ -583,9 +581,6 @@ def upsert_user_role(
     email = _clean_email(email)
     role = _require_valid_role(role)
     branch = _validated_active_branch(db, branch)
-    if role != "ADMIN" and not branch:
-        raise HTTPException(status_code=400, detail="branch is required for non-ADMIN users")
-
     previous_for_email = _existing_user_by_email(db, email)
     resolved_user_id, auth_operation = _resolve_auth_user(
         db,

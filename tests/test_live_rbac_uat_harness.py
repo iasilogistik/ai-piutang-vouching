@@ -18,8 +18,9 @@ def _module():
 
 def test_live_rbac_uat_matrix_is_non_mutating_and_role_aware(monkeypatch):
     module = _module()
-    monkeypatch.setattr(module, "UAT_BRANCH", "PASURUAN")
-    monkeypatch.setattr(module, "OTHER_BRANCH", "__OUTSIDE__")
+    monkeypatch.setattr(module, "UAT_BRANCH", "GRESIK")
+    monkeypatch.setattr(module, "UAT_SECOND_BRANCH", "SIDOARJO")
+    monkeypatch.setattr(module, "SCOPED_VIEWER_BRANCH", "GRESIK")
 
     calls = []
 
@@ -28,13 +29,19 @@ def test_live_rbac_uat_matrix_is_non_mutating_and_role_aware(monkeypatch):
         calls.append((role, path, method, form))
 
         if path == "/auth/me":
-            branch = None if role == "ADMIN" else "PASURUAN"
-            return 200, f'{{"role":"{role}","branch":{repr(branch).replace("None", "null")}}}'.replace("'", '"')
+            if role == "SCOPED_VIEWER":
+                return 200, '{"role":"VIEWER","branch":"GRESIK"}'
+            branch = None
+            return 200, (
+                f'{{"role":"{role}","branch":null}}'
+                if branch is None
+                else f'{{"role":"{role}","branch":"{branch}"}}'
+            )
 
         if path == "/admin/users":
             return (200 if role == "ADMIN" else 403), "{}"
 
-        if "branch=__OUTSIDE__" in path:
+        if role == "SCOPED_VIEWER" and "branch=SIDOARJO" in path:
             return 403, "{}"
 
         if path == "/audit-findings" and method == "POST":
@@ -49,10 +56,27 @@ def test_live_rbac_uat_matrix_is_non_mutating_and_role_aware(monkeypatch):
         return 200, "{}"
 
     tokens = {role: role for role in module.ROLES}
+    tokens["SCOPED_VIEWER"] = "SCOPED_VIEWER"
     results = module.run_matrix(tokens, transport=fake_transport)
 
     assert results
     assert all(result.passed for result in results)
+
+    global_branch_reads = [
+        call for call in calls
+        if call[0] in module.ROLES
+        and call[2] == "GET"
+        and ("branch=GRESIK" in call[1] or "branch=SIDOARJO" in call[1])
+    ]
+    assert global_branch_reads
+    assert any(call[0] == "AUDITOR" and "branch=GRESIK" in call[1] for call in global_branch_reads)
+    assert any(call[0] == "AUDITOR" and "branch=SIDOARJO" in call[1] for call in global_branch_reads)
+
+    scoped_denials = [
+        call for call in calls
+        if call[0] == "SCOPED_VIEWER" and "branch=SIDOARJO" in call[1]
+    ]
+    assert len(scoped_denials) == 3
 
     mutation_calls = [call for call in calls if call[2] == "POST"]
     assert mutation_calls
@@ -64,6 +88,10 @@ def test_tokens_are_required_from_environment(monkeypatch):
     module = _module()
     for role in module.ROLES:
         monkeypatch.delenv(f"{role}_TOKEN", raising=False)
+    monkeypatch.delenv("SCOPED_VIEWER_TOKEN", raising=False)
+    monkeypatch.setattr(module, "UAT_BRANCH", "")
+    monkeypatch.setattr(module, "UAT_SECOND_BRANCH", "")
+    monkeypatch.setattr(module, "SCOPED_VIEWER_BRANCH", "")
 
     try:
         module._tokens_from_env()
@@ -74,3 +102,24 @@ def test_tokens_are_required_from_environment(monkeypatch):
 
     for role in module.ROLES:
         assert f"{role}_TOKEN" in message
+    assert "SCOPED_VIEWER_TOKEN" in message
+    assert "UAT_BRANCH" in message
+    assert "UAT_SECOND_BRANCH" in message
+    assert "SCOPED_VIEWER_BRANCH" in message
+
+
+def test_uat_requires_two_distinct_real_branches(monkeypatch):
+    module = _module()
+    for role in module.ROLES:
+        monkeypatch.setenv(f"{role}_TOKEN", role)
+    monkeypatch.setenv("SCOPED_VIEWER_TOKEN", "SCOPED")
+    monkeypatch.setattr(module, "UAT_BRANCH", "GRESIK")
+    monkeypatch.setattr(module, "UAT_SECOND_BRANCH", "GRESIK")
+    monkeypatch.setattr(module, "SCOPED_VIEWER_BRANCH", "GRESIK")
+
+    try:
+        module._tokens_from_env()
+    except RuntimeError as exc:
+        assert "UAT_SECOND_BRANCH must differ" in str(exc)
+    else:
+        raise AssertionError("Expected duplicate branch precondition failure")

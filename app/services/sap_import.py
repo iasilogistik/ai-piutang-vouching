@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.branch_access import branch_for_actor, normalize_branch
 from app.models import ImportBatch, SAPBilling
+from app.services.branch_master import ensure_branch_catalog
 
 
 STANDARD_REQUIRED_COLUMNS = {
@@ -143,6 +144,57 @@ def _import_sap_ledger(dataframe: pd.DataFrame) -> list[dict[str, object]]:
     return rows
 
 
+
+BRANCH_COLUMN_ALIASES = ("branch", "cabang", "branch code", "kode cabang")
+
+
+def _infer_branch_from_dataframe(dataframe: pd.DataFrame) -> str | None:
+    columns = {str(column).strip().casefold(): column for column in dataframe.columns}
+    source_column = next((columns[name] for name in BRANCH_COLUMN_ALIASES if name in columns), None)
+    if source_column is None:
+        return None
+
+    branches = {
+        normalized
+        for value in dataframe[source_column].tolist()
+        if (normalized := normalize_branch(_clean_text(value))) is not None
+    }
+    if not branches:
+        return None
+    if len(branches) > 1:
+        values = ", ".join(sorted(branches))
+        raise ValueError(
+            f"SAP import contains multiple branches ({values}); split the file per branch before upload"
+        )
+    return next(iter(branches))
+
+
+def _resolve_import_branch(
+    db: Session,
+    dataframe: pd.DataFrame,
+    *,
+    uploaded_by: str | None,
+    branch: str | None,
+) -> str:
+    explicit = normalize_branch(branch)
+    inferred = _infer_branch_from_dataframe(dataframe)
+
+    if explicit and inferred and explicit != inferred:
+        raise ValueError(
+            f"Uploaded branch {explicit} conflicts with branch {inferred} detected in SAP file"
+        )
+
+    resolved = inferred or explicit or branch_for_actor(db, uploaded_by)
+    resolved = normalize_branch(resolved)
+    if resolved is None:
+        raise ValueError(
+            "Branch is required: include Branch/Cabang/Branch Code/Kode Cabang in the SAP file "
+            "or supply branch during upload"
+        )
+
+    return ensure_branch_catalog(db, resolved)
+
+
 def import_sap_excel(
     db: Session,
     *,
@@ -167,11 +219,18 @@ def import_sap_excel(
     else:
         rows = _import_standard(dataframe)
 
+    resolved_branch = _resolve_import_branch(
+        db,
+        dataframe,
+        uploaded_by=uploaded_by,
+        branch=branch,
+    )
+
     batch = ImportBatch(
         file_name=filename,
         period=period,
         uploaded_by=uploaded_by,
-        branch=normalize_branch(branch) or branch_for_actor(db, uploaded_by),
+        branch=resolved_branch,
         total_records=len(rows),
         status="IMPORTED",
     )

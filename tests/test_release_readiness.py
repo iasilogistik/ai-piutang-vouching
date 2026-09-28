@@ -7,7 +7,7 @@ from app.services.release_readiness import EXPECTED_SCHEMA_REVISION
 client = TestClient(app)
 
 EXPECTED_REVISION = EXPECTED_SCHEMA_REVISION
-PREVIOUS_REVISION = "0029_app_private_usage"
+PREVIOUS_REVISION = "0031_revision_helper_acl"
 
 
 class _ScalarResult:

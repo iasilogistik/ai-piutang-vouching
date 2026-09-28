@@ -14,6 +14,9 @@ def test_drive_import_ui_shell_loads():
     assert "text/html" in response.headers["content-type"]
     assert "Google Drive / Share Link Import" in response.text
     assert "/documents/drive-import" in response.text
+    assert 'id="branch"' in response.text
+    assert "branch baru boleh langsung diketik" in response.text
+    assert "form.append('branch', branch)" in response.text
     assert "Bulk ZIP Upload" in response.text
 
 
