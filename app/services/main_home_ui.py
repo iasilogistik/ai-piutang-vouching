@@ -32,7 +32,7 @@ def main_home_html() -> str:
       --sidebar-soft:#111c31;
       --sidebar-text:#dbeafe;
       --shadow:0 12px 34px rgba(15,23,42,.08);
-      --sidebar-width:276px;
+      --sidebar-width:292px;
     }
     * { box-sizing:border-box; }
     html { background:var(--bg); }
@@ -59,15 +59,15 @@ def main_home_html() -> str:
     .nav-group { margin-bottom:18px; }
     .nav-label { padding:0 10px 7px; color:#64748b; font-size:10px; font-weight:800; letter-spacing:.11em; text-transform:uppercase; }
     .nav-item {
-      display:flex; align-items:center; gap:11px; min-height:43px; margin:3px 0; padding:9px 10px;
-      border-radius:11px; color:#b8c7da; text-decoration:none; font-size:13px; font-weight:650;
+      display:flex; align-items:center; gap:12px; min-height:48px; margin:4px 0; padding:10px 12px;
+      border-radius:12px; color:#b8c7da; text-decoration:none; font-size:14px; font-weight:650;
       transition:background .16s ease,color .16s ease,transform .16s ease;
     }
     .nav-item:hover { color:white; background:rgba(59,130,246,.14); transform:translateX(2px); }
     .nav-item.active { color:#fff; background:linear-gradient(90deg,rgba(37,99,235,.3),rgba(56,189,248,.10)); box-shadow:inset 3px 0 0 #38bdf8; }
     .nav-icon {
-      width:30px; height:30px; display:grid; place-items:center; flex:0 0 auto;
-      border-radius:9px; color:#bfdbfe; background:rgba(148,163,184,.10); font-size:10px; font-weight:900; letter-spacing:.02em;
+      width:34px; height:34px; display:grid; place-items:center; flex:0 0 auto;
+      border-radius:10px; color:#bfdbfe; background:rgba(148,163,184,.10); font-size:11px; font-weight:900; letter-spacing:.02em;
     }
     .nav-item.active .nav-icon { background:#2563eb; color:white; }
     .sidebar-footer { border-top:1px solid rgba(148,163,184,.16); padding:14px 8px 0; }
@@ -99,7 +99,7 @@ def main_home_html() -> str:
     }
     .profile-copy strong { display:block; font-size:12px; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .profile-copy span { display:block; color:var(--muted); font-size:10px; margin-top:2px; }
-    .content { padding:26px 28px 46px; max-width:1540px; margin:0 auto; }
+    .content { padding:28px 32px 48px; max-width:1540px; margin:0 auto; }
     .hero {
       position:relative; overflow:hidden; border-radius:22px; padding:25px 26px; color:#fff;
       background:
@@ -155,17 +155,18 @@ def main_home_html() -> str:
     .step span { color:var(--muted); font-size:9px; }
     .step-status { color:#94a3b8; font-size:9px; font-weight:800; }
     .status-card { margin-top:14px; padding:12px 14px; border-radius:13px; background:#0f172a; color:#dbeafe; font-size:10px; line-height:1.55; white-space:pre-wrap; word-break:break-word; max-height:180px; overflow:auto; }
+    .workspace-frame { display:none; width:100%; height:calc(100vh - 72px); border:0; background:#fff; }
     .role-hidden { display:none !important; }
     .sidebar-overlay { display:none; position:fixed; inset:0; z-index:35; background:rgba(15,23,42,.45); backdrop-filter:blur(2px); }
-    body.sidebar-collapsed .sidebar { width:82px; }
-    body.sidebar-collapsed .main-shell { margin-left:82px; }
+    body.sidebar-collapsed .sidebar { width:90px; }
+    body.sidebar-collapsed .main-shell { margin-left:90px; }
     body.sidebar-collapsed .brand-copy,
     body.sidebar-collapsed .nav-label,
     body.sidebar-collapsed .nav-text,
     body.sidebar-collapsed .sidebar-footer .system-copy { display:none; }
     body.sidebar-collapsed .brand { justify-content:center; padding-left:0; padding-right:0; }
     body.sidebar-collapsed .nav-item { justify-content:center; padding-left:8px; padding-right:8px; }
-    body.sidebar-collapsed .nav-icon { width:34px; height:34px; }
+    body.sidebar-collapsed .nav-icon { width:36px; height:36px; }
     body.sidebar-collapsed .sidebar-footer { display:flex; justify-content:center; }
     @media (max-width:1120px) {
       .metric-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
@@ -173,7 +174,7 @@ def main_home_html() -> str:
       .global-search { width:260px; }
     }
     @media (max-width:820px) {
-      .sidebar { transform:translateX(-105%); width:min(86vw,294px); }
+      .sidebar { transform:translateX(-105%); width:min(88vw,320px); }
       .main-shell { margin-left:0 !important; }
       body.mobile-nav-open .sidebar { transform:translateX(0); }
       body.mobile-nav-open .sidebar-overlay { display:block; }
@@ -278,7 +279,7 @@ def main_home_html() -> str:
       </div>
     </header>
 
-    <main class="content">
+    <main class="content" id="homeView">
       <section class="hero">
         <div class="hero-grid">
           <div>
@@ -338,6 +339,13 @@ def main_home_html() -> str:
         </div>
       </section>
     </main>
+    <iframe
+      id="workspaceFrame"
+      class="workspace-frame"
+      name="workspaceFrame"
+      title="Area kerja AI Piutang Vouching"
+      loading="eager"
+    ></iframe>
   </div>
 </div>
 
@@ -352,6 +360,10 @@ const profileMeta = document.getElementById('profileMeta');
 const welcomeTitle = document.getElementById('welcomeTitle');
 const healthDot = document.getElementById('healthDot');
 const healthText = document.getElementById('healthText');
+const homeView = document.getElementById('homeView');
+const workspaceFrame = document.getElementById('workspaceFrame');
+const pageTitlePrimary = document.querySelector('.page-title strong');
+let activeWorkspacePath = '/ui/main';
 
 function storedToken() { return localStorage.getItem('auditToken') || ''; }
 function authHeaders() {
@@ -470,16 +482,93 @@ async function loadDashboard() {
     setLog('Aplikasi sehat, tetapi ringkasan dashboard belum dapat dimuat.', { detail: error.message });
   }
 }
-function markActiveMenu() {
-  const path = window.location.pathname;
+function menuLabelForPath(path) {
+  const item = Array.from(document.querySelectorAll('.nav-item')).find(link => link.getAttribute('href') === path);
+  return item ? (item.querySelector('.nav-text')?.textContent || 'Workspace') : 'Workspace';
+}
+function isWorkspacePath(path) {
+  return typeof path === 'string' && path.startsWith('/ui/') && path !== '/ui/main' && !path.startsWith('//');
+}
+function markActiveMenu(path = activeWorkspacePath) {
   document.querySelectorAll('.nav-item').forEach(item => {
-    item.classList.toggle('active', item.getAttribute('href') === path || (path === '/' && item.getAttribute('href') === '/ui/main'));
+    const href = item.getAttribute('href');
+    item.classList.toggle('active', href === path || ((path === '/' || path === '/ui/main') && href === '/ui/main'));
   });
+}
+function updateShellUrl(path, replace = false) {
+  const nextUrl = path === '/ui/main'
+    ? '/ui/main'
+    : '/ui/main?view=' + encodeURIComponent(path);
+  const state = { workspace: path };
+  if (replace) history.replaceState(state, '', nextUrl);
+  else history.pushState(state, '', nextUrl);
+}
+function showHome({ push = true } = {}) {
+  activeWorkspacePath = '/ui/main';
+  workspaceFrame.style.display = 'none';
+  homeView.style.display = 'block';
+  pageTitlePrimary.textContent = 'Command Center';
+  markActiveMenu('/ui/main');
+  if (push) updateShellUrl('/ui/main');
+  closeMobileNav();
+}
+function openWorkspace(path, { push = true } = {}) {
+  if (!isWorkspacePath(path)) {
+    showHome({ push });
+    return;
+  }
+  activeWorkspacePath = path;
+  homeView.style.display = 'none';
+  workspaceFrame.style.display = 'block';
+  if (workspaceFrame.dataset.path !== path) {
+    workspaceFrame.src = path;
+    workspaceFrame.dataset.path = path;
+  }
+  pageTitlePrimary.textContent = menuLabelForPath(path);
+  markActiveMenu(path);
+  if (push) updateShellUrl(path);
+  closeMobileNav();
+}
+function initialWorkspacePath() {
+  const params = new URLSearchParams(window.location.search);
+  const view = params.get('view') || '';
+  return isWorkspacePath(view) ? view : '/ui/main';
 }
 function closeMobileNav() { document.body.classList.remove('mobile-nav-open'); }
 document.getElementById('mobileMenuBtn').addEventListener('click', () => document.body.classList.toggle('mobile-nav-open'));
 document.getElementById('sidebarOverlay').addEventListener('click', closeMobileNav);
-document.querySelectorAll('.nav-item').forEach(item => item.addEventListener('click', closeMobileNav));
+document.querySelectorAll('a[href^="/ui/"]').forEach(link => {
+  link.addEventListener('click', event => {
+    const href = link.getAttribute('href') || '';
+    if (href === '/ui/main') {
+      event.preventDefault();
+      showHome();
+      return;
+    }
+    if (isWorkspacePath(href)) {
+      event.preventDefault();
+      openWorkspace(href);
+    }
+  });
+});
+const globalSearchForm = document.querySelector('.global-search');
+globalSearchForm.addEventListener('submit', event => {
+  event.preventDefault();
+  const query = new FormData(globalSearchForm).get('q') || '';
+  const target = '/ui/search?q=' + encodeURIComponent(String(query));
+  openWorkspace(target);
+});
+workspaceFrame.addEventListener('load', () => {
+  try {
+    const frameLocation = workspaceFrame.contentWindow.location;
+    const framePath = frameLocation.pathname + frameLocation.search;
+    if (isWorkspacePath(frameLocation.pathname)) {
+      workspaceFrame.dataset.path = framePath;
+    }
+  } catch (_) {
+    // Same-origin pages are expected; ignore unexpected browser restrictions.
+  }
+});
 document.getElementById('collapseBtn').addEventListener('click', () => {
   document.body.classList.toggle('sidebar-collapsed');
   localStorage.setItem('auditSidebarCollapsed', document.body.classList.contains('sidebar-collapsed') ? '1' : '0');
@@ -494,7 +583,17 @@ document.getElementById('logoutBtn').addEventListener('click', () => {
   localStorage.removeItem('auditUser');
   window.location.href = '/login';
 });
-markActiveMenu();
+window.addEventListener('popstate', event => {
+  const path = event.state?.workspace || initialWorkspacePath();
+  if (path === '/ui/main') showHome({ push:false });
+  else openWorkspace(path, { push:false });
+});
+const initialPath = initialWorkspacePath();
+if (initialPath === '/ui/main') {
+  showHome({ push:false });
+} else {
+  openWorkspace(initialPath, { push:false });
+}
 loadDashboard();
 </script>
 </body>

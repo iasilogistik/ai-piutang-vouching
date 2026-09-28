@@ -66,3 +66,12 @@ def test_refresh_access_token_rejects_blank_token():
         assert "Refresh token wajib diisi" in str(exc)
     else:
         raise AssertionError("Expected ValueError for blank refresh token")
+
+
+def test_login_wraps_internal_next_route_in_persistent_shell():
+    response = client.get("/login?next=/ui/audit-findings")
+
+    assert response.status_code == 200
+    assert "next.startsWith('/ui/')" in response.text
+    assert "'/ui/main?view='" in response.text
+    assert "encodeURIComponent(next)" in response.text
