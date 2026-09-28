@@ -19,7 +19,7 @@ def bulk_upload_html() -> str:
     main { padding:20px 24px 40px; max-width:1150px; margin:0 auto; }
     .panel { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; margin:14px 0; box-shadow:0 1px 3px rgba(15,23,42,.06); }
     label { display:block; font-size:12px; color:var(--muted); margin:8px 0 5px; }
-    input[type='password'], input[type='file'], select { width:100%; border:1px solid var(--line); border-radius:8px; padding:8px; font:inherit; background:white; }
+    input[type='password'], input[type='text'], input[type='file'], select { width:100%; border:1px solid var(--line); border-radius:8px; padding:8px; font:inherit; background:white; }
     button, .button-link { border:0; border-radius:8px; padding:10px 13px; background:var(--blue); color:white; font-weight:700; cursor:pointer; text-decoration:none; display:inline-block; }
     button.secondary, .button-link.secondary { background:#475569; }
     .actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
@@ -46,6 +46,9 @@ def bulk_upload_html() -> str:
     </p>
     <label for="token">Bearer Token</label>
     <input id="token" type="password" placeholder="Paste access token production" autocomplete="off" />
+    <label for="branch">Cabang / Scope Upload</label>
+    <input id="branch" type="text" placeholder="Contoh: GRESIK — branch baru boleh langsung diketik" />
+    <p class="notice">Branch bersifat dinamis dan akan terdaftar otomatis saat upload.</p>
     <label for="mode">Mode import</label>
     <select id="mode">
       <option value="AUTO">AUTO - klasifikasi dari folder/nama file</option>
@@ -59,7 +62,6 @@ def bulk_upload_html() -> str:
       <button type="button" id="uploadBtn">Upload ZIP</button>
       <a class="button-link secondary" href="/ui/combined-upload" target="_blank" rel="noopener">Combined Upload</a>
       <a class="button-link secondary" href="/ui/control-evidence" target="_blank" rel="noopener">Buka Control Evidence</a>
-      <a class="button-link secondary" href="/ui/uat-pasuruan" target="_blank" rel="noopener">Buka UAT Pasuruan</a>
     </div>
   </section>
 
@@ -88,6 +90,7 @@ GABUNGAN/RAJAWALI 8540132459.pdf</pre>
 <script>
 const tokenInput = document.getElementById('token');
 const modeInput = document.getElementById('mode');
+const branchInput = document.getElementById('branch');
 const zipInput = document.getElementById('zipFile');
 const logEl = document.getElementById('log');
 const resultRows = document.getElementById('resultRows');
@@ -115,6 +118,8 @@ async function uploadZip() {
     appendLog('Upload ZIP', `Uploading ${file.name}...`);
     const form = new FormData();
     form.append('file', file);
+    const branch = branchInput.value.trim();
+    if (branch) form.append('branch', branch);
     const mode = encodeURIComponent(modeInput.value);
     const response = await fetch(`/documents/bulk-zip?mode=${mode}`, { method:'POST', headers:authHeaders(), body:form });
     const text = await response.text();

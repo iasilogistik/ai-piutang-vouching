@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.audit_service import list_audit_trail, record_audit
 from app.auth import CurrentUser, require_roles
-from app.branch_access import ensure_branch_access, scoped_branch, write_branch
+from app.branch_access import ensure_branch_access, normalize_branch, scoped_branch, write_branch
 from app.database import SessionLocal, engine
 from app.models import BillingReconciliation, Document, DocumentControlEvidence, ImportBatch, PhysicalBilling, SAPBilling, SPJ, VouchingResult
 from app.services.auth_gateway import login_with_password, refresh_access_token
@@ -23,6 +23,7 @@ from app.services.follow_up import register_follow_up_routes
 from app.services.audit_report import register_audit_report_routes
 from app.services.audit_closing import register_audit_closing_routes
 from app.services.branch_dashboard import register_branch_dashboard_routes
+from app.services.branch_master import ensure_branch_catalog
 from app.services.audit_management_dashboard import register_audit_management_dashboard_routes
 from app.services.bulk_upload_ui import bulk_upload_html
 from app.services.bulk_zip import classify_entry, iter_bulk_zip_entries, make_upload
@@ -85,6 +86,18 @@ def get_db():
 
 def handle_error(exc: ValueError) -> HTTPException:
     return HTTPException(status_code=400, detail=str(exc))
+
+
+def _prepare_upload_branch(db: Session, user: CurrentUser, branch: str | None) -> str:
+    resolved = write_branch(user, branch)
+    return ensure_branch_catalog(db, resolved)
+
+
+def _sap_requested_branch(user: CurrentUser, branch: str | None) -> str | None:
+    assigned = normalize_branch(user.branch)
+    if assigned is not None:
+        return write_branch(user, branch)
+    return normalize_branch(branch)
 
 
 def _document_for_user(db: Session, document_id: int, user: CurrentUser) -> Document:
@@ -257,7 +270,7 @@ def sap_import(file: UploadFile = File(...), period: date | None = None, branch:
                db: Session = Depends(get_db), user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR"))) -> dict[str, object]:
     try:
         uploaded_by = user.user_id
-        target_branch = write_branch(user, branch)
+        target_branch = _sap_requested_branch(user, branch)
         batch = import_sap_upload(db, file, uploaded_by=uploaded_by, period=period, branch=target_branch)
         record_audit(db, entity_type="IMPORT_BATCH", entity_id=batch.id, action="SAP_IMPORT",
                      actor=uploaded_by, status_to=batch.status, metadata={"file_name": batch.file_name, "total_records": batch.total_records},
@@ -281,7 +294,7 @@ def import_drive_folder(url: str = Form(...), mode: str = Form("AUTO"), branch: 
                         user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR"))):
     try:
         uploaded_by = user.user_id
-        target_branch = write_branch(user, branch)
+        target_branch = _prepare_upload_branch(db, user, branch)
         files = list_google_drive_folder_files(url)
         results: list[dict[str, object]] = []
         for item in files:
@@ -320,7 +333,7 @@ def import_drive_link(url: str = Form(...), mode: str = Form("AUTO"), branch: st
                       user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR"))):
     try:
         uploaded_by = user.user_id
-        target_branch = write_branch(user, branch)
+        target_branch = _prepare_upload_branch(db, user, branch)
         upload = download_drive_link_file(url)
         total, results = _process_upload_or_zip(db, upload, mode=mode, uploaded_by=uploaded_by, branch=target_branch,
                                                 source_mode="DRIVE_ZIP" if Path(upload.filename).suffix.lower() == ".zip" else "DRIVE_LINK",
@@ -337,7 +350,7 @@ def upload_bulk_zip(file: UploadFile = File(...), mode: str = "AUTO", branch: st
                     user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR"))):
     try:
         uploaded_by = user.user_id
-        target_branch = write_branch(user, branch)
+        target_branch = _prepare_upload_branch(db, user, branch)
         entries = iter_bulk_zip_entries(file)
         results = []
         for entry in entries:
@@ -375,7 +388,7 @@ def upload_combined_document(file: UploadFile = File(...), branch: str | None = 
     """
     try:
         uploaded_by = user.user_id
-        target_branch = write_branch(user, branch)
+        target_branch = _prepare_upload_branch(db, user, branch)
         billing_doc = save_document(db, file, document_type="BILLING", uploaded_by=uploaded_by, branch=target_branch)
         record_audit(db, entity_type="DOCUMENT", entity_id=billing_doc.id, action="UPLOAD", actor=uploaded_by,
                      status_to="UPLOADED", metadata={"document_type": "BILLING", "file_name": billing_doc.file_name,
@@ -423,7 +436,7 @@ def upload_document(document_type: str, file: UploadFile = File(...), branch: st
         raise HTTPException(status_code=400, detail="document_type must be BILLING or SPJ")
     try:
         uploaded_by = user.user_id
-        target_branch = write_branch(user, branch)
+        target_branch = _prepare_upload_branch(db, user, branch)
         doc = save_document(db, file, document_type=document_type, uploaded_by=uploaded_by, branch=target_branch)
         record_audit(db, entity_type="DOCUMENT", entity_id=doc.id, action="UPLOAD", actor=uploaded_by,
                      status_to="UPLOADED", metadata={"document_type": document_type, "file_name": doc.file_name, "file_hash": doc.file_hash},

@@ -47,6 +47,8 @@ def test_user_management_ui_shell_loads_without_login_bootstrap():
     assert 'id="userId"' not in response.text
     assert "ID teknis Supabase" not in response.text
     assert '<select id="branch">' in response.text
+    assert "Scope Cabang (opsional)" in response.text
+    assert "Semua cabang (dinamis)" in response.text
     assert "/admin/branches?active=true" in response.text
     assert "Tambah cabang sendiri" in response.text
     assert "customBranchCode" in response.text
@@ -185,7 +187,7 @@ def test_admin_requires_email():
     assert response.status_code == 422
 
 
-def test_non_admin_user_requires_branch_assignment():
+def test_non_admin_user_may_use_dynamic_all_branch_scope():
     _bootstrap_user_routes()
     response = client.post(
         "/admin/users",
@@ -197,8 +199,9 @@ def test_non_admin_user_requires_branch_assignment():
         },
     )
 
-    assert response.status_code == 400
-    assert "branch is required" in response.text
+    assert response.status_code == 200
+    assert response.json()["role"] == "VIEWER"
+    assert response.json()["branch"] is None
 
 
 def test_admin_branch_assignment_is_optional():

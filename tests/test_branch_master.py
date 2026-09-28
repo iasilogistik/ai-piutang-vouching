@@ -1,7 +1,10 @@
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 
 from app.auth import CurrentUser, current_user
+from app.database import SessionLocal
 from app.main import app
+from app.services.branch_master import ensure_branch_catalog
 
 client = TestClient(app)
 
@@ -9,7 +12,7 @@ client = TestClient(app)
 def test_branch_management_ui_shell_loads():
     response = client.get("/ui/branches")
     assert response.status_code == 200
-    assert "Branch Management" in response.text
+    assert "Branch Catalog" in response.text
     assert "/admin/branches" in response.text
 
 
@@ -68,3 +71,37 @@ def test_non_admin_cannot_modify_branch_master():
         assert listing.status_code == 403
     finally:
         app.dependency_overrides.pop(current_user, None)
+
+
+
+def test_upload_registration_preserves_curated_branch_metadata():
+    code = "DYNAMIC-CURATED"
+    created = client.post(
+        "/admin/branches",
+        data={
+            "branch_code": code,
+            "branch_name": "Curated Branch Name",
+            "region": "JATIM",
+            "area": "AREA-1",
+            "active": "true",
+        },
+    )
+    assert created.status_code in {200, 409}
+
+    db = SessionLocal()
+    try:
+        normalized = ensure_branch_catalog(db, code.lower())
+        db.commit()
+        row = db.execute(
+            text(
+                "select branch_code, branch_name, region, area, active "
+                "from public.branches where branch_code=:code"
+            ),
+            {"code": normalized},
+        ).mappings().one()
+        assert row["branch_name"] == "Curated Branch Name"
+        assert row["region"] == "JATIM"
+        assert row["area"] == "AREA-1"
+        assert row["active"] is True
+    finally:
+        db.close()

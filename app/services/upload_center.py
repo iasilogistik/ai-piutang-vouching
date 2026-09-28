@@ -30,7 +30,7 @@ pre{white-space:pre-wrap;background:#0f172a;color:#dbeafe;padding:12px;border-ra
 <section class="panel">
 <div class="grid">
 <div><label>Bearer Token</label><input id="token" type="password" placeholder="Token dari login"></div>
-<div><label>Cabang</label><input id="branch" placeholder="ADMIN wajib pilih; non-ADMIN otomatis assigned branch"></div>
+<div><label>Cabang / Scope Upload</label><input id="branch" placeholder="Contoh: GRESIK — branch baru boleh langsung diketik"></div>
 <div><label>Jenis Upload</label>
 <select id="type">
 <option value="SAP">SAP</option>
@@ -45,7 +45,7 @@ pre{white-space:pre-wrap;background:#0f172a;color:#dbeafe;padding:12px;border-ra
 <div><label>File</label><input id="file" type="file" accept=".pdf,.png,.jpg,.jpeg,.xlsx,.xls,.csv,.zip"></div>
 <div><label>Google Drive URL</label><input id="url" placeholder="https://drive.google.com/..."></div>
 </div>
-<p class="small">Validasi client-side: ekstensi yang didukung PDF/JPG/PNG/XLS/XLSX/CSV/ZIP. Validasi server-side tetap menjadi kontrol utama.</p>
+<p class="small">Branch bersifat dinamis. SAP dapat mendeteksi branch dari kolom Branch/Cabang/Branch Code/Kode Cabang. Untuk dokumen tanpa metadata branch, isi cabang saat upload; branch baru akan terdaftar otomatis. Validasi server-side tetap menjadi kontrol utama.</p>
 <button id="send">Upload / Import</button>
 </section>
 <section class="panel"><pre id="log">Belum ada aktivitas.</pre></section>

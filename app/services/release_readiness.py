@@ -11,7 +11,7 @@ from app.services.password_reset_ui import register_password_reset_routes
 
 router = APIRouter()
 _REGISTERED = False
-EXPECTED_SCHEMA_REVISION = "0031_revision_helper_acl"
+EXPECTED_SCHEMA_REVISION = "0032_dynamic_branch_scope"
 REQUIRED_SCHEMA_OBJECTS = {
     "public.documents",
     "public.document_control_evidence",
