@@ -213,11 +213,36 @@ def _install_scope_helper() -> None:
     op.execute("grant execute on function app_private.branch_scope_allows(text) to authenticated")
 
 
+def _set_release_revision(revision_name: str) -> None:
+    safe_revision = revision_name.replace("'", "''")
+    op.execute(
+        f"""
+        create or replace function app_private.current_app_schema_revision()
+        returns text
+        language sql
+        stable
+        security definer
+        set search_path = ''
+        as $function$
+          select '{safe_revision}'::text
+        $function$;
+        """
+    )
+    op.execute("revoke all on function app_private.current_app_schema_revision() from public")
+    op.execute("revoke execute on function app_private.current_app_schema_revision() from anon")
+    op.execute("revoke execute on function app_private.current_app_schema_revision() from authenticated")
+    op.execute(
+        "grant execute on function app_private.current_app_schema_revision() "
+        "to postgres, authenticator, service_role"
+    )
+
+
 def upgrade() -> None:
     if not _supabase_rbac_available():
         return
 
     _install_scope_helper()
+    _set_release_revision(revision)
     for table, policy, command, using_expr, check_expr in _POLICIES:
         _drop_policy(table, policy)
         _create_policy(
@@ -238,4 +263,5 @@ def downgrade() -> None:
         _create_policy(table, policy, command, using_expr, check_expr)
 
     op.execute("drop function if exists app_private.branch_scope_allows(text)")
+    _set_release_revision(down_revision)
     op.execute("revoke usage on schema app_private from authenticated")

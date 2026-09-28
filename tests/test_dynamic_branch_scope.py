@@ -65,3 +65,12 @@ def test_unconverted_branch_predicate_fails_closed():
         pass
     else:
         raise AssertionError("unconverted current_app_branch predicate must fail closed")
+
+
+def test_release_revision_is_explicit_and_not_latest_supabase_migration():
+    text = MIGRATION.read_text(encoding="utf-8")
+    assert "_set_release_revision(revision)" in text
+    assert "_set_release_revision(down_revision)" in text
+    assert "select '{safe_revision}'::text" in text
+    assert "supabase_migrations.schema_migrations" not in text
+    assert "revoke execute on function app_private.current_app_schema_revision() from authenticated" in text
