@@ -45,7 +45,7 @@ def login_html() -> str:
 <body>
   <main class="card">
     <h1>AI Piutang Vouching</h1>
-    <p>Login menggunakan akun aplikasi. Setelah berhasil, sistem langsung masuk ke layout utama berisi dashboard dan menu sesuai role.</p>
+    <p>Login menggunakan akun aplikasi. Setelah berhasil, sistem langsung masuk ke Command Center dengan menu sidebar di sebelah kiri sesuai role.</p>
     <form id="loginForm">
       <label for="email">Email</label>
       <input id="email" type="email" autocomplete="username" placeholder="nama@perusahaan.co.id" required />
@@ -55,7 +55,7 @@ def login_html() -> str:
     </form>
     <div id="message" class="msg"></div>
     <p class="hint"><a href="/forgot-password">Lupa Password?</a></p>
-    <p class="hint">Menu aplikasi, dashboard, upload, review, dan menu admin akan muncul di layout utama setelah login.</p>
+    <p class="hint">Menu dashboard, audit, data vouching, monitoring, dan administrasi akan tampil di sidebar sesuai role setelah login.</p>
     <button id="logoutBtn" type="button" style="background:#475569;">Logout / Hapus Token Browser</button>
   </main>
 <script>
@@ -81,8 +81,8 @@ async function resolvePostLoginDestination(accessToken) {
   try {
     const response = await fetch('/auth/me', { headers: { Authorization: `Bearer ${accessToken}` } });
     const profile = await response.json();
-    if (response.ok && profile.role === 'ADMIN') {
-      return '/ui/users';
+    if (response.ok && profile.role) {
+      return '/ui/main';
     }
   } catch (error) {
     return '/ui/main';
