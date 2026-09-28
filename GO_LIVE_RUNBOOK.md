@@ -91,37 +91,42 @@ Pastikan RLS aktif pada tabel audit/business yang relevan.
 ## F. Multi-role UAT
 
 Prerequisite:
-- ADMIN active,
-- AUDITOR active / PASURUAN,
-- REVIEWER active / PASURUAN,
-- VIEWER active / PASURUAN.
+- ADMIN active / global,
+- AUDITOR active / branch NULL (global),
+- REVIEWER active / branch NULL (global),
+- VIEWER active / branch NULL (global),
+- satu VIEWER control account aktif / scoped ke salah satu branch UAT,
+- dua branch berbeda sudah benar-benar tersedia dari upload production.
 
-Auth accounts dibuat melalui Supabase Auth resmi. Setelah itu role dipetakan melalui `/ui/users`.
+Auth accounts dibuat melalui Supabase Auth resmi. Setelah itu role/scope dipetakan melalui `/ui/users`. Jangan menebak tujuan Auth user yang belum dipetakan.
 
-Set environment token hanya pada shell lokal:
+Set environment token dan branch hanya pada shell lokal:
 
 ```bash
 export ADMIN_TOKEN='...'
 export AUDITOR_TOKEN='...'
 export REVIEWER_TOKEN='...'
 export VIEWER_TOKEN='...'
-export UAT_BRANCH='PASURUAN'
+export SCOPED_VIEWER_TOKEN='...'
+export UAT_BRANCH='<REAL_UPLOADED_BRANCH_1>'
+export UAT_SECOND_BRANCH='<REAL_UPLOADED_BRANCH_2>'
+export SCOPED_VIEWER_BRANCH='<ONE_OF_THE_TWO>'
 python scripts/live_rbac_uat.py
 ```
 
 Token tidak boleh masuk screenshot, issue, commit, chat, atau evidence package.
 
 Acceptance:
-- auth identity benar,
-- authorized read = 200,
+- auth identity dan global/scoped payload benar,
+- global ADMIN/AUDITOR/REVIEWER/VIEWER dapat membaca kedua branch UAT,
 - admin-only gate benar,
 - create/reopen/verification role gate benar,
-- cross-branch request ditolak,
+- scoped VIEWER dapat membaca branch sendiri dan ditolak pada branch kedua,
 - seluruh matrix PASS.
 
 ## G. RLS performance consolidation
 
-PERF-02 (#93) hanya dieksekusi setelah UAT live hijau.
+PERF-02 (#93) hanya dieksekusi setelah UAT live hijau. Setelah DEV-31, migration target PERF-02 adalah `0033_rls_policy_consolidation` dengan down revision `0032_dynamic_branch_scope`.
 
 Desain:
 - branch-aware SELECT tetap dipertahankan,
@@ -201,7 +206,6 @@ Track from:
 - UAT-01 #89
 - PERF-02 #93
 - SEC-01 #79
-- OPS-02 #102
 - GO-LIVE #103
 
 DEV-30 documentation is complete when this runbook and USER_GUIDE.md are reviewed and ready for handover.

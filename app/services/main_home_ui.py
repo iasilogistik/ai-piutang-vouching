@@ -68,7 +68,7 @@ def main_home_html() -> str:
         <span id="sessionInfo" class="pill">Role: - · Cabang: -</span>
       </div>
       <div class="topbar-right">
-        <input id="branch" placeholder="Filter cabang, contoh: Pasuruan" />
+        <input id="branch" placeholder="Filter cabang (opsional)" />
         <button id="loadBtn" type="button">Refresh Dashboard</button>
         <a class="button secondary" href="/login">Login</a>
         <button id="logoutBtn" class="secondary" type="button">Logout</button>
@@ -107,7 +107,6 @@ def main_home_html() -> str:
     <div class="module-grid">
       <div class="card important"><div><h3>Dashboard Cabang</h3><p>Ringkasan SAP, billing fisik, rekonsiliasi, vouching, exception, dan control evidence per cabang.</p></div><a class="button" href="/ui/dashboard">Buka Dashboard</a></div>
       <div class="card important"><div><h3>Upload Center</h3><p>Upload SAP, Billing, SPJ, ZIP, file gabungan Billing+SPJ, dan share link dalam satu area kerja.</p></div><a class="button" href="/ui/upload">Buka Upload</a></div>
-      <div class="card"><div><h3>UAT Pasuruan</h3><p>Workbench UAT untuk upload, OCR, vouching, dan checklist uji coba cabang.</p></div><a class="button" href="/ui/uat-pasuruan">Buka UAT</a></div>
       <div class="card"><div><h3>Control Evidence</h3><p>Dashboard evidence TTD, stempel, checker, status review, dan export Excel.</p></div><a class="button" href="/ui/control-evidence">Buka Evidence</a></div>
       <div class="card"><div><h3>Google Drive Import</h3><p>Import dari file, ZIP, atau folder Google Drive sesuai mode AUTO/BILLING/SPJ/COMBINED.</p></div><a class="button" href="/ui/drive-import">Buka Drive Import</a></div>
       <div class="card"><div><h3>Review Queue</h3><p>Antrian manual review atas exception, evidence belum lengkap, dan item perlu keputusan auditor.</p></div><a class="button" href="/ui/review-queue">Buka Review</a></div>

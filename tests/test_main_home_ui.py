@@ -20,6 +20,9 @@ def test_main_home_layout_is_informative_and_session_based():
     assert "/ui/dashboard" in response.text
     assert "/ui/upload" in response.text
     assert "/ui/users" in response.text
+    assert "Pasuruan" not in response.text
+    assert "pasuruan" not in response.text
+    assert "Filter cabang (opsional)" in response.text
     assert "Bearer token" not in response.text
     assert "Bearer Token" not in response.text
     assert "id=\"token\"" not in response.text

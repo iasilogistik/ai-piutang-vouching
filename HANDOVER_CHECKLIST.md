@@ -8,7 +8,7 @@ Gunakan checklist ini pada saat aplikasi diserahkan ke tim operasional.
 - [ ] AUDITOR resmi dapat login.
 - [ ] REVIEWER resmi dapat login.
 - [ ] VIEWER resmi dapat login.
-- [ ] Non-ADMIN memiliki branch yang benar.
+- [ ] Scope user dikonfigurasi benar: blank = global dinamis, non-blank = restricted branch.
 - [ ] Tidak ada credential di dokumen handover.
 
 ## Core workflow
@@ -29,7 +29,8 @@ Gunakan checklist ini pada saat aplikasi diserahkan ke tim operasional.
 
 ## Security and isolation
 - [ ] Protected API tanpa token = 401.
-- [ ] Cross-branch negative tests PASS.
+- [ ] Global ADMIN/AUDITOR/REVIEWER/VIEWER dapat mengakses dua real uploaded branches sesuai role.
+- [ ] Scoped VIEWER own-branch PASS dan cross-branch deny PASS.
 - [ ] Admin-only endpoint ditolak untuk non-admin.
 - [ ] Branch NULL invariant = 0 pada tabel inti.
 - [ ] RLS advisor direview.
@@ -48,7 +49,7 @@ Gunakan checklist ini pada saat aplikasi diserahkan ke tim operasional.
 - [ ] USER_GUIDE.md diserahkan.
 - [ ] GO_LIVE_RUNBOOK.md diserahkan.
 - [ ] UAT_MULTI_ROLE.md diserahkan.
-- [ ] UAT_PASURUAN_FINAL.md diserahkan.
+- [ ] Bukti live dynamic-branch UAT untuk dua real uploaded branches diserahkan.
 - [ ] DEPLOYMENT.md diserahkan.
 
 ## Sign-off
