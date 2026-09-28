@@ -13,12 +13,12 @@ https://ai-piutang-vouching.vercel.app
 Gunakan akun Supabase Auth resmi. Setelah login, aplikasi membaca role dari `public.user_roles`.
 
 Role yang didukung:
-- **ADMIN** — akses lintas cabang, user/branch management, seluruh workflow.
-- **AUDITOR** — menjalankan pekerjaan audit pada cabang yang ditetapkan.
-- **REVIEWER** — review, approval, verification, dan closing sesuai workflow.
-- **VIEWER** — read-only sesuai cabang yang ditetapkan.
+- **ADMIN** — akses global, user/branch management, seluruh workflow.
+- **AUDITOR** — pekerjaan audit sesuai scope; branch kosong berarti global, branch terisi berarti dibatasi tepat pada branch tersebut.
+- **REVIEWER** — review, approval, verification, dan closing sesuai scope global atau branch yang ditetapkan.
+- **VIEWER** — read-only sesuai scope global atau branch yang ditetapkan.
 
-Non-ADMIN wajib memiliki branch aktif. Branch isolation berlaku di application layer dan RLS database pada tabel yang relevan.
+Untuk user aktif, branch kosong berarti **Semua cabang (dinamis)**. Branch non-kosong adalah pembatasan opsional ke satu branch. Setiap record audit/business tetap wajib memiliki branch non-null; branch global hanya berlaku pada scope user, bukan pada kepemilikan data.
 
 ## 2. Navigasi utama
 
@@ -58,14 +58,15 @@ Gunakan untuk:
 - upload SPJ,
 - memicu extraction/OCR dan control-evidence processing.
 
-Pastikan cabang yang dipilih benar sebelum upload.
+Cabang bersifat dinamis. Branch baru boleh diketik saat upload dan akan didaftarkan ke katalog. SAP dapat menginfer branch dari kolom Branch/Cabang/Branch Code/Kode Cabang. Jika branch tidak dapat diinfer dan tidak diberikan, upload ditolak agar tidak membuat record bisnis dengan branch kosong.
 
 ### C. Vouching dan reconciliation
 Buka:
 
 ```text
-/ui/uat-pasuruan
+/ui/upload
 /ui/control-evidence
+/ui/review-queue
 ```
 
 Review:
@@ -231,7 +232,7 @@ ADMIN membuka:
 /ui/branches
 ```
 
-Gunakan canonical branch master. Non-ADMIN harus menggunakan branch aktif.
+Branch Management adalah katalog branch yang ditemukan/terdaftar, bukan prasyarat sebelum upload. Branch baru dapat diregistrasikan otomatis dari upload. ADMIN dapat tetap mengkurasi nama/region/area tanpa mengubah kode branch yang sudah dipakai data.
 
 ## 5. Audit Trail dan Notifications
 
@@ -274,10 +275,13 @@ Urutan pengecekan:
 ## 8. UAT wajib sebelum go-live penuh
 
 Live multi-role UAT menggunakan:
-- ADMIN
-- AUDITOR / PASURUAN
-- REVIEWER / PASURUAN
-- VIEWER / PASURUAN
+- ADMIN global
+- AUDITOR global
+- REVIEWER global
+- VIEWER global
+- VIEWER scoped sebagai control account
+
+UAT wajib memakai dua branch berbeda yang benar-benar sudah muncul dari upload production. Scoped VIEWER dipetakan ke salah satu dari dua branch tersebut untuk membuktikan own-branch allow dan cross-branch deny.
 
 Runbook teknis:
 
