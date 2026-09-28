@@ -32,7 +32,8 @@ Gunakan checklist ini pada saat aplikasi diserahkan ke tim operasional.
 - [ ] Global ADMIN/AUDITOR/REVIEWER/VIEWER dapat mengakses dua real uploaded branches sesuai role.
 - [ ] Scoped VIEWER own-branch PASS dan cross-branch deny PASS.
 - [ ] Admin-only endpoint ditolak untuk non-admin.
-- [ ] Branch NULL invariant = 0 pada tabel inti.
+- [ ] Branch NULL invariant = 0 pada branch-owned business roots; USER_ROLE audit event global terdokumentasi sebagai pengecualian administratif.
+- [ ] `python scripts/uat_preflight.py` = READY sebelum live RBAC UAT.
 - [ ] RLS advisor direview.
 - [ ] Supabase leaked-password protection: enabled atau risk acceptance terdokumentasi.
 

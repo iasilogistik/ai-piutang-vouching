@@ -79,16 +79,26 @@ Cek runtime errors setelah smoke.
 
 ## E. Database invariants
 
-Minimal:
+Branch-owned business roots wajib:
 - documents.branch NULL = 0
 - import_batches.branch NULL = 0
-- audit_trail.branch NULL = 0
 - audit_findings.branch NULL = 0
 - corrective_action_plans.branch NULL = 0
+- operational audit_trail branch NULL = 0 untuk entity selain USER_ROLE
 
-Pastikan RLS aktif pada tabel audit/business yang relevan.
+`USER_ROLE` adalah event administrasi aplikasi. Untuk user global, `audit_trail.branch = NULL` diperbolehkan dan harus diperlakukan sebagai scope GLOBAL, bukan sebagai data bisnis tanpa cabang.
+
+Jalankan gate read-only:
+
+```bash
+python scripts/uat_preflight.py
+```
+
+Preflight wajib READY sebelum live RBAC UAT. Pastikan RLS aktif pada tabel audit/business yang relevan.
 
 ## F. Multi-role UAT
+
+Sebelum token-based UAT, jalankan `python scripts/uat_preflight.py`. Jika BLOCKED, selesaikan prerequisite yang dilaporkan dan jangan mengubah role user produksi secara spekulatif.
 
 Prerequisite:
 - ADMIN active / global,

@@ -11,7 +11,7 @@ Application-user semantics:
 - `branch = NULL` -> global across all uploaded branches.
 - non-null branch -> optional exact restriction.
 - ADMIN remains global.
-- Audit/business records must still carry a non-null branch.
+- Audit/business root records must still carry a non-null branch. Administrative `USER_ROLE` audit events for global users may legitimately have `audit_trail.branch = NULL`; they are not branch-owned business records.
 - A new branch can be registered automatically from upload context.
 
 The UAT therefore uses **two real branches that already exist from uploaded data**. Do not use placeholder branches for global-access checks.
@@ -29,6 +29,24 @@ The UAT therefore uses **two real branches that already exist from uploaded data
 Auth users must be created through the supported Supabase Auth administration path. Do not insert directly into `auth.users`.
 
 Map application roles/scopes through `/ui/users`. Blank branch means **Semua cabang (dinamis)**.
+
+## Preflight gate
+
+Run the read-only prerequisite checker before collecting bearer tokens:
+
+```bash
+python scripts/uat_preflight.py
+```
+
+Expected result is `UAT PREFLIGHT READY`. The checker blocks when:
+- fewer than two real branches exist in uploaded `documents` / `import_batches`;
+- ADMIN is missing;
+- global AUDITOR, REVIEWER, or VIEWER is missing;
+- no scoped VIEWER exists on one of the real UAT branches;
+- a branch-owned business root has a blank branch;
+- a non-`USER_ROLE` operational audit event has a blank branch.
+
+Branchless `USER_ROLE` audit entries are reported as informational only because global user administration is not owned by a business branch. The checker never creates users, uploads data, changes roles, or writes database rows.
 
 ## Select two real uploaded branches
 
@@ -65,6 +83,14 @@ export UAT_BASE_URL='https://ai-piutang-vouching.vercel.app'
 Never commit or attach bearer tokens, passwords, refresh tokens, service keys, or database credentials.
 
 ## Run
+
+First require the preflight to pass:
+
+```bash
+python scripts/uat_preflight.py
+```
+
+Then run authenticated live UAT:
 
 ```bash
 python scripts/live_rbac_uat.py
