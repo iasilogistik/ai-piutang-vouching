@@ -46,7 +46,14 @@ def test_branch_scope_helper_requires_active_application_user():
     assert "coalesce(ur.is_active, true)" in text
     assert "ur.branch is null" in text
     assert "upper(trim(ur.branch)) = upper(trim(resource_branch))" in text
-    assert "grant execute on function public.branch_scope_allows(text) to authenticated" in text
+    assert "create or replace function app_private.branch_scope_allows(resource_branch text)" in text
+    assert "set search_path = ''" in text
+    assert "revoke all on schema app_private from public" in text
+    assert "grant usage on schema app_private to authenticated" in text
+    assert "revoke all on function app_private.branch_scope_allows(text) from public" in text
+    assert "revoke all on function app_private.branch_scope_allows(text) from anon" in text
+    assert "grant execute on function app_private.branch_scope_allows(text) to authenticated" in text
+    assert "create or replace function public.branch_scope_allows" not in text
 
 
 def test_unconverted_branch_predicate_fails_closed():

@@ -152,7 +152,7 @@ def _replace_branch_scope(expression: str | None) -> str | None:
         return None
     result = expression
     for pattern in _BRANCH_PATTERNS:
-        result = pattern.sub(r"(public.branch_scope_allows(\1))", result)
+        result = pattern.sub(r"(app_private.branch_scope_allows(\1))", result)
     if "current_app_branch" in result:
         raise ValueError(f"Unconverted branch predicate: {result}")
     return result
@@ -181,9 +181,12 @@ def _drop_policy(table: str, policy: str) -> None:
 
 
 def _install_scope_helper() -> None:
+    op.execute("create schema if not exists app_private")
+    op.execute("revoke all on schema app_private from public")
+    op.execute("grant usage on schema app_private to authenticated")
     op.execute(
         """
-        create or replace function public.branch_scope_allows(resource_branch text)
+        create or replace function app_private.branch_scope_allows(resource_branch text)
         returns boolean
         language sql
         stable
@@ -205,8 +208,9 @@ def _install_scope_helper() -> None:
         $function$;
         """
     )
-    op.execute("revoke all on function public.branch_scope_allows(text) from public")
-    op.execute("grant execute on function public.branch_scope_allows(text) to authenticated")
+    op.execute("revoke all on function app_private.branch_scope_allows(text) from public")
+    op.execute("revoke all on function app_private.branch_scope_allows(text) from anon")
+    op.execute("grant execute on function app_private.branch_scope_allows(text) to authenticated")
 
 
 def upgrade() -> None:
@@ -233,4 +237,5 @@ def downgrade() -> None:
         _drop_policy(table, policy)
         _create_policy(table, policy, command, using_expr, check_expr)
 
-    op.execute("drop function if exists public.branch_scope_allows(text)")
+    op.execute("drop function if exists app_private.branch_scope_allows(text)")
+    op.execute("revoke usage on schema app_private from authenticated")
