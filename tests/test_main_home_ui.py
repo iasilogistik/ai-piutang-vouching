@@ -60,3 +60,30 @@ def test_main_home_keeps_core_audit_navigation():
         "/ui/audit-reports",
     ):
         assert path in response.text
+
+
+def test_main_home_sidebar_persists_workspace_pages_and_has_larger_ratio():
+    response = client.get("/ui/main")
+
+    assert response.status_code == 200
+    assert "--sidebar-width:292px" in response.text
+    assert "min-height:48px" in response.text
+    assert "font-size:14px" in response.text
+    assert "width:34px; height:34px" in response.text
+    assert 'id="workspaceFrame"' in response.text
+    assert 'id="homeView"' in response.text
+    assert "openWorkspace" in response.text
+    assert "showHome" in response.text
+    assert "history.pushState" in response.text
+    assert "/ui/main?view=" in response.text
+
+
+def test_main_home_internal_menu_links_open_inside_persistent_shell():
+    response = client.get("/ui/main")
+
+    assert response.status_code == 200
+    assert 'a[href^="/ui/"]' in response.text
+    assert "event.preventDefault()" in response.text
+    assert "workspaceFrame.src = path" in response.text
+    assert "workspaceFrame.style.display = 'block'" in response.text
+    assert "homeView.style.display = 'none'" in response.text

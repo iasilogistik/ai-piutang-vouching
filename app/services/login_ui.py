@@ -72,8 +72,11 @@ function storeSession(data) {
 function requestedNextPath() {
   const params = new URLSearchParams(window.location.search);
   const next = params.get('next');
-  if (next && next.startsWith('/') && !next.startsWith('//')) return next;
-  return '';
+  if (!next || !next.startsWith('/') || next.startsWith('//')) return '';
+  if (next.startsWith('/ui/') && next !== '/ui/main') {
+    return '/ui/main?view=' + encodeURIComponent(next);
+  }
+  return next;
 }
 async function resolvePostLoginDestination(accessToken) {
   const next = requestedNextPath();
