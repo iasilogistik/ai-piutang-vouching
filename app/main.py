@@ -1,8 +1,9 @@
 from datetime import date
 from pathlib import Path
+from urllib.parse import quote
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
@@ -53,6 +54,31 @@ from app.services.user_management import register_user_management_routes
 from app.services.vouching import ocr_document, overall_result, reconcile_batch, review_vouching_result, save_document, validate_sap_batch, vouch_spj
 
 app = FastAPI(title="AI Piutang Vouching")
+
+_UI_SHELL_EXEMPT_PATHS = {"/ui/main", "/ui/navigation"}
+
+
+@app.middleware("http")
+async def keep_browser_ui_inside_persistent_shell(request: Request, call_next):
+    path = request.url.path
+    fetch_dest = (request.headers.get("sec-fetch-dest") or "").strip().lower()
+    is_top_level_browser_navigation = fetch_dest == "document"
+    if (
+        request.method == "GET"
+        and is_top_level_browser_navigation
+        and path.startswith("/ui/")
+        and path not in _UI_SHELL_EXEMPT_PATHS
+    ):
+        target = path
+        if request.url.query:
+            target += "?" + request.url.query
+        return RedirectResponse(
+            url="/ui/main?view=" + quote(target, safe=""),
+            status_code=307,
+        )
+    return await call_next(request)
+
+
 register_release_readiness_routes(app)
 register_user_management_routes(app)
 register_navigation_routes(app)
