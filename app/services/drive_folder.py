@@ -237,8 +237,6 @@ def _list_public_folder_with_gdown(folder_url: str) -> list[DriveFolderFile]:
                 use_cookies=use_cookies,
                 skip_download=True,
                 user_agent=_BROWSER_USER_AGENT,
-                timeout=90,
-                retries=2,
             )
         except Exception as exc:
             last_error = exc
@@ -317,8 +315,6 @@ def _download_public_file(item: DriveFolderFile) -> bytes:
                     quiet=True,
                     use_cookies=use_cookies,
                     user_agent=_BROWSER_USER_AGENT,
-                    timeout=90,
-                    retries=2,
                 )
             except Exception as exc:
                 last_error = exc

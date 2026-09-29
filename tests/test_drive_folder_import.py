@@ -166,3 +166,91 @@ def test_public_folder_failure_reports_fallback_detail(monkeypatch):
         assert "gdown blocked" in message
     else:
         raise AssertionError("expected public folder import to fail")
+
+
+def test_gdown_public_file_download_uses_only_supported_v52_arguments(monkeypatch):
+    monkeypatch.setattr(drive_folder.settings, "google_drive_api_key", None)
+    calls = []
+
+    def compatible_download(
+        *,
+        id=None,
+        output=None,
+        quiet=False,
+        use_cookies=True,
+        user_agent=None,
+    ):
+        calls.append(
+            {
+                "id": id,
+                "output": output,
+                "quiet": quiet,
+                "use_cookies": use_cookies,
+                "user_agent": user_agent,
+            }
+        )
+        Path(output).write_bytes(b"%PDF-compatible-download")
+        return output
+
+    monkeypatch.setattr(drive_folder.gdown, "download", compatible_download)
+    item = DriveFolderFile(
+        "file-compatible",
+        "BILLING/evidence.pdf",
+        "application/octet-stream",
+        source="PUBLIC",
+    )
+
+    upload = download_drive_folder_file(item)
+
+    assert upload.file.read() == b"%PDF-compatible-download"
+    assert calls[0]["id"] == "file-compatible"
+    assert "timeout" not in calls[0]
+    assert "retries" not in calls[0]
+
+
+def test_gdown_folder_discovery_uses_only_supported_v52_arguments(monkeypatch):
+    monkeypatch.setattr(drive_folder.settings, "google_drive_api_key", None)
+    monkeypatch.setattr(
+        drive_folder,
+        "_list_public_folder_page",
+        lambda url: (_ for _ in ()).throw(ValueError("embedded view blocked")),
+    )
+    calls = []
+
+    def compatible_download_folder(
+        *,
+        url=None,
+        output=None,
+        quiet=False,
+        use_cookies=True,
+        skip_download=False,
+        user_agent=None,
+    ):
+        calls.append(
+            {
+                "url": url,
+                "output": output,
+                "quiet": quiet,
+                "use_cookies": use_cookies,
+                "skip_download": skip_download,
+                "user_agent": user_agent,
+            }
+        )
+        return [
+            SimpleNamespace(
+                id="file-compatible",
+                path="BILLING/evidence.pdf",
+                local_path="/tmp/evidence.pdf",
+            )
+        ]
+
+    monkeypatch.setattr(drive_folder.gdown, "download_folder", compatible_download_folder)
+
+    rows = list_google_drive_folder_files(
+        "https://drive.google.com/drive/folders/public123?usp=sharing"
+    )
+
+    assert rows[0].file_id == "file-compatible"
+    assert calls[0]["skip_download"] is True
+    assert "timeout" not in calls[0]
+    assert "retries" not in calls[0]
