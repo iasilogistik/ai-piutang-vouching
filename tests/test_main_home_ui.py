@@ -31,7 +31,7 @@ def test_main_home_layout_uses_left_sidebar_and_session_based_dashboard():
 
 
 def test_main_home_sidebar_is_role_aware_and_responsive():
-    response = client.get("/")
+    response = client.get("/ui/main")
 
     assert response.status_code == 200
     assert 'data-roles="ADMIN,AUDITOR"' in response.text
@@ -152,3 +152,37 @@ def test_sidebar_navigation_runtime_hooks_are_present_after_script_fix():
     assert "openWorkspace(href)" in response.text
     assert "workspaceFrame.style.display = 'block'" in response.text
     assert "homeView.style.display = 'none'" in response.text
+
+
+def test_top_right_account_menu_contains_logout_and_session_context():
+    response = client.get("/ui/main")
+
+    assert response.status_code == 200
+    assert 'id="accountMenuBtn"' in response.text
+    assert 'id="accountDropdown"' in response.text
+    assert 'id="accountDropdownName"' in response.text
+    assert 'id="accountDropdownMeta"' in response.text
+    assert 'id="accountLogoutBtn"' in response.text
+    assert ">Logout<" in response.text
+    assert "aria-haspopup=\"true\"" in response.text
+    assert "aria-expanded=\"false\"" in response.text
+
+
+def test_account_menu_logout_reuses_secure_browser_session_cleanup():
+    response = client.get("/ui/main")
+
+    assert response.status_code == 200
+    assert "function logout()" in response.text
+    assert "localStorage.removeItem('auditToken')" in response.text
+    assert "localStorage.removeItem('auditRefreshToken')" in response.text
+    assert "localStorage.removeItem('auditExpiresAt')" in response.text
+    assert "localStorage.removeItem('auditUser')" in response.text
+    assert "document.getElementById('accountLogoutBtn').addEventListener('click', logout)" in response.text
+    assert "window.location.href = '/login'" in response.text
+
+
+def test_root_url_redirects_directly_to_login():
+    response = client.get("/", follow_redirects=False)
+
+    assert response.status_code == 307
+    assert response.headers["location"] == "/login"
