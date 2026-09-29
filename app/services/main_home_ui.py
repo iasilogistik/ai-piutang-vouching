@@ -266,6 +266,7 @@ def main_home_html() -> str:
       <div class="nav-group" data-group>
         <div class="nav-label">Data &amp; Vouching</div>
         <a class="nav-item" href="/ui/upload" data-roles="ADMIN,AUDITOR"><span class="nav-icon">UP</span><span class="nav-text">Upload Center</span></a>
+        <a class="nav-item" href="/ui/reconciliation-vouching" data-roles="ADMIN,AUDITOR"><span class="nav-icon">RV</span><span class="nav-text">Reconciliation &amp; Vouching</span></a>
         <a class="nav-item" href="/ui/control-evidence" data-roles="ADMIN,AUDITOR,REVIEWER,VIEWER"><span class="nav-icon">CE</span><span class="nav-text">Control Evidence</span></a>
         <a class="nav-item" href="/ui/review-queue" data-roles="ADMIN,AUDITOR,REVIEWER"><span class="nav-icon">RQ</span><span class="nav-text">Review Queue</span></a>
         <a class="nav-item" href="/ui/exceptions" data-roles="ADMIN,AUDITOR,REVIEWER"><span class="nav-icon">EX</span><span class="nav-text">Exceptions</span></a>
@@ -372,7 +373,8 @@ def main_home_html() -> str:
             <div><h2>Akses Cepat</h2><p>Menu yang paling sering digunakan dalam proses audit.</p></div>
           </div>
           <div class="quick-grid">
-            <a class="quick-card" href="/ui/upload" data-roles="ADMIN,AUDITOR"><span class="quick-icon">UP</span><div><strong>Upload Center</strong><span>SAP, Billing, SPJ, ZIP &amp; combined files</span></div></a>
+            <a class="quick-card" href="/ui/upload" data-roles="ADMIN,AUDITOR"><span class="quick-icon">UP</span><div><strong>Upload Center</strong><span>Upload SAP, Billing, dan SPJ</span></div></a>
+            <a class="quick-card" href="/ui/reconciliation-vouching" data-roles="ADMIN,AUDITOR"><span class="quick-icon">RV</span><div><strong>Reconciliation &amp; Vouching</strong><span>Match SAP vs Billing dan Billing vs SPJ</span></div></a>
             <a class="quick-card" href="/ui/review-queue" data-roles="ADMIN,AUDITOR,REVIEWER"><span class="quick-icon">RQ</span><div><strong>Review Queue</strong><span>Prioritaskan item REVIEW dan EXCEPTION</span></div></a>
             <a class="quick-card" href="/ui/audit-findings" data-roles="ADMIN,AUDITOR,REVIEWER,VIEWER"><span class="quick-icon">FN</span><div><strong>Audit Findings</strong><span>Kelola siklus hidup temuan audit</span></div></a>
             <a class="quick-card" href="/ui/follow-up" data-roles="ADMIN,AUDITOR,REVIEWER,VIEWER"><span class="quick-icon">FU</span><div><strong>Follow-up</strong><span>Monitor action plan dan verifikasi tindak lanjut</span></div></a>

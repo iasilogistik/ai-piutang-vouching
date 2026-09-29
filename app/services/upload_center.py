@@ -76,6 +76,12 @@ th{background:#f8fafc;color:#475569;font-size:11px}tr:last-child td{border-botto
     </section>
   </div>
 
+  <section class="panel" style="margin-top:16px">
+    <h2>Proses Berikutnya</h2>
+    <p class="subtitle">Setelah SAP, Billing, dan SPJ selesai diupload, lanjutkan ke proses matching dan vouching.</p>
+    <div class="actions"><a href="/ui/reconciliation-vouching" style="display:inline-flex;align-items:center;justify-content:center;min-height:40px;padding:9px 14px;border-radius:10px;background:#059669;color:#fff;font-size:12px;font-weight:800;text-decoration:none">Lanjut ke Reconciliation &amp; Vouching</a></div>
+  </section>
+
   <section class="panel manage">
     <h2>Riwayat Upload &amp; Koreksi</h2>
     <p class="subtitle">Edit metadata/cabang atau delete upload yang salah. Delete akan ditolak bila data sudah dipakai dalam rekonsiliasi, vouching, working paper, finding, atau action plan.</p>

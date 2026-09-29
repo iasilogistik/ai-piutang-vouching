@@ -50,6 +50,7 @@ from app.services.sap_import import import_sap_upload
 from app.services.storage import download_bytes
 from app.services.uat_pasuruan_ui import uat_pasuruan_html
 from app.services.upload_center import register_upload_center_routes
+from app.services.reconciliation_vouching_ui import register_reconciliation_vouching_routes
 from app.services.upload_management import router as upload_management_router
 from app.services.user_management import register_user_management_routes
 from app.services.vouching import ocr_document, overall_result, reconcile_batch, review_vouching_result, save_document, validate_sap_batch, vouch_spj
@@ -88,6 +89,7 @@ register_notification_routes(app)
 register_branch_dashboard_routes(app)
 register_audit_management_dashboard_routes(app)
 register_upload_center_routes(app)
+register_reconciliation_vouching_routes(app)
 register_exception_management_routes(app)
 register_evidence_repository_routes(app)
 register_global_search_routes(app)
