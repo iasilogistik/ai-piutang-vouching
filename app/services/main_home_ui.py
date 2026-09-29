@@ -32,7 +32,7 @@ def main_home_html() -> str:
       --sidebar-soft:#111c31;
       --sidebar-text:#dbeafe;
       --shadow:0 12px 34px rgba(15,23,42,.08);
-      --sidebar-width:292px;
+      --sidebar-width:clamp(272px,19vw,292px);
     }
     * { box-sizing:border-box; }
     html { background:var(--bg); }
@@ -74,7 +74,7 @@ def main_home_html() -> str:
     .system-chip { display:flex; align-items:center; gap:8px; color:#9fb0c7; font-size:11px; }
     .health-dot { width:8px; height:8px; border-radius:50%; background:#94a3b8; box-shadow:0 0 0 4px rgba(148,163,184,.08); }
     .health-dot.ok { background:#34d399; box-shadow:0 0 0 4px rgba(52,211,153,.10); }
-    .main-shell { margin-left:var(--sidebar-width); min-height:100vh; transition:margin-left .22s ease; }
+    .main-shell { margin-left:var(--sidebar-width); width:calc(100% - var(--sidebar-width)); min-height:100vh; transition:margin-left .22s ease,width .22s ease; }
     .topbar {
       position:sticky; top:0; z-index:25; min-height:72px; padding:12px 28px;
       display:flex; align-items:center; gap:14px; justify-content:space-between;
@@ -99,7 +99,7 @@ def main_home_html() -> str:
     }
     .profile-copy strong { display:block; font-size:12px; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .profile-copy span { display:block; color:var(--muted); font-size:10px; margin-top:2px; }
-    .content { padding:28px 32px 48px; max-width:1540px; margin:0 auto; }
+    .content { padding:28px clamp(24px,2.4vw,42px) 48px; max-width:none; width:100%; margin:0; }
     .hero {
       position:relative; overflow:hidden; border-radius:22px; padding:25px 26px; color:#fff;
       background:
@@ -155,11 +155,15 @@ def main_home_html() -> str:
     .step span { color:var(--muted); font-size:9px; }
     .step-status { color:#94a3b8; font-size:9px; font-weight:800; }
     .status-card { margin-top:14px; padding:12px 14px; border-radius:13px; background:#0f172a; color:#dbeafe; font-size:10px; line-height:1.55; white-space:pre-wrap; word-break:break-word; max-height:180px; overflow:auto; }
-    .workspace-frame { display:none; width:100%; height:calc(100vh - 72px); border:0; background:#fff; }
+    .workspace-frame { display:none; width:100%; height:calc(100dvh - 72px); border:0; background:#fff; }
+    body.workspace-open .topbar { min-height:64px; padding:8px 24px; }
+    body.workspace-open .page-title span { display:none; }
+    body.workspace-open .workspace-frame { height:calc(100dvh - 64px); }
+    body.workspace-open .main-shell { overflow:hidden; }
     .role-hidden { display:none !important; }
     .sidebar-overlay { display:none; position:fixed; inset:0; z-index:35; background:rgba(15,23,42,.45); backdrop-filter:blur(2px); }
     body.sidebar-collapsed .sidebar { width:90px; }
-    body.sidebar-collapsed .main-shell { margin-left:90px; }
+    body.sidebar-collapsed .main-shell { margin-left:90px; width:calc(100% - 90px); }
     body.sidebar-collapsed .brand-copy,
     body.sidebar-collapsed .nav-label,
     body.sidebar-collapsed .nav-text,
@@ -175,7 +179,7 @@ def main_home_html() -> str:
     }
     @media (max-width:820px) {
       .sidebar { transform:translateX(-105%); width:min(88vw,320px); }
-      .main-shell { margin-left:0 !important; }
+      .main-shell { margin-left:0 !important; width:100% !important; }
       body.mobile-nav-open .sidebar { transform:translateX(0); }
       body.mobile-nav-open .sidebar-overlay { display:block; }
       .menu-btn { display:grid; }
@@ -482,17 +486,22 @@ async function loadDashboard() {
     setLog('Aplikasi sehat, tetapi ringkasan dashboard belum dapat dimuat.', { detail: error.message });
   }
 }
+function routeOnly(path) {
+  return String(path || '').split(/[?#]/)[0] || '/ui/main';
+}
 function menuLabelForPath(path) {
-  const item = Array.from(document.querySelectorAll('.nav-item')).find(link => link.getAttribute('href') === path);
+  const route = routeOnly(path);
+  const item = Array.from(document.querySelectorAll('.nav-item')).find(link => link.getAttribute('href') === route);
   return item ? (item.querySelector('.nav-text')?.textContent || 'Workspace') : 'Workspace';
 }
 function isWorkspacePath(path) {
   return typeof path === 'string' && path.startsWith('/ui/') && path !== '/ui/main' && !path.startsWith('//');
 }
 function markActiveMenu(path = activeWorkspacePath) {
+  const route = routeOnly(path);
   document.querySelectorAll('.nav-item').forEach(item => {
     const href = item.getAttribute('href');
-    item.classList.toggle('active', href === path || ((path === '/' || path === '/ui/main') && href === '/ui/main'));
+    item.classList.toggle('active', href === route || ((route === '/' || route === '/ui/main') && href === '/ui/main'));
   });
 }
 function updateShellUrl(path, replace = false) {
@@ -505,6 +514,7 @@ function updateShellUrl(path, replace = false) {
 }
 function showHome({ push = true } = {}) {
   activeWorkspacePath = '/ui/main';
+  document.body.classList.remove('workspace-open');
   workspaceFrame.style.display = 'none';
   homeView.style.display = 'block';
   pageTitlePrimary.textContent = 'Command Center';
@@ -518,6 +528,7 @@ function openWorkspace(path, { push = true } = {}) {
     return;
   }
   activeWorkspacePath = path;
+  document.body.classList.add('workspace-open');
   homeView.style.display = 'none';
   workspaceFrame.style.display = 'block';
   if (workspaceFrame.dataset.path !== path) {
@@ -558,13 +569,67 @@ globalSearchForm.addEventListener('submit', event => {
   const target = '/ui/search?q=' + encodeURIComponent(String(query));
   openWorkspace(target);
 });
+function enhanceWorkspaceDocument() {
+  try {
+    const frameWindow = workspaceFrame.contentWindow;
+    const doc = workspaceFrame.contentDocument;
+    if (!frameWindow || !doc || !doc.documentElement) return;
+
+    if (!doc.getElementById('persistent-shell-workspace-style')) {
+      const style = doc.createElement('style');
+      style.id = 'persistent-shell-workspace-style';
+      style.textContent = `
+        html,body{min-width:0!important;width:100%!important}
+        body{font-size:15px!important}
+        header{padding:18px clamp(22px,2.2vw,34px)!important}
+        header h1{font-size:26px!important}
+        main{max-width:none!important;width:100%!important;margin:0!important;padding:24px clamp(22px,2.2vw,34px) 42px!important}
+        main p,main td,main th,main label,main input,main select,main button,main textarea{font-size:14px!important;line-height:1.45}
+        table{max-width:none!important}
+        @media(max-width:900px){
+          header{padding:16px 18px!important}
+          main{padding:18px!important}
+        }
+      `;
+      doc.head.appendChild(style);
+    }
+
+    if (doc.documentElement.dataset.persistentShellBound !== '1') {
+      doc.documentElement.dataset.persistentShellBound = '1';
+      doc.addEventListener('click', event => {
+        const target = event.target instanceof frameWindow.Element
+          ? event.target.closest('a[href]')
+          : null;
+        if (!target) return;
+        const rawHref = target.getAttribute('href') || '';
+        if (!rawHref || rawHref.startsWith('#')) return;
+        let targetUrl;
+        try {
+          targetUrl = new URL(rawHref, frameWindow.location.href);
+        } catch (_) {
+          return;
+        }
+        if (targetUrl.origin !== window.location.origin || !isWorkspacePath(targetUrl.pathname)) return;
+        event.preventDefault();
+        openWorkspace(targetUrl.pathname + targetUrl.search + targetUrl.hash);
+      }, true);
+    }
+  } catch (_) {
+    // Workspace pages are same-origin in production; fail safely if browser policy changes.
+  }
+}
 workspaceFrame.addEventListener('load', () => {
   try {
     const frameLocation = workspaceFrame.contentWindow.location;
     const framePath = frameLocation.pathname + frameLocation.search;
     if (isWorkspacePath(frameLocation.pathname)) {
       workspaceFrame.dataset.path = framePath;
+      activeWorkspacePath = framePath;
+      pageTitlePrimary.textContent = menuLabelForPath(framePath);
+      markActiveMenu(framePath);
+      updateShellUrl(framePath, true);
     }
+    enhanceWorkspaceDocument();
   } catch (_) {
     // Same-origin pages are expected; ignore unexpected browser restrictions.
   }

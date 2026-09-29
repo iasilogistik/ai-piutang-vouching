@@ -66,7 +66,7 @@ def test_main_home_sidebar_persists_workspace_pages_and_has_larger_ratio():
     response = client.get("/ui/main")
 
     assert response.status_code == 200
-    assert "--sidebar-width:292px" in response.text
+    assert "--sidebar-width:clamp(272px,19vw,292px)" in response.text
     assert "min-height:48px" in response.text
     assert "font-size:14px" in response.text
     assert "width:34px; height:34px" in response.text
@@ -87,3 +87,37 @@ def test_main_home_internal_menu_links_open_inside_persistent_shell():
     assert "workspaceFrame.src = path" in response.text
     assert "workspaceFrame.style.display = 'block'" in response.text
     assert "homeView.style.display = 'none'" in response.text
+
+
+def test_main_home_workspace_uses_full_available_width_and_readable_override():
+    response = client.get("/ui/main")
+
+    assert response.status_code == 200
+    assert "--sidebar-width:clamp(272px,19vw,292px)" in response.text
+    assert "max-width:none; width:100%; margin:0" in response.text
+    assert "body.workspace-open .workspace-frame" in response.text
+    assert "persistent-shell-workspace-style" in response.text
+    assert "main{max-width:none!important;width:100%!important" in response.text
+    assert "font-size:14px!important;line-height:1.45" in response.text
+
+
+def test_top_level_browser_ui_navigation_redirects_back_to_persistent_shell():
+    response = client.get(
+        "/ui/audit-findings",
+        headers={"sec-fetch-dest": "document"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 307
+    assert response.headers["location"] == "/ui/main?view=%2Fui%2Faudit-findings"
+
+
+def test_iframe_ui_navigation_is_not_redirected_out_of_workspace():
+    response = client.get(
+        "/ui/dashboard",
+        headers={"sec-fetch-dest": "iframe"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 200
+    assert "Dashboard Cabang" in response.text
