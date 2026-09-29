@@ -377,7 +377,7 @@ function authHeaders() {
 function esc(value) {
   return String(value ?? '-').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 }
-function setLog(text, data) { logEl.textContent = text + (data ? '\n' + JSON.stringify(data, null, 2) : ''); }
+function setLog(text, data) { logEl.textContent = text + (data ? '\\n' + JSON.stringify(data, null, 2) : ''); }
 function metric(label, value, note='') {
   return `<div class="metric"><span>${esc(label)}</span><b>${esc(value)}</b><em>${esc(note)}</em></div>`;
 }

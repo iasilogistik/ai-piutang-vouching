@@ -133,3 +133,22 @@ def test_workspace_child_pages_receive_unified_modern_theme():
     assert "border-radius:14px!important" in response.text
     assert "input:focus,select:focus,textarea:focus" in response.text
     assert "tbody tr:hover" in response.text
+
+
+def test_rendered_main_script_keeps_escaped_newline_and_does_not_break_javascript():
+    response = client.get("/ui/main")
+
+    assert response.status_code == 200
+    assert r"data ? '\n' + JSON.stringify" in response.text
+    assert "data ? '\n' + JSON.stringify" not in response.text
+
+
+def test_sidebar_navigation_runtime_hooks_are_present_after_script_fix():
+    response = client.get("/ui/main")
+
+    assert response.status_code == 200
+    assert "document.querySelectorAll('a[href^=\"/ui/\"]')" in response.text
+    assert "event.preventDefault()" in response.text
+    assert "openWorkspace(href)" in response.text
+    assert "workspaceFrame.style.display = 'block'" in response.text
+    assert "homeView.style.display = 'none'" in response.text
