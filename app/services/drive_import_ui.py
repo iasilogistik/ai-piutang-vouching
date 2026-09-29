@@ -39,7 +39,7 @@ def drive_import_html() -> str:
   <section class="panel">
     <h2>Import dari link</h2>
     <p class="notice">
-      Gunakan link file atau folder Google Drive yang permission-nya <strong>Anyone with the link</strong>. Import folder membutuhkan environment variable <strong>GOOGLE_DRIVE_API_KEY</strong> di Vercel. Untuk banyak dokumen tanpa API key, unggah satu file ZIP ke Google Drive lalu gunakan tombol <strong>Import File/ZIP Link</strong>.
+      Gunakan link file atau folder Google Drive yang permission-nya <strong>Anyone with the link</strong>. Folder publik dengan permission <strong>Anyone with the link</strong> dapat diimpor tanpa API key. Jika <strong>GOOGLE_DRIVE_API_KEY</strong> tersedia, sistem akan menggunakan Drive API sebagai jalur utama dan fallback publik bila diperlukan.
     </p>
     <label for="token">Bearer Token</label>
     <input id="token" type="password" placeholder="Paste access token production" autocomplete="off" />
