@@ -186,3 +186,15 @@ def test_root_url_redirects_directly_to_login():
 
     assert response.status_code == 307
     assert response.headers["location"] == "/login"
+
+
+def test_main_home_adds_reconciliation_vouching_after_upload_center():
+    response = client.get("/ui/main")
+
+    assert response.status_code == 200
+    upload_index = response.text.index("/ui/upload")
+    reconciliation_index = response.text.index("/ui/reconciliation-vouching")
+    control_index = response.text.index("/ui/control-evidence")
+    assert upload_index < reconciliation_index < control_index
+    assert "Reconciliation &amp; Vouching" in response.text
+    assert 'data-roles="ADMIN,AUDITOR"' in response.text

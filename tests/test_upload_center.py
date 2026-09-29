@@ -62,3 +62,11 @@ def test_upload_management_router_defines_correction_endpoints():
     assert "/uploads/recent" in paths
     assert "/uploads/sap/{batch_id}" in paths
     assert "/uploads/evidence/{document_id}" in paths
+
+
+def test_upload_center_points_to_reconciliation_vouching_as_next_process():
+    html = upload_center_html()
+
+    assert "Proses Berikutnya" in html
+    assert "/ui/reconciliation-vouching" in html
+    assert "Lanjut ke Reconciliation &amp; Vouching" in html
