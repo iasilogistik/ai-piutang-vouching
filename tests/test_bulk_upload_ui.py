@@ -1,7 +1,12 @@
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.services.bulk_zip import classify_entry
+from io import BytesIO
+
+import pytest
+from fastapi import UploadFile
+
+from app.services.bulk_zip import ALLOWED_ARCHIVE_EXTENSIONS, classify_entry, iter_bulk_zip_entries
 
 
 client = TestClient(app)
@@ -32,3 +37,17 @@ def test_bulk_zip_auto_classification():
     assert classify_entry("SPJ/SANTOSO SPJ.pdf", "AUTO") == ["SPJ"]
     assert classify_entry("GABUNGAN/SANTOSO 8501735930.pdf", "AUTO") == ["BILLING", "SPJ"]
     assert classify_entry("LAINNYA/unknown.pdf", "AUTO") is None
+
+
+def test_bulk_archive_endpoint_is_registered():
+    response = client.post("/documents/bulk-archive")
+    assert response.status_code == 422
+    assert "document_type must be BILLING or SPJ" not in response.text
+
+
+def test_archive_engine_accepts_rar_extension_and_reports_invalid_rar_cleanly():
+    assert ".zip" in ALLOWED_ARCHIVE_EXTENSIONS
+    assert ".rar" in ALLOWED_ARCHIVE_EXTENSIONS
+    upload = UploadFile(filename="evidence.rar", file=BytesIO(b"not-a-real-rar"))
+    with pytest.raises(ValueError, match="RAR"):
+        iter_bulk_zip_entries(upload)

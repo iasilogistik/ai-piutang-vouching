@@ -30,6 +30,11 @@ button:disabled{opacity:.55;cursor:not-allowed}.danger{background:var(--red)}.se
 .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
 .note{margin:12px 0 0;padding:10px 12px;border-radius:10px;background:#eff6ff;color:#475569;font-size:11px;line-height:1.55}
 .warn{background:#fff7ed;color:#9a3412}
+.evidence-mode{margin:0 0 12px;padding:12px;border:1px solid #dbe5f0;border-radius:12px;background:#f8fbff}
+.evidence-field{display:none}.evidence-field.active{display:block}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.mode-help{margin-top:8px;color:#64748b;font-size:10px;line-height:1.5}
+.archive-help{margin-top:10px;padding:10px 11px;border-radius:10px;background:#fff7ed;color:#9a3412;font-size:10px;line-height:1.5}
 .result{margin-top:16px;background:#0f172a;color:#dbeafe;border-radius:12px;padding:12px;min-height:84px;white-space:pre-wrap;font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}
 .manage{margin-top:16px}
 table{width:100%;border-collapse:separate;border-spacing:0;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#fff}
@@ -76,7 +81,7 @@ main .next-step-action:hover{
 }
 .next-step-arrow{font-size:15px;line-height:1}
 @media(max-width:900px){
-  .scope,.upload-grid{grid-template-columns:1fr}main{padding:16px}.manage{overflow-x:auto}table{min-width:900px}
+  .scope,.upload-grid,.two-col{grid-template-columns:1fr}main{padding:16px}.manage{overflow-x:auto}table{min-width:900px}
   main .next-step-card{grid-template-columns:auto 1fr;padding:16px!important}
   main .next-step-action{grid-column:1/-1;width:100%;margin-top:2px}
 }
@@ -112,13 +117,72 @@ main .next-step-action:hover{
 
     <section class="panel">
       <h2>2. Upload Evidence Billing &amp; SPJ</h2>
-      <p class="subtitle">Pilih beberapa file Billing dan SPJ sekaligus. File dikirim satu-per-satu agar tidak terkena batas payload ZIP besar.</p>
-      <label>File Billing</label>
-      <input id="billingFiles" type="file" multiple accept=".pdf,.png,.jpg,.jpeg">
-      <label>File SPJ</label>
-      <input id="spjFiles" type="file" multiple accept=".pdf,.png,.jpg,.jpeg">
-      <div class="actions"><button id="evidenceUploadBtn" type="button">Upload Evidence</button></div>
-      <div class="note warn">ZIP besar tidak dipakai pada form utama. Log production sebelumnya menunjukkan HTTP 413 sebelum request masuk aplikasi. Gunakan file individual; maksimum aman 4 MB per file untuk upload langsung.</div>
+      <p class="subtitle">Pilih metode sesuai bentuk evidence: Billing saja, SPJ saja, terpisah, satu file gabungan, arsip ZIP/RAR, atau Google Drive.</p>
+
+      <div class="evidence-mode">
+        <label>Metode Upload Evidence</label>
+        <select id="evidenceMode">
+          <option value="SEPARATE">Billing + SPJ terpisah</option>
+          <option value="BILLING">Billing saja</option>
+          <option value="SPJ">SPJ saja</option>
+          <option value="COMBINED">Billing + SPJ dalam 1 file</option>
+          <option value="ARCHIVE">Arsip ZIP / RAR</option>
+          <option value="DRIVE">Google Drive / Share Link</option>
+        </select>
+        <div class="mode-help">Mode dapat diganti kapan saja sebelum upload. Semua proses memakai session login dan scope cabang aktif.</div>
+      </div>
+
+      <div class="evidence-field active" data-mode="SEPARATE">
+        <div class="two-col">
+          <div><label>File Billing</label><input id="billingFiles" type="file" multiple accept=".pdf,.png,.jpg,.jpeg"></div>
+          <div><label>File SPJ</label><input id="spjFiles" type="file" multiple accept=".pdf,.png,.jpg,.jpeg"></div>
+        </div>
+      </div>
+
+      <div class="evidence-field" data-mode="BILLING">
+        <label>File Billing</label>
+        <input id="billingOnlyFiles" type="file" multiple accept=".pdf,.png,.jpg,.jpeg">
+      </div>
+
+      <div class="evidence-field" data-mode="SPJ">
+        <label>File SPJ</label>
+        <input id="spjOnlyFiles" type="file" multiple accept=".pdf,.png,.jpg,.jpeg">
+      </div>
+
+      <div class="evidence-field" data-mode="COMBINED">
+        <label>File Gabungan Billing + SPJ</label>
+        <input id="combinedFiles" type="file" multiple accept=".pdf,.png,.jpg,.jpeg">
+        <div class="mode-help">Satu file yang berisi Billing dan SPJ dicatat sebagai dua evidence yang saling terkait.</div>
+      </div>
+
+      <div class="evidence-field" data-mode="ARCHIVE">
+        <label>File Arsip</label>
+        <input id="archiveFile" type="file" accept=".zip,.rar">
+        <label>Mode Isi Arsip</label>
+        <select id="archiveMode">
+          <option value="AUTO">AUTO — klasifikasi dari folder/nama file</option>
+          <option value="BILLING">Semua sebagai Billing</option>
+          <option value="SPJ">Semua sebagai SPJ</option>
+          <option value="COMBINED">Semua sebagai Billing + SPJ gabungan</option>
+        </select>
+        <div class="archive-help">Upload langsung ZIP/RAR dibatasi 4 MB agar tidak terkena HTTP 413. Untuk arsip lebih besar, gunakan Google Drive. RAR diproses bila extractor RAR tersedia di runtime; jika tidak, sistem memberi pesan khusus untuk memakai ZIP atau file individual.</div>
+      </div>
+
+      <div class="evidence-field" data-mode="DRIVE">
+        <label>Google Drive / Share Link</label>
+        <input id="driveUrl" type="url" placeholder="https://drive.google.com/file/d/... atau .../drive/folders/...">
+        <label>Mode Import</label>
+        <select id="driveMode">
+          <option value="AUTO">AUTO — klasifikasi dari nama file/folder</option>
+          <option value="BILLING">Sebagai Billing</option>
+          <option value="SPJ">Sebagai SPJ</option>
+          <option value="COMBINED">Sebagai Billing + SPJ gabungan</option>
+        </select>
+        <div class="mode-help">Link file mendukung PDF/JPG/PNG/ZIP/RAR sampai 75 MB. Link folder Google Drive diproses sebagai folder bila Drive API key tersedia.</div>
+      </div>
+
+      <div class="actions"><button id="evidenceUploadBtn" type="button">Upload / Import Evidence</button></div>
+      <div class="note">File langsung diproses satu-per-satu. Arsip dan Google Drive memakai engine klasifikasi Billing/SPJ/Combined yang sama.</div>
       <div class="result" id="evidenceLog">Belum ada upload evidence.</div>
     </section>
   </div>
@@ -162,6 +226,7 @@ const branchEl=document.getElementById('branch');
 const sessionEl=document.getElementById('session');
 const sapLog=document.getElementById('sapLog');
 const evidenceLog=document.getElementById('evidenceLog');
+const evidenceModeEl=document.getElementById('evidenceMode');
 const manageLog=document.getElementById('manageLog');
 const historyRows=document.getElementById('historyRows');
 
@@ -208,28 +273,95 @@ async function uploadSap(){
   await loadHistory();
 }
 async function uploadEvidenceFile(file,type){
-  if(file.size>MAX_DIRECT_FILE_BYTES)throw new Error(file.name+' melebihi 4 MB.');
+  if(file.size>MAX_DIRECT_FILE_BYTES)throw new Error(file.name+' melebihi 4 MB. Gunakan Google Drive untuk file lebih besar.');
   const fd=new FormData();fd.append('file',file);
   const endpoint=endpointWithQuery('/documents/'+type,{branch:branch()});
   const response=await fetch(endpoint,{method:'POST',headers:authHeaders(),body:fd});
   return responseBody(response);
 }
-async function uploadEvidence(){
-  const billing=[...document.getElementById('billingFiles').files];
-  const spj=[...document.getElementById('spjFiles').files];
-  if(!billing.length&&!spj.length)throw new Error('Pilih minimal satu file Billing atau SPJ.');
-  const jobs=[...billing.map(file=>({file,type:'BILLING'})),...spj.map(file=>({file,type:'SPJ'}))];
+async function uploadCombinedFile(file){
+  if(file.size>MAX_DIRECT_FILE_BYTES)throw new Error(file.name+' melebihi 4 MB. Gunakan Google Drive untuk file lebih besar.');
+  const fd=new FormData();fd.append('file',file);
+  const endpoint=endpointWithQuery('/documents/combined',{branch:branch()});
+  const response=await fetch(endpoint,{method:'POST',headers:authHeaders(),body:fd});
+  return responseBody(response);
+}
+async function uploadArchive(){
+  const file=document.getElementById('archiveFile').files[0];
+  if(!file)throw new Error('Pilih file ZIP atau RAR terlebih dahulu.');
+  if(file.size>MAX_DIRECT_FILE_BYTES)throw new Error('Arsip melebihi 4 MB. Gunakan Google Drive untuk arsip besar.');
+  const ext=(file.name.split('.').pop()||'').toLowerCase();
+  if(!['zip','rar'].includes(ext))throw new Error('Arsip harus berformat ZIP atau RAR.');
+  const fd=new FormData();fd.append('file',file);
+  const endpoint=endpointWithQuery('/documents/bulk-archive',{mode:document.getElementById('archiveMode').value,branch:branch()});
+  const response=await fetch(endpoint,{method:'POST',headers:authHeaders(),body:fd});
+  return responseBody(response);
+}
+async function importDrive(){
+  const url=document.getElementById('driveUrl').value.trim();
+  if(!url)throw new Error('Masukkan Google Drive / share link terlebih dahulu.');
+  const fd=new FormData();
+  fd.append('url',url);
+  fd.append('mode',document.getElementById('driveMode').value);
+  if(branch())fd.append('branch',branch());
+  const endpoint=/\/folders\//i.test(url)?'/documents/drive-folder-import':'/documents/drive-import';
+  const response=await fetch(endpoint,{method:'POST',headers:authHeaders(),body:fd});
+  return responseBody(response);
+}
+async function uploadJobs(jobs){
   const results=[];
   for(let index=0;index<jobs.length;index++){
     const job=jobs[index];
     log(evidenceLog,'Mengupload '+(index+1)+'/'+jobs.length+': '+job.file.name);
     try{
-      const body=await uploadEvidenceFile(job.file,job.type);
-      results.push({file:job.file.name,type:job.type,status:'SUCCESS',document_id:body.document_id});
+      const body=job.type==='COMBINED'
+        ? await uploadCombinedFile(job.file)
+        : await uploadEvidenceFile(job.file,job.type);
+      results.push({
+        file:job.file.name,
+        type:job.type,
+        status:'SUCCESS',
+        document_id:body.document_id||null,
+        billing_document_id:body.billing_document?.document_id||null,
+        spj_document_id:body.spj_document?.document_id||null
+      });
     }catch(error){
       results.push({file:job.file.name,type:job.type,status:'ERROR',error:error.message});
     }
   }
+  return results;
+}
+function renderEvidenceMode(){
+  const selected=evidenceModeEl.value;
+  document.querySelectorAll('.evidence-field').forEach(field=>field.classList.toggle('active',field.dataset.mode===selected));
+}
+async function uploadEvidence(){
+  const mode=evidenceModeEl.value;
+  if(mode==='ARCHIVE'){
+    log(evidenceLog,'Mengupload arsip ZIP/RAR...');
+    const body=await uploadArchive();
+    log(evidenceLog,'UPLOAD ARSIP SELESAI',body);
+    await loadHistory();
+    return;
+  }
+  if(mode==='DRIVE'){
+    log(evidenceLog,'Mengimpor evidence dari Google Drive...');
+    const body=await importDrive();
+    log(evidenceLog,'IMPORT GOOGLE DRIVE SELESAI',body);
+    await loadHistory();
+    return;
+  }
+  let jobs=[];
+  if(mode==='SEPARATE'){
+    const billing=[...document.getElementById('billingFiles').files];
+    const spj=[...document.getElementById('spjFiles').files];
+    jobs=[...billing.map(file=>({file,type:'BILLING'})),...spj.map(file=>({file,type:'SPJ'}))];
+  }
+  if(mode==='BILLING')jobs=[...document.getElementById('billingOnlyFiles').files].map(file=>({file,type:'BILLING'}));
+  if(mode==='SPJ')jobs=[...document.getElementById('spjOnlyFiles').files].map(file=>({file,type:'SPJ'}));
+  if(mode==='COMBINED')jobs=[...document.getElementById('combinedFiles').files].map(file=>({file,type:'COMBINED'}));
+  if(!jobs.length)throw new Error('Pilih minimal satu file evidence.');
+  const results=await uploadJobs(jobs);
   const success=results.filter(row=>row.status==='SUCCESS').length;
   log(evidenceLog,'UPLOAD EVIDENCE SELESAI - '+success+'/'+results.length+' berhasil',results);
   await loadHistory();
@@ -296,6 +428,9 @@ document.getElementById('sapUploadBtn').addEventListener('click',async event=>{
   const btn=event.currentTarget;btn.disabled=true;
   try{await uploadSap();}catch(error){log(sapLog,'UPLOAD SAP GAGAL: '+error.message);}finally{btn.disabled=false;}
 });
+evidenceModeEl.addEventListener('change',renderEvidenceMode);
+renderEvidenceMode();
+
 document.getElementById('evidenceUploadBtn').addEventListener('click',async event=>{
   const btn=event.currentTarget;btn.disabled=true;
   try{await uploadEvidence();}catch(error){log(evidenceLog,'UPLOAD EVIDENCE GAGAL: '+error.message);}finally{btn.disabled=false;}

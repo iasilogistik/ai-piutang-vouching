@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.services.drive_link import extract_google_drive_file_id, is_google_drive_folder_link
+from app.services.drive_link import ALLOWED_SHARE_LINK_EXTENSIONS, extract_google_drive_file_id, is_google_drive_folder_link
 
 
 client = TestClient(app)
@@ -34,3 +34,7 @@ def test_drive_import_endpoint_order_not_caught_by_document_type_route():
 
     assert response.status_code == 422
     assert "document_type must be BILLING or SPJ" not in response.text
+
+
+def test_drive_share_links_allow_rar_archives():
+    assert ".rar" in ALLOWED_SHARE_LINK_EXTENSIONS
