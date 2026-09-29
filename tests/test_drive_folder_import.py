@@ -7,6 +7,7 @@ from app.main import app
 from app.services import drive_folder
 from app.services.drive_folder import (
     DriveFolderFile,
+    _parse_public_folder_html,
     download_drive_folder_file,
     extract_google_drive_folder_id,
     is_supported_drive_folder_file,
@@ -57,6 +58,11 @@ def test_drive_folder_import_endpoint_order_not_caught_by_document_type_route():
 def test_public_folder_fallback_does_not_require_api_key(monkeypatch):
     monkeypatch.setattr(drive_folder.settings, "google_drive_api_key", None)
     monkeypatch.setattr(
+        drive_folder,
+        "_list_public_folder_page",
+        lambda url: (_ for _ in ()).throw(ValueError("embedded view blocked")),
+    )
+    monkeypatch.setattr(
         drive_folder.gdown,
         "download_folder",
         lambda **kwargs: [
@@ -93,3 +99,70 @@ def test_public_folder_file_download_uses_gdown_without_api_key(monkeypatch):
 
     assert upload.filename == "invoice.pdf"
     assert upload.file.read() == b"%PDF-public-evidence"
+
+
+def test_public_embedded_folder_page_parser_discovers_files_and_subfolders():
+    html = """
+    <html><body>
+      <a href="https://drive.google.com/file/d/1AAAAAAAAAAAAAAAAAAAAAAAAA/view">invoice-01.pdf</a>
+      <a href="https://drive.google.com/drive/folders/1BBBBBBBBBBBBBBBBBBBBBBBBB">SPJ</a>
+    </body></html>
+    """
+
+    files, folders = _parse_public_folder_html(html, prefix="BILLING")
+
+    assert len(files) == 1
+    assert files[0].file_id == "1AAAAAAAAAAAAAAAAAAAAAAAAA"
+    assert files[0].name == "BILLING/invoice-01.pdf"
+    assert files[0].source == "PUBLIC"
+    assert folders == [("1BBBBBBBBBBBBBBBBBBBBBBBBB", "SPJ")]
+
+
+def test_public_folder_page_is_preferred_before_gdown(monkeypatch):
+    monkeypatch.setattr(drive_folder.settings, "google_drive_api_key", None)
+    expected = [
+        DriveFolderFile(
+            "file-page",
+            "BILLING/from-page.pdf",
+            "application/octet-stream",
+            source="PUBLIC",
+        )
+    ]
+    monkeypatch.setattr(drive_folder, "_list_public_folder_page", lambda url: expected)
+
+    def fail_gdown(**kwargs):
+        raise AssertionError("gdown must not run when embedded public page succeeds")
+
+    monkeypatch.setattr(drive_folder.gdown, "download_folder", fail_gdown)
+
+    rows = list_google_drive_folder_files(
+        "https://drive.google.com/drive/folders/public123?usp=sharing"
+    )
+
+    assert rows == expected
+
+
+def test_public_folder_failure_reports_fallback_detail(monkeypatch):
+    monkeypatch.setattr(drive_folder.settings, "google_drive_api_key", None)
+    monkeypatch.setattr(
+        drive_folder,
+        "_list_public_folder_page",
+        lambda url: (_ for _ in ()).throw(ValueError("embedded blocked")),
+    )
+    monkeypatch.setattr(
+        drive_folder,
+        "_list_public_folder_with_gdown",
+        lambda url: (_ for _ in ()).throw(ValueError("gdown blocked")),
+    )
+
+    try:
+        list_google_drive_folder_files(
+            "https://drive.google.com/drive/folders/public123?usp=sharing"
+        )
+    except ValueError as exc:
+        message = str(exc)
+        assert "Fallback detail" in message
+        assert "embedded blocked" in message
+        assert "gdown blocked" in message
+    else:
+        raise AssertionError("expected public folder import to fail")

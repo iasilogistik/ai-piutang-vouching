@@ -114,3 +114,10 @@ def test_upload_center_explains_public_drive_folder_without_api_key():
     html = upload_center_html()
     assert "Anyone with the link" in html
     assert "tanpa API key" in html
+
+
+def test_upload_center_explains_multi_fallback_drive_folder_import():
+    html = upload_center_html()
+    assert "public folder view" in html
+    assert "fallback downloader" in html
+    assert "API key tidak wajib" in html
