@@ -36,7 +36,54 @@ table{width:100%;border-collapse:separate;border-spacing:0;border:1px solid var(
 th,td{padding:10px 11px;text-align:left;border-bottom:1px solid #edf2f7;font-size:12px;vertical-align:top}
 th{background:#f8fafc;color:#475569;font-size:11px}tr:last-child td{border-bottom:0}
 .kind{font-weight:850;color:#1d4ed8}.muted{color:var(--muted)}
-@media(max-width:900px){.scope,.upload-grid{grid-template-columns:1fr}main{padding:16px}.manage{overflow-x:auto}table{min-width:900px}}
+main .next-step-card{
+  margin-top:16px!important;
+  display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:16px;
+  padding:18px 20px!important;
+  background:linear-gradient(135deg,#f8fbff 0%,#f1f5f9 100%)!important;
+  border:1px solid #d9e5f2!important;border-radius:18px!important;
+  box-shadow:0 8px 22px rgba(15,23,42,.045)!important;
+}
+.next-step-icon{
+  width:46px;height:46px;border-radius:14px;display:grid;place-items:center;
+  background:#e8f1ff;color:#1d4ed8;font-size:12px;font-weight:900;letter-spacing:.04em;
+  border:1px solid #d6e6ff;
+}
+.next-step-content{min-width:0}.next-step-kicker{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px}
+.next-step-badge{
+  display:inline-flex;align-items:center;min-height:24px;padding:4px 8px;border-radius:999px;
+  background:#dbeafe;color:#1d4ed8;font-size:9px;font-weight:900;letter-spacing:.07em;text-transform:uppercase;
+}
+.next-step-hint{color:#64748b;font-size:10px;font-weight:700}
+.next-step-card h2{margin:0!important;font-size:16px!important;letter-spacing:-.2px;color:#172033!important}
+.next-step-card p{margin:6px 0 0!important;max-width:760px;color:#64748b!important;font-size:11px!important;line-height:1.55!important}
+.next-step-tags{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.next-step-tag{
+  display:inline-flex;align-items:center;min-height:26px;padding:4px 8px;border-radius:8px;
+  background:#fff;color:#475569;font-size:9px;font-weight:750;border:1px solid #e2e8f0;
+}
+main .next-step-action{
+  min-height:42px;padding:10px 16px!important;border-radius:11px!important;
+  display:inline-flex;align-items:center;justify-content:center;gap:9px;white-space:nowrap;
+  background:linear-gradient(135deg,#2563eb,#1d4ed8)!important;
+  color:#fff!important;text-decoration:none!important;font-size:11px!important;font-weight:850!important;
+  border:1px solid #1d4ed8!important;box-shadow:0 7px 16px rgba(37,99,235,.16)!important;
+  transition:transform .16s ease,box-shadow .16s ease,filter .16s ease;
+}
+main .next-step-action:hover{
+  color:#fff!important;text-decoration:none!important;transform:translateY(-1px);
+  box-shadow:0 9px 20px rgba(37,99,235,.20)!important;filter:brightness(1.02);
+}
+.next-step-arrow{font-size:15px;line-height:1}
+@media(max-width:900px){
+  .scope,.upload-grid{grid-template-columns:1fr}main{padding:16px}.manage{overflow-x:auto}table{min-width:900px}
+  main .next-step-card{grid-template-columns:auto 1fr;padding:16px!important}
+  main .next-step-action{grid-column:1/-1;width:100%;margin-top:2px}
+}
+@media(max-width:560px){
+  main .next-step-card{grid-template-columns:1fr;gap:12px}
+  .next-step-icon{width:42px;height:42px}
+}
 </style>
 </head>
 <body>
@@ -76,10 +123,26 @@ th{background:#f8fafc;color:#475569;font-size:11px}tr:last-child td{border-botto
     </section>
   </div>
 
-  <section class="panel" style="margin-top:16px">
-    <h2>Proses Berikutnya</h2>
-    <p class="subtitle">Setelah SAP, Billing, dan SPJ selesai diupload, lanjutkan ke proses matching dan vouching.</p>
-    <div class="actions"><a href="/ui/reconciliation-vouching" style="display:inline-flex;align-items:center;justify-content:center;min-height:40px;padding:9px 14px;border-radius:10px;background:#059669;color:#fff;font-size:12px;font-weight:800;text-decoration:none">Lanjut ke Reconciliation &amp; Vouching</a></div>
+  <section class="next-step-card" aria-labelledby="nextStepTitle">
+    <div class="next-step-icon">03</div>
+    <div class="next-step-content">
+      <div class="next-step-kicker">
+        <span class="next-step-badge">Tahap 3</span>
+        <span class="next-step-hint">Proses Berikutnya · setelah upload selesai</span>
+      </div>
+      <h2 id="nextStepTitle">Reconciliation &amp; Vouching</h2>
+      <p>Pastikan data SAP, Billing, dan SPJ sudah lengkap. Lanjutkan ke proses matching otomatis untuk melihat hasil match, review, exception, dan not found.</p>
+      <div class="next-step-tags">
+        <span class="next-step-tag">Validasi SAP</span>
+        <span class="next-step-tag">SAP ↔ Billing</span>
+        <span class="next-step-tag">Billing ↔ SPJ</span>
+        <span class="next-step-tag">Review Exception</span>
+      </div>
+    </div>
+    <a class="next-step-action" href="/ui/reconciliation-vouching">
+      <span>Lanjut ke Reconciliation &amp; Vouching</span>
+      <span class="next-step-arrow" aria-hidden="true">→</span>
+    </a>
   </section>
 
   <section class="panel manage">
