@@ -20,6 +20,7 @@ def test_extract_google_drive_folder_id_from_query_id():
 def test_supported_drive_folder_file_detection():
     assert is_supported_drive_folder_file(DriveFolderFile("1", "dokumen.pdf", "application/pdf"))
     assert is_supported_drive_folder_file(DriveFolderFile("2", "foto-stempel.jpg", "application/octet-stream"))
+    assert is_supported_drive_folder_file(DriveFolderFile("4", "evidence.rar", "application/vnd.rar"))
     assert not is_supported_drive_folder_file(DriveFolderFile("3", "catatan.txt", "text/plain"))
 
 

@@ -5,15 +5,23 @@ from app.services.upload_center import upload_center_html
 from app.services.upload_management import router as upload_management_router
 
 
-def test_upload_center_has_two_separate_upload_flows():
+def test_upload_center_has_flexible_evidence_upload_modes():
     html = upload_center_html()
     assert "1. Upload Data SAP" in html
     assert "2. Upload Evidence Billing &amp; SPJ" in html
-    assert 'id="sapFile"' in html
+    assert 'id="evidenceMode"' in html
+    assert "Billing saja" in html
+    assert "SPJ saja" in html
+    assert "Billing + SPJ terpisah" in html
+    assert "Billing + SPJ dalam 1 file" in html
+    assert "Arsip ZIP / RAR" in html
+    assert "Google Drive / Share Link" in html
     assert 'id="billingFiles"' in html
     assert 'id="spjFiles"' in html
-    assert "multiple" in html
-    assert "Bulk ZIP" not in html
+    assert 'id="combinedFiles"' in html
+    assert 'id="archiveFile"' in html
+    assert 'accept=".zip,.rar"' in html
+    assert 'id="driveUrl"' in html
 
 
 def test_upload_center_uses_login_session_and_branch_scope():
@@ -25,14 +33,20 @@ def test_upload_center_uses_login_session_and_branch_scope():
     assert "branchEl.disabled=true" in html
 
 
-def test_upload_center_handles_413_and_uploads_evidence_individually():
+def test_upload_center_handles_individual_combined_archive_and_drive_evidence():
     html = upload_center_html()
     assert "response.status===413" in html
-    assert "HTTP 413" in html
     assert "MAX_DIRECT_FILE_BYTES=4*1024*1024" in html
     assert "uploadEvidenceFile" in html
-    assert "for(let index=0;index<jobs.length;index++)" in html
-    assert "ZIP besar tidak dipakai pada form utama" in html
+    assert "uploadCombinedFile" in html
+    assert "uploadArchive" in html
+    assert "importDrive" in html
+    assert "/documents/combined" in html
+    assert "/documents/bulk-archive" in html
+    assert "/documents/drive-import" in html
+    assert "/documents/drive-folder-import" in html
+    assert "archiveMode" in html
+    assert "driveMode" in html
 
 
 def test_upload_center_has_edit_delete_history_management():
@@ -86,3 +100,11 @@ def test_upload_center_next_step_card_is_compact_and_eye_friendly():
     assert "background:linear-gradient(135deg,#f8fbff 0%,#f1f5f9 100%)!important" in html
     assert "color:#fff!important" in html
     assert "background:linear-gradient(135deg,#2563eb,#1d4ed8)!important" in html
+
+
+def test_upload_center_keeps_bearer_token_hidden_for_all_new_modes():
+    html = upload_center_html()
+    assert "Bearer Token" not in html
+    assert 'id="token"' not in html
+    assert "authHeaders()" in html
+    assert "localStorage.getItem('auditToken')" in html

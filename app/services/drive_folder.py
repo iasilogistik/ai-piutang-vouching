@@ -17,8 +17,10 @@ SUPPORTED_DRIVE_MIME_TYPES = {
     "image/png": ".png",
     "application/zip": ".zip",
     "application/x-zip-compressed": ".zip",
+    "application/vnd.rar": ".rar",
+    "application/x-rar-compressed": ".rar",
 }
-SUPPORTED_DRIVE_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".zip"}
+SUPPORTED_DRIVE_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".zip", ".rar"}
 MAX_DRIVE_FOLDER_FILES = 200
 MAX_DRIVE_FILE_BYTES = 75 * 1024 * 1024
 
@@ -115,7 +117,7 @@ def download_drive_folder_file(item: DriveFolderFile) -> MemoryUpload:
     if item.size is not None and item.size > MAX_DRIVE_FILE_BYTES:
         raise ValueError(f"{item.name} is larger than the allowed 75 MB limit")
     if not is_supported_drive_folder_file(item):
-        raise ValueError(f"{item.name} is not a supported PDF/JPG/PNG/ZIP document")
+        raise ValueError(f"{item.name} is not a supported PDF/JPG/PNG/ZIP/RAR document")
 
     with httpx.Client(timeout=90.0, follow_redirects=True) as client:
         response = client.get(
