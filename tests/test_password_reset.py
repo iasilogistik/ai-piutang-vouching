@@ -35,3 +35,15 @@ def test_password_update_requires_reset_token():
 
 def test_password_reset_redirect_url_defaults_to_production():
     assert password_reset_redirect_url() == "https://ai-piutang-vouching.vercel.app/reset-password"
+
+
+def test_password_recovery_pages_share_modern_auth_theme():
+    forgot = client.get("/forgot-password")
+    reset = client.get("/reset-password")
+
+    for response in (forgot, reset):
+        assert response.status_code == 200
+        assert 'class="auth-page"' in response.text
+        assert 'class="auth-shell"' in response.text
+        assert 'class="auth-hero"' in response.text
+        assert "--auth-primary:#2563eb" in response.text

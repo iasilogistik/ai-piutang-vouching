@@ -1,68 +1,60 @@
-def _register_user_management_once() -> None:
-    """Register user-management routes when /login is first opened.
+from app.services.auth_theme import auth_hero_html, auth_theme_css
 
-    This keeps the existing main.py route surface stable while exposing the
-    admin screen after the authentication sprint is enabled.
-    """
+
+def _register_user_management_once() -> None:
+    """Register user-management routes when /login is first opened."""
     try:
         from app.main import app
         from app.services.user_management import register_user_management_routes
 
         register_user_management_routes(app)
     except Exception:
-        # The login page must remain available even if optional admin routes fail
-        # to register during local development or partial deployments.
         return
 
 
 def login_html() -> str:
     _register_user_management_once()
-    return """
+    html = """
 <!doctype html>
 <html lang="id">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Login - AI Piutang Vouching</title>
-  <style>
-    :root { --bg:#f6f8fb; --card:#fff; --line:#d9e0ea; --text:#182433; --muted:#64748b; --blue:#1f6feb; --red:#b3261e; --green:#188038; }
-    * { box-sizing:border-box; }
-    body { margin:0; min-height:100vh; font-family:Arial, Helvetica, sans-serif; background:linear-gradient(145deg,#0f172a 0%,#1e293b 42%,#f6f8fb 42%); color:var(--text); display:flex; align-items:center; justify-content:center; padding:24px; }
-    .card { width:100%; max-width:440px; background:var(--card); border:1px solid var(--line); border-radius:16px; box-shadow:0 18px 45px rgba(15,23,42,.25); padding:24px; }
-    h1 { margin:0; font-size:24px; color:#0f172a; }
-    p { color:var(--muted); line-height:1.45; }
-    label { display:block; margin-top:14px; margin-bottom:6px; color:var(--muted); font-size:13px; }
-    input { width:100%; padding:11px 12px; border:1px solid var(--line); border-radius:10px; font:inherit; }
-    button { width:100%; margin-top:18px; padding:12px; border:0; border-radius:10px; background:var(--blue); color:#fff; font-weight:700; cursor:pointer; }
-    button:disabled { opacity:.6; cursor:not-allowed; }
-    a { color:var(--blue); font-weight:700; text-decoration:none; }
-    .msg { margin-top:14px; padding:10px; border-radius:10px; font-size:14px; display:none; }
-    .err { display:block; background:#fef2f2; color:var(--red); border:1px solid #fecaca; }
-    .ok { display:block; background:#f0fdf4; color:var(--green); border:1px solid #bbf7d0; }
-    .hint { font-size:12px; color:var(--muted); margin-top:12px; }
-  </style>
+  <style>__AUTH_THEME__</style>
 </head>
-<body>
-  <main class="card">
-    <h1>AI Piutang Vouching</h1>
-    <p>Login menggunakan akun aplikasi. Setelah berhasil, sistem langsung masuk ke Command Center dengan menu sidebar di sebelah kiri sesuai role.</p>
-    <form id="loginForm">
-      <label for="email">Email</label>
-      <input id="email" type="email" autocomplete="username" placeholder="nama@perusahaan.co.id" required />
-      <label for="password">Password</label>
-      <input id="password" type="password" autocomplete="current-password" placeholder="Password" required />
-      <button id="loginBtn" type="submit">Login</button>
-    </form>
-    <div id="message" class="msg"></div>
-    <p class="hint"><a href="/forgot-password">Lupa Password?</a></p>
-    <p class="hint">Menu dashboard, audit, data vouching, monitoring, dan administrasi akan tampil di sidebar sesuai role setelah login.</p>
-    <button id="logoutBtn" type="button" style="background:#475569;">Logout / Hapus Token Browser</button>
-  </main>
+<body class="auth-page">
+  <div class="auth-shell">
+    __AUTH_HERO__
+    <section class="auth-panel">
+      <main class="auth-card">
+        <span class="auth-badge">Authorized Access</span>
+        <h2>Masuk ke Command Center</h2>
+        <p class="auth-copy">Gunakan akun aplikasi untuk mengakses dashboard, audit workflow, vouching, evidence, dan monitoring sesuai role Anda. Setelah login, menu sidebar di sebelah kiri tetap tampil saat berpindah halaman.</p>
+        <form id="loginForm">
+          <label for="email">Email</label>
+          <input id="email" type="email" autocomplete="username" placeholder="nama@perusahaan.co.id" required />
+          <label for="password">Password</label>
+          <input id="password" type="password" autocomplete="current-password" placeholder="Masukkan password" required />
+          <button id="loginBtn" class="auth-primary" type="submit">Masuk ke Aplikasi</button>
+        </form>
+        <div id="message" class="auth-message"></div>
+        <div class="auth-links">
+          <a href="/forgot-password">Lupa password?</a>
+          <span class="auth-note">Menu akan menyesuaikan role &amp; scope cabang.</span>
+        </div>
+        <div class="auth-trust">
+          <div>ROLE BASED</div><div>BRANCH AWARE</div><div>AUDIT TRAIL</div>
+        </div>
+        <button id="logoutBtn" class="auth-secondary" type="button">Logout / Hapus Sesi Browser</button>
+      </main>
+    </section>
+  </div>
 <script>
 const form = document.getElementById('loginForm');
 const btn = document.getElementById('loginBtn');
 const message = document.getElementById('message');
-function show(text, ok) { message.textContent = text; message.className = `msg ${ok ? 'ok' : 'err'}`; }
+function show(text, ok) { message.textContent = text; message.className = 'auth-message ' + (ok ? 'ok' : 'error'); }
 function storeSession(data) {
   localStorage.setItem('auditToken', data.access_token || '');
   if (data.refresh_token) localStorage.setItem('auditRefreshToken', data.refresh_token);
@@ -82,11 +74,9 @@ async function resolvePostLoginDestination(accessToken) {
   const next = requestedNextPath();
   if (next) return next;
   try {
-    const response = await fetch('/auth/me', { headers: { Authorization: `Bearer ${accessToken}` } });
+    const response = await fetch('/auth/me', { headers: { Authorization: 'Bearer ' + accessToken } });
     const profile = await response.json();
-    if (response.ok && profile.role) {
-      return '/ui/main';
-    }
+    if (response.ok && profile.role) return '/ui/main';
   } catch (error) {
     return '/ui/main';
   }
@@ -106,7 +96,7 @@ form.addEventListener('submit', async (event) => {
     if (!response.ok) throw new Error(body.detail || JSON.stringify(body));
     storeSession(body);
     const destination = await resolvePostLoginDestination(body.access_token || localStorage.getItem('auditToken') || '');
-    show(`Login berhasil. Mengarahkan ke halaman tujuan...`, true);
+    show('Login berhasil. Membuka Command Center...', true);
     window.location.replace(destination);
   } catch (error) {
     show(error.message || 'Login gagal.', false);
@@ -119,9 +109,19 @@ document.getElementById('logoutBtn').addEventListener('click', () => {
   localStorage.removeItem('auditRefreshToken');
   localStorage.removeItem('auditExpiresAt');
   localStorage.removeItem('auditUser');
-  show('Token browser sudah dihapus.', true);
+  show('Sesi browser sudah dihapus.', true);
 });
 </script>
 </body>
 </html>
 """
+    return (
+        html.replace("__AUTH_THEME__", auth_theme_css())
+        .replace(
+            "__AUTH_HERO__",
+            auth_hero_html(
+                title="Satu workspace untuk seluruh siklus audit piutang.",
+                subtitle="Dari upload data hingga vouching, evidence, findings, follow-up, dan monitoring—semuanya berada dalam satu Command Center yang terstruktur.",
+            ),
+        )
+    )
