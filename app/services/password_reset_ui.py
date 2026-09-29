@@ -4,6 +4,7 @@ from fastapi import APIRouter, Form, Header, HTTPException
 from fastapi.responses import HTMLResponse
 
 from app.services.auth_gateway import password_reset_redirect_url, request_password_reset, update_recovery_password
+from app.services.auth_theme import auth_hero_html, auth_theme_css
 
 router = APIRouter()
 _REGISTERED = False
@@ -11,117 +12,114 @@ _REGISTERED = False
 
 def forgot_password_html() -> str:
     redirect_to = password_reset_redirect_url()
-    return f"""
+    html = """
 <!doctype html>
 <html lang="id">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Lupa Password - AI Piutang Vouching</title>
-  <style>
-    :root {{ --bg:#f6f8fb; --card:#fff; --line:#d9e0ea; --text:#182433; --muted:#64748b; --blue:#1f6feb; --red:#b3261e; --green:#188038; }}
-    * {{ box-sizing:border-box; }}
-    body {{ margin:0; min-height:100vh; font-family:Arial, Helvetica, sans-serif; background:linear-gradient(145deg,#0f172a 0%,#1e293b 42%,#f6f8fb 42%); color:var(--text); display:flex; align-items:center; justify-content:center; padding:24px; }}
-    .card {{ width:100%; max-width:460px; background:var(--card); border:1px solid var(--line); border-radius:16px; box-shadow:0 18px 45px rgba(15,23,42,.25); padding:24px; }}
-    h1 {{ margin:0; font-size:24px; color:#0f172a; }}
-    p {{ color:var(--muted); line-height:1.45; }}
-    label {{ display:block; margin-top:14px; margin-bottom:6px; color:var(--muted); font-size:13px; }}
-    input {{ width:100%; padding:11px 12px; border:1px solid var(--line); border-radius:10px; font:inherit; }}
-    button {{ width:100%; margin-top:18px; padding:12px; border:0; border-radius:10px; background:var(--blue); color:#fff; font-weight:700; cursor:pointer; }}
-    a {{ color:var(--blue); font-weight:700; text-decoration:none; }}
-    .msg {{ margin-top:14px; padding:10px; border-radius:10px; font-size:14px; display:none; }}
-    .err {{ display:block; background:#fef2f2; color:var(--red); border:1px solid #fecaca; }}
-    .ok {{ display:block; background:#f0fdf4; color:var(--green); border:1px solid #bbf7d0; }}
-    .hint {{ font-size:12px; color:var(--muted); margin-top:12px; word-break:break-word; }}
-  </style>
+  <style>__AUTH_THEME__</style>
 </head>
-<body>
-  <main class="card">
-    <h1>Lupa Password</h1>
-    <p>Masukkan email akun. Sistem akan mengirim link reset password yang kembali ke halaman produksi, bukan localhost.</p>
-    <form id="forgotForm">
-      <label for="email">Email</label>
-      <input id="email" type="email" autocomplete="username" placeholder="nama@perusahaan.co.id" required />
-      <button id="sendBtn" type="submit">Kirim Link Reset Password</button>
-    </form>
-    <div id="message" class="msg"></div>
-    <p class="hint">Redirect reset password: {redirect_to}</p>
-    <p><a href="/login">Kembali ke Login</a></p>
-  </main>
+<body class="auth-page">
+  <div class="auth-shell">
+    __AUTH_HERO__
+    <section class="auth-panel">
+      <main class="auth-card">
+        <span class="auth-badge">Account Recovery</span>
+        <h2>Lupa Password</h2>
+        <p class="auth-copy">Masukkan email akun. Sistem akan mengirim link reset password ke email Anda dan mengarahkan kembali ke aplikasi production.</p>
+        <form id="forgotForm">
+          <label for="email">Email</label>
+          <input id="email" type="email" autocomplete="username" placeholder="nama@perusahaan.co.id" required />
+          <button id="sendBtn" class="auth-primary" type="submit">Kirim Link Reset Password</button>
+        </form>
+        <div id="message" class="auth-message"></div>
+        <div class="auth-links">
+          <a href="/login">Kembali ke Login</a>
+          <span class="auth-note">Redirect: __REDIRECT_TO__</span>
+        </div>
+      </main>
+    </section>
+  </div>
 <script>
 const form = document.getElementById('forgotForm');
 const btn = document.getElementById('sendBtn');
 const message = document.getElementById('message');
-function show(text, ok) {{ message.textContent = text; message.className = `msg ${{ok ? 'ok' : 'err'}}`; }}
-form.addEventListener('submit', async (event) => {{
+function show(text, ok) { message.textContent = text; message.className = 'auth-message ' + (ok ? 'ok' : 'error'); }
+form.addEventListener('submit', async (event) => {
   event.preventDefault();
   btn.disabled = true;
   show('Mengirim email reset password...', true);
-  try {{
+  try {
     const payload = new FormData();
     payload.append('email', document.getElementById('email').value.trim());
-    const response = await fetch('/auth/password-reset-request', {{ method:'POST', body:payload }});
+    const response = await fetch('/auth/password-reset-request', { method:'POST', body:payload });
     const body = await response.json();
     if (!response.ok) throw new Error(body.detail || JSON.stringify(body));
-    show('Email reset password sudah dikirim. Buka email terbaru, bukan email lama yang masih mengarah ke localhost.', true);
-  }} catch (error) {{
+    show('Email reset password sudah dikirim. Gunakan email terbaru yang Anda terima.', true);
+  } catch (error) {
     show(error.message || 'Gagal mengirim reset password.', false);
-  }} finally {{
+  } finally {
     btn.disabled = false;
-  }}
-}});
+  }
+});
 </script>
 </body>
 </html>
 """
+    return (
+        html.replace("__AUTH_THEME__", auth_theme_css())
+        .replace(
+            "__AUTH_HERO__",
+            auth_hero_html(
+                title="Pulihkan akses tanpa keluar dari alur kerja audit.",
+                subtitle="Recovery akun tetap menggunakan jalur autentikasi resmi dan kembali ke aplikasi production.",
+            ),
+        )
+        .replace("__REDIRECT_TO__", redirect_to)
+    )
 
 
 def reset_password_html() -> str:
-    return """
+    html = """
 <!doctype html>
 <html lang="id">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Reset Password - AI Piutang Vouching</title>
-  <style>
-    :root { --bg:#f6f8fb; --card:#fff; --line:#d9e0ea; --text:#182433; --muted:#64748b; --blue:#1f6feb; --red:#b3261e; --green:#188038; }
-    * { box-sizing:border-box; }
-    body { margin:0; min-height:100vh; font-family:Arial, Helvetica, sans-serif; background:linear-gradient(145deg,#0f172a 0%,#1e293b 42%,#f6f8fb 42%); color:var(--text); display:flex; align-items:center; justify-content:center; padding:24px; }
-    .card { width:100%; max-width:460px; background:var(--card); border:1px solid var(--line); border-radius:16px; box-shadow:0 18px 45px rgba(15,23,42,.25); padding:24px; }
-    h1 { margin:0; font-size:24px; color:#0f172a; }
-    p { color:var(--muted); line-height:1.45; }
-    label { display:block; margin-top:14px; margin-bottom:6px; color:var(--muted); font-size:13px; }
-    input { width:100%; padding:11px 12px; border:1px solid var(--line); border-radius:10px; font:inherit; }
-    button { width:100%; margin-top:18px; padding:12px; border:0; border-radius:10px; background:var(--blue); color:#fff; font-weight:700; cursor:pointer; }
-    a { color:var(--blue); font-weight:700; text-decoration:none; }
-    .msg { margin-top:14px; padding:10px; border-radius:10px; font-size:14px; display:none; }
-    .err { display:block; background:#fef2f2; color:var(--red); border:1px solid #fecaca; }
-    .ok { display:block; background:#f0fdf4; color:var(--green); border:1px solid #bbf7d0; }
-    .hint { font-size:12px; color:var(--muted); margin-top:12px; word-break:break-word; }
-  </style>
+  <style>__AUTH_THEME__</style>
 </head>
-<body>
-  <main class="card">
-    <h1>Reset Password</h1>
-    <p>Buat password baru. Link dari email reset password akan dibaca otomatis dari URL.</p>
-    <form id="resetForm">
-      <label for="password">Password Baru</label>
-      <input id="password" type="password" autocomplete="new-password" placeholder="Minimal 8 karakter" minlength="8" required />
-      <label for="confirmPassword">Ulangi Password Baru</label>
-      <input id="confirmPassword" type="password" autocomplete="new-password" placeholder="Ulangi password" minlength="8" required />
-      <button id="resetBtn" type="submit">Simpan Password Baru</button>
-    </form>
-    <div id="message" class="msg"></div>
-    <p class="hint" id="tokenHint">Membaca token reset password...</p>
-    <p><a href="/login">Kembali ke Login</a></p>
-  </main>
+<body class="auth-page">
+  <div class="auth-shell">
+    __AUTH_HERO__
+    <section class="auth-panel">
+      <main class="auth-card">
+        <span class="auth-badge">Secure Password Update</span>
+        <h2>Buat Password Baru</h2>
+        <p class="auth-copy">Masukkan password baru minimal 8 karakter. Token recovery dibaca otomatis dari link email Anda.</p>
+        <form id="resetForm">
+          <label for="password">Password Baru</label>
+          <input id="password" type="password" autocomplete="new-password" placeholder="Minimal 8 karakter" minlength="8" required />
+          <label for="confirmPassword">Ulangi Password Baru</label>
+          <input id="confirmPassword" type="password" autocomplete="new-password" placeholder="Ulangi password" minlength="8" required />
+          <button id="resetBtn" class="auth-primary" type="submit">Simpan Password Baru</button>
+        </form>
+        <div id="message" class="auth-message"></div>
+        <div class="auth-links">
+          <a href="/login">Kembali ke Login</a>
+          <span class="auth-note" id="tokenHint">Membaca token reset password...</span>
+        </div>
+      </main>
+    </section>
+  </div>
 <script>
 const form = document.getElementById('resetForm');
 const btn = document.getElementById('resetBtn');
 const message = document.getElementById('message');
 const tokenHint = document.getElementById('tokenHint');
-function show(text, ok) { message.textContent = text; message.className = `msg ${ok ? 'ok' : 'err'}`; }
+function show(text, ok) { message.textContent = text; message.className = 'auth-message ' + (ok ? 'ok' : 'error'); }
 function paramsFromUrl() {
   const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''));
   const query = new URLSearchParams(window.location.search.replace(/^\?/, ''));
@@ -134,7 +132,7 @@ if (resetParams.error) {
 } else if (resetParams.accessToken) {
   tokenHint.textContent = 'Token reset password berhasil dibaca.';
 } else {
-  tokenHint.textContent = 'Token reset password tidak ditemukan. Minta link reset password baru dari halaman Lupa Password.';
+  tokenHint.textContent = 'Token reset password tidak ditemukan. Minta link reset password baru.';
   show('Token reset password tidak ditemukan atau link sudah kedaluwarsa.', false);
 }
 form.addEventListener('submit', async (event) => {
@@ -165,6 +163,16 @@ form.addEventListener('submit', async (event) => {
 </body>
 </html>
 """
+    return (
+        html.replace("__AUTH_THEME__", auth_theme_css())
+        .replace(
+            "__AUTH_HERO__",
+            auth_hero_html(
+                title="Perbarui kredensial dan kembali ke Command Center.",
+                subtitle="Password recovery tetap terintegrasi dengan alur autentikasi aplikasi tanpa mengubah role maupun scope cabang.",
+            ),
+        )
+    )
 
 
 @router.get("/forgot-password", response_class=HTMLResponse)

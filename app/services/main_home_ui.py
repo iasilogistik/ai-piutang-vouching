@@ -579,16 +579,84 @@ function enhanceWorkspaceDocument() {
       const style = doc.createElement('style');
       style.id = 'persistent-shell-workspace-style';
       style.textContent = `
-        html,body{min-width:0!important;width:100%!important}
-        body{font-size:15px!important}
-        header{padding:18px clamp(22px,2.2vw,34px)!important}
-        header h1{font-size:26px!important}
-        main{max-width:none!important;width:100%!important;margin:0!important;padding:24px clamp(22px,2.2vw,34px) 42px!important}
+        :root{
+          --shell-bg:#f4f7fb;
+          --shell-surface:#fff;
+          --shell-line:#dfe7f1;
+          --shell-text:#172033;
+          --shell-muted:#64748b;
+          --shell-primary:#2563eb;
+          --shell-primary-dark:#1d4ed8;
+          --shell-shadow:0 10px 28px rgba(15,23,42,.07);
+        }
+        html,body{min-width:0!important;width:100%!important;background:var(--shell-bg)!important;color:var(--shell-text)!important}
+        body{font-family:Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif!important;font-size:15px!important}
+        header{
+          margin:0!important;padding:22px clamp(24px,2.4vw,38px)!important;
+          background:linear-gradient(135deg,#ffffff 0%,#f6f9ff 58%,#eef6ff 100%)!important;
+          color:var(--shell-text)!important;border-bottom:1px solid var(--shell-line)!important;
+          box-shadow:none!important;
+        }
+        header h1{margin:0!important;font-size:26px!important;line-height:1.2!important;letter-spacing:-.45px!important;color:#0f172a!important}
+        header h2{color:#0f172a!important}
+        header p{margin:7px 0 0!important;color:var(--shell-muted)!important;font-size:13px!important;line-height:1.55!important}
+        main{max-width:none!important;width:100%!important;margin:0!important;padding:24px clamp(24px,2.5vw,40px) 48px!important}
+        main>section,.panel,.card,.box,.summary,.filters{
+          border-color:var(--shell-line)!important;
+          border-radius:16px!important;
+          box-shadow:var(--shell-shadow)!important;
+        }
+        .panel,.card,.box{background:var(--shell-surface)!important;padding:18px!important}
+        h1,h2,h3{color:#172033}
+        h2{font-size:18px!important;letter-spacing:-.2px}
+        h3{font-size:15px!important}
+        p,.small,.muted,.hint{color:var(--shell-muted)!important;line-height:1.55!important}
+        label{color:#475569!important;font-weight:750!important}
+        input,select,textarea{
+          min-height:42px!important;padding:10px 12px!important;
+          border:1px solid #cfd9e6!important;border-radius:10px!important;
+          background:#fff!important;color:var(--shell-text)!important;
+          font-family:inherit!important;outline:none!important;
+        }
+        input:focus,select:focus,textarea:focus{
+          border-color:#93c5fd!important;box-shadow:0 0 0 3px rgba(37,99,235,.10)!important;
+        }
+        button,.button-link,input[type=submit]{
+          min-height:40px!important;padding:9px 14px!important;
+          border-radius:10px!important;border:0!important;
+          background:linear-gradient(135deg,var(--shell-primary),var(--shell-primary-dark))!important;
+          color:#fff!important;font-weight:800!important;
+          box-shadow:0 7px 16px rgba(37,99,235,.15)!important;
+        }
+        button.secondary,.button-link.secondary{background:#475569!important}
+        button.danger{background:#dc2626!important}
+        button.warning{background:#d97706!important}
+        a{color:#2563eb!important}
+        table{
+          width:100%!important;max-width:none!important;
+          border-collapse:separate!important;border-spacing:0!important;
+          background:#fff!important;border:1px solid var(--shell-line)!important;border-radius:14px!important;
+          overflow:hidden!important;
+        }
+        thead th,th{
+          background:#f8fafc!important;color:#475569!important;font-size:12px!important;font-weight:850!important;
+          border-bottom:1px solid var(--shell-line)!important;
+        }
+        td,th{padding:11px 12px!important;font-size:13px!important;line-height:1.45!important}
+        tbody tr:hover{background:#f8fbff!important}
+        pre{
+          border-radius:13px!important;padding:14px!important;
+          background:#0f172a!important;color:#dbeafe!important;
+          border:1px solid #1e293b!important;
+        }
+        .grid{gap:14px!important}
+        .card b{font-size:26px!important;color:#0f172a!important}
+        .badge{border-radius:999px!important}
         main p,main td,main th,main label,main input,main select,main button,main textarea{font-size:14px!important;line-height:1.45}
-        table{max-width:none!important}
         @media(max-width:900px){
-          header{padding:16px 18px!important}
+          header{padding:18px!important}
           main{padding:18px!important}
+          .panel,.card,.box{padding:15px!important}
         }
       `;
       doc.head.appendChild(style);

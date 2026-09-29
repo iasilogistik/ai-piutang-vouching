@@ -75,3 +75,17 @@ def test_login_wraps_internal_next_route_in_persistent_shell():
     assert "next.startsWith('/ui/')" in response.text
     assert "'/ui/main?view='" in response.text
     assert "encodeURIComponent(next)" in response.text
+
+
+def test_login_ui_uses_unified_modern_auth_theme():
+    response = client.get("/login")
+
+    assert response.status_code == 200
+    assert 'class="auth-page"' in response.text
+    assert 'class="auth-shell"' in response.text
+    assert 'class="auth-hero"' in response.text
+    assert "Satu workspace untuk seluruh siklus audit piutang." in response.text
+    assert "Masuk ke Command Center" in response.text
+    assert "ROLE BASED" in response.text
+    assert "BRANCH AWARE" in response.text
+    assert "--auth-primary:#2563eb" in response.text

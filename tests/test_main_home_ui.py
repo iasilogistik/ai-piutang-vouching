@@ -121,3 +121,15 @@ def test_iframe_ui_navigation_is_not_redirected_out_of_workspace():
 
     assert response.status_code == 200
     assert "Dashboard Cabang" in response.text
+
+
+def test_workspace_child_pages_receive_unified_modern_theme():
+    response = client.get("/ui/main")
+
+    assert response.status_code == 200
+    assert "--shell-primary:#2563eb" in response.text
+    assert "background:linear-gradient(135deg,#ffffff 0%,#f6f9ff 58%,#eef6ff 100%)" in response.text
+    assert "border-radius:16px!important" in response.text
+    assert "border-radius:14px!important" in response.text
+    assert "input:focus,select:focus,textarea:focus" in response.text
+    assert "tbody tr:hover" in response.text
