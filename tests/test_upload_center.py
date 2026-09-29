@@ -108,3 +108,9 @@ def test_upload_center_keeps_bearer_token_hidden_for_all_new_modes():
     assert 'id="token"' not in html
     assert "authHeaders()" in html
     assert "localStorage.getItem('auditToken')" in html
+
+
+def test_upload_center_explains_public_drive_folder_without_api_key():
+    html = upload_center_html()
+    assert "Anyone with the link" in html
+    assert "tanpa API key" in html
