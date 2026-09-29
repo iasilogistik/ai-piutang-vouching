@@ -178,7 +178,7 @@ main .next-step-action:hover{
           <option value="SPJ">Sebagai SPJ</option>
           <option value="COMBINED">Sebagai Billing + SPJ gabungan</option>
         </select>
-        <div class="mode-help">Link file mendukung PDF/JPG/PNG/ZIP/RAR sampai 75 MB. Folder publik dengan izin “Anyone with the link” dapat diimpor tanpa API key; bila API key tersedia sistem akan memakainya otomatis.</div>
+        <div class="mode-help">Link file mendukung PDF/JPG/PNG/ZIP/RAR sampai 75 MB. Folder publik dengan izin “Anyone with the link” akan dicoba otomatis melalui Drive API, public folder view, lalu fallback downloader. Folder publik dapat diproses tanpa API key; API key tidak wajib.</div>
       </div>
 
       <div class="actions"><button id="evidenceUploadBtn" type="button">Upload / Import Evidence</button></div>
