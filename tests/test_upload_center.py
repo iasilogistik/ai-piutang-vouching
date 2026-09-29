@@ -121,3 +121,11 @@ def test_upload_center_explains_multi_fallback_drive_folder_import():
     assert "public folder view" in html
     assert "fallback downloader" in html
     assert "API key tidak wajib" in html
+
+
+def test_upload_center_shows_locked_state_only_for_final_manual_evidence():
+    html = upload_center_html()
+    assert "item.delete_allowed===false" in html
+    assert ">Locked</button>" in html
+    assert "item.delete_reason" in html
+    assert "hasil reconciliation/vouching akan di-reset" in html
