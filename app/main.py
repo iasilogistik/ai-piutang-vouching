@@ -200,7 +200,7 @@ def _process_upload_or_zip(db: Session, upload, *, mode: str, uploaded_by: str |
                            source_mode: str, branch: str | None = None,
                            metadata_extra: dict[str, object] | None = None) -> tuple[int, list[dict[str, object]]]:
     suffix = Path(upload.filename).suffix.lower()
-    if suffix == ".zip":
+    if suffix in {".zip", ".rar"}:
         entries = iter_bulk_zip_entries(upload)
         results: list[dict[str, object]] = []
         for entry in entries:
@@ -340,11 +340,11 @@ def import_drive_folder(url: str = Form(...), mode: str = Form("AUTO"), branch: 
                     mode=mode,
                     uploaded_by=uploaded_by,
                     branch=target_branch,
-                    source_mode="DRIVE_FOLDER_ZIP" if Path(upload.filename).suffix.lower() == ".zip" else "DRIVE_FOLDER",
+                    source_mode="DRIVE_FOLDER_ARCHIVE" if Path(upload.filename).suffix.lower() in {".zip", ".rar"} else "DRIVE_FOLDER",
                     metadata_extra={"drive_folder_url": url, "drive_file_id": item.file_id, "drive_file_name": item.name},
                 )
                 for result in item_results:
-                    result["source_path"] = f"{item.name}/{result.get('source_path')}" if Path(upload.filename).suffix.lower() == ".zip" else item.name
+                    result["source_path"] = f"{item.name}/{result.get('source_path')}" if Path(upload.filename).suffix.lower() in {".zip", ".rar"} else item.name
                     result["file_name"] = result.get("file_name") or item.name
                 results.extend(item_results)
             except ValueError as item_exc:
@@ -366,7 +366,7 @@ def import_drive_link(url: str = Form(...), mode: str = Form("AUTO"), branch: st
         target_branch = _prepare_upload_branch(db, user, branch)
         upload = download_drive_link_file(url)
         total, results = _process_upload_or_zip(db, upload, mode=mode, uploaded_by=uploaded_by, branch=target_branch,
-                                                source_mode="DRIVE_ZIP" if Path(upload.filename).suffix.lower() == ".zip" else "DRIVE_LINK",
+                                                source_mode="DRIVE_ARCHIVE" if Path(upload.filename).suffix.lower() in {".zip", ".rar"} else "DRIVE_LINK",
                                                 metadata_extra={"drive_source_url": url})
         return {"source": "SHARE_LINK", "file_name": upload.filename, "mode": mode.upper(),
                 "total_entries": total, "summary": _summary(results), "results": results}
@@ -374,6 +374,7 @@ def import_drive_link(url: str = Form(...), mode: str = Form("AUTO"), branch: st
         db.rollback(); raise handle_error(exc) from exc
 
 
+@app.post("/documents/bulk-archive")
 @app.post("/documents/bulk-zip")
 def upload_bulk_zip(file: UploadFile = File(...), mode: str = "AUTO", branch: str | None = None,
                     db: Session = Depends(get_db),
@@ -392,8 +393,8 @@ def upload_bulk_zip(file: UploadFile = File(...), mode: str = "AUTO", branch: st
             try:
                 payload = _ingest_classified_upload(db, make_upload(entry), document_types=document_types,
                                                     uploaded_by=uploaded_by, branch=target_branch,
-                                                    source_mode="BULK_ZIP_COMBINED" if document_types == ["BILLING", "SPJ"] else "BULK_ZIP",
-                                                    metadata_extra={"zip_source_path": entry.source_path})
+                                                    source_mode="BULK_ARCHIVE_COMBINED" if document_types == ["BILLING", "SPJ"] else "BULK_ARCHIVE",
+                                                    metadata_extra={"archive_source_path": entry.source_path, "archive_type": Path(file.filename or "").suffix.lower().lstrip(".").upper()})
                 db.commit()
                 results.append({"source_path": entry.source_path, "file_name": entry.filename, **payload})
             except ValueError as item_exc:

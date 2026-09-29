@@ -9,7 +9,7 @@ import httpx
 from app.services.bulk_zip import MemoryUpload, content_type_for
 
 
-ALLOWED_SHARE_LINK_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".zip"}
+ALLOWED_SHARE_LINK_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".zip", ".rar"}
 MAX_SHARE_LINK_BYTES = 75 * 1024 * 1024
 
 
@@ -49,6 +49,8 @@ def _extension_from_content_type(content_type: str) -> str | None:
         "image/png": ".png",
         "application/zip": ".zip",
         "application/x-zip-compressed": ".zip",
+        "application/vnd.rar": ".rar",
+        "application/x-rar-compressed": ".rar",
     }.get(value)
 
 
@@ -75,7 +77,7 @@ def _download(url: str) -> httpx.Response:
 def download_drive_link_file(url: str) -> MemoryUpload:
     """Download a public/shareable document link into an UploadFile-compatible object.
 
-    Supports direct PDF/JPG/PNG/ZIP links and public Google Drive file links.
+    Supports direct PDF/JPG/PNG/ZIP/RAR links and public Google Drive file links.
     Google Drive folder links require the Drive API/connector and are rejected
     instead of scraping folder HTML unreliably.
     """
@@ -110,6 +112,6 @@ def download_drive_link_file(url: str) -> MemoryUpload:
     )
     suffix = Path(filename).suffix.lower()
     if suffix not in ALLOWED_SHARE_LINK_EXTENSIONS:
-        raise ValueError("Shared document must be PDF, JPG, PNG, or ZIP")
+        raise ValueError("Shared document must be PDF, JPG, PNG, ZIP, or RAR")
 
     return MemoryUpload(filename, response.content, content_type_for(filename))
