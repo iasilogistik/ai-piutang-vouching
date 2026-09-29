@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 router = APIRouter()
 _REGISTERED = False
@@ -92,13 +92,47 @@ def main_home_html() -> str:
     .global-search input { width:100%; border:1px solid var(--line); border-radius:12px; padding:10px 13px 10px 36px; outline:none; background:#f8fafc; }
     .global-search input:focus { border-color:#93c5fd; box-shadow:0 0 0 3px rgba(59,130,246,.10); background:#fff; }
     .search-mark { position:absolute; left:12px; top:50%; transform:translateY(-50%); color:#94a3b8; font-size:13px; }
-    .profile { display:flex; align-items:center; gap:10px; padding-left:12px; border-left:1px solid var(--line); }
+    .account-menu { position:relative; }
+    .profile {
+      display:flex; align-items:center; gap:10px; min-height:46px; padding:5px 8px 5px 12px;
+      border:1px solid transparent; border-left:1px solid var(--line); border-radius:12px;
+      background:transparent; color:inherit; cursor:pointer; text-align:left;
+      transition:background .16s ease,border-color .16s ease,box-shadow .16s ease;
+    }
+    .profile:hover,.profile[aria-expanded="true"] {
+      background:#fff; border-color:var(--line); box-shadow:0 8px 22px rgba(15,23,42,.07);
+    }
     .avatar {
-      width:38px; height:38px; border-radius:12px; display:grid; place-items:center;
+      width:38px; height:38px; border-radius:12px; display:grid; place-items:center; flex:0 0 auto;
       background:linear-gradient(135deg,#1d4ed8,#0ea5e9); color:#fff; font-weight:900; font-size:12px;
     }
     .profile-copy strong { display:block; font-size:12px; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .profile-copy span { display:block; color:var(--muted); font-size:10px; margin-top:2px; }
+    .account-caret { color:#94a3b8; font-size:11px; margin-left:2px; transition:transform .16s ease; }
+    .profile[aria-expanded="true"] .account-caret { transform:rotate(180deg); }
+    .account-dropdown {
+      display:none; position:absolute; top:calc(100% + 9px); right:0; width:270px; z-index:80;
+      overflow:hidden; border:1px solid var(--line); border-radius:16px; background:#fff;
+      box-shadow:0 20px 48px rgba(15,23,42,.16);
+    }
+    .account-dropdown.open { display:block; }
+    .account-dropdown-head { padding:15px 16px 13px; background:linear-gradient(135deg,#f8fbff,#eff6ff); border-bottom:1px solid var(--line); }
+    .account-dropdown-head strong { display:block; font-size:13px; color:#0f172a; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .account-dropdown-head span { display:block; margin-top:4px; color:var(--muted); font-size:10px; }
+    .account-dropdown-body { padding:7px; }
+    .account-action {
+      width:100%; min-height:42px; display:flex; align-items:center; gap:10px; padding:9px 10px;
+      border:0; border-radius:10px; background:#fff; color:#334155; text-decoration:none;
+      font-size:12px; font-weight:750; cursor:pointer; text-align:left;
+    }
+    .account-action:hover { background:#f8fafc; }
+    .account-action.logout { color:#b91c1c; }
+    .account-action.logout:hover { background:#fef2f2; }
+    .account-action-icon {
+      width:29px; height:29px; border-radius:9px; display:grid; place-items:center; flex:0 0 auto;
+      background:#eff6ff; color:#1d4ed8; font-size:10px; font-weight:900;
+    }
+    .account-action.logout .account-action-icon { background:#fef2f2; color:#dc2626; }
     .content { padding:28px clamp(24px,2.4vw,42px) 48px; max-width:none; width:100%; margin:0; }
     .hero {
       position:relative; overflow:hidden; border-radius:22px; padding:25px 26px; color:#fff;
@@ -276,9 +310,26 @@ def main_home_html() -> str:
           <input name="q" aria-label="Global audit search" placeholder="Cari audit, evidence, temuan..." />
         </form>
         <a class="icon-btn" href="/ui/notifications" aria-label="Notifications">•</a>
-        <div class="profile">
-          <div class="avatar" id="avatar">IA</div>
-          <div class="profile-copy"><strong id="profileName">Memuat sesi...</strong><span id="profileMeta">Role · Cabang</span></div>
+        <div class="account-menu" id="accountMenu">
+          <button class="profile" id="accountMenuBtn" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="accountDropdown">
+            <div class="avatar" id="avatar">IA</div>
+            <div class="profile-copy"><strong id="profileName">Memuat sesi...</strong><span id="profileMeta">Role · Cabang</span></div>
+            <span class="account-caret">▼</span>
+          </button>
+          <div class="account-dropdown" id="accountDropdown" role="menu" aria-label="Menu akun">
+            <div class="account-dropdown-head">
+              <strong id="accountDropdownName">Memuat sesi...</strong>
+              <span id="accountDropdownMeta">Role · Cabang</span>
+            </div>
+            <div class="account-dropdown-body">
+              <button class="account-action" id="accountHomeBtn" type="button" role="menuitem">
+                <span class="account-action-icon">HM</span><span>Halaman Utama</span>
+              </button>
+              <button class="account-action logout" id="accountLogoutBtn" type="button" role="menuitem">
+                <span class="account-action-icon">OUT</span><span>Logout</span>
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     </header>
@@ -361,6 +412,11 @@ const metrics = document.getElementById('metrics');
 const logEl = document.getElementById('log');
 const profileName = document.getElementById('profileName');
 const profileMeta = document.getElementById('profileMeta');
+const accountMenu = document.getElementById('accountMenu');
+const accountMenuBtn = document.getElementById('accountMenuBtn');
+const accountDropdown = document.getElementById('accountDropdown');
+const accountDropdownName = document.getElementById('accountDropdownName');
+const accountDropdownMeta = document.getElementById('accountDropdownMeta');
 const welcomeTitle = document.getElementById('welcomeTitle');
 const healthDot = document.getElementById('healthDot');
 const healthText = document.getElementById('healthText');
@@ -406,6 +462,8 @@ function setLoggedOut() {
   info.textContent = 'Role: - · Cabang: -';
   profileName.textContent = 'Belum login';
   profileMeta.textContent = 'Session unavailable';
+  accountDropdownName.textContent = 'Belum login';
+  accountDropdownMeta.textContent = 'Session unavailable';
   document.getElementById('avatar').textContent = 'IA';
   metrics.innerHTML = metric('Status Aplikasi','OK','System health') + metric('Sesi','Belum Login','Authentication') + metric('Cabang','-','Access scope') + metric('Role','-','Authorization');
   applyRoleMenu('');
@@ -418,6 +476,8 @@ function setLoggedIn(user) {
   info.textContent = `Role: ${role} · Cabang: ${branch}`;
   profileName.textContent = identity;
   profileMeta.textContent = `${role} · ${branch}`;
+  accountDropdownName.textContent = identity;
+  accountDropdownMeta.textContent = `${role} · ${branch}`;
   document.getElementById('avatar').textContent = initials(identity);
   welcomeTitle.textContent = `Selamat datang, ${String(identity).split('@')[0]}`;
   if (user.branch) {
@@ -546,6 +606,22 @@ function initialWorkspacePath() {
   return isWorkspacePath(view) ? view : '/ui/main';
 }
 function closeMobileNav() { document.body.classList.remove('mobile-nav-open'); }
+function closeAccountMenu() {
+  accountDropdown.classList.remove('open');
+  accountMenuBtn.setAttribute('aria-expanded', 'false');
+}
+function toggleAccountMenu() {
+  const open = !accountDropdown.classList.contains('open');
+  accountDropdown.classList.toggle('open', open);
+  accountMenuBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+function logout() {
+  localStorage.removeItem('auditToken');
+  localStorage.removeItem('auditRefreshToken');
+  localStorage.removeItem('auditExpiresAt');
+  localStorage.removeItem('auditUser');
+  window.location.href = '/login';
+}
 document.getElementById('mobileMenuBtn').addEventListener('click', () => document.body.classList.toggle('mobile-nav-open'));
 document.getElementById('sidebarOverlay').addEventListener('click', closeMobileNav);
 document.querySelectorAll('a[href^="/ui/"]').forEach(link => {
@@ -708,14 +784,24 @@ document.getElementById('collapseBtn').addEventListener('click', () => {
 });
 if (localStorage.getItem('auditSidebarCollapsed') === '1' && window.innerWidth > 820) document.body.classList.add('sidebar-collapsed');
 
-document.getElementById('loadBtn').addEventListener('click', loadDashboard);
-document.getElementById('logoutBtn').addEventListener('click', () => {
-  localStorage.removeItem('auditToken');
-  localStorage.removeItem('auditRefreshToken');
-  localStorage.removeItem('auditExpiresAt');
-  localStorage.removeItem('auditUser');
-  window.location.href = '/login';
+accountMenuBtn.addEventListener('click', event => {
+  event.stopPropagation();
+  toggleAccountMenu();
 });
+document.getElementById('accountHomeBtn').addEventListener('click', () => {
+  closeAccountMenu();
+  showHome();
+});
+document.getElementById('accountLogoutBtn').addEventListener('click', logout);
+document.addEventListener('click', event => {
+  if (!accountMenu.contains(event.target)) closeAccountMenu();
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape') closeAccountMenu();
+});
+
+document.getElementById('loadBtn').addEventListener('click', loadDashboard);
+document.getElementById('logoutBtn').addEventListener('click', logout);
 window.addEventListener('popstate', event => {
   const path = event.state?.workspace || initialWorkspacePath();
   if (path === '/ui/main') showHome({ push:false });
@@ -733,9 +819,9 @@ loadDashboard();
 </html>"""
 
 
-@router.get("/", response_class=HTMLResponse)
+@router.get("/", include_in_schema=False)
 def root_home():
-    return HTMLResponse(main_home_html())
+    return RedirectResponse(url="/login", status_code=307)
 
 
 @router.get("/ui/main", response_class=HTMLResponse)

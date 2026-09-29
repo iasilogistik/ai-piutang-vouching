@@ -3,7 +3,7 @@ from __future__ import annotations
 from html import escape
 
 from fastapi import APIRouter, Depends
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -123,9 +123,9 @@ def navigation_html(user: CurrentUser, unread_count: int = 0) -> str:
     )
 
 
-@router.get("/", response_class=HTMLResponse)
+@router.get("/", include_in_schema=False)
 def main_home_root():
-    return HTMLResponse(main_home_html())
+    return RedirectResponse(url="/login", status_code=307)
 
 
 @router.get("/ui/main", response_class=HTMLResponse)
