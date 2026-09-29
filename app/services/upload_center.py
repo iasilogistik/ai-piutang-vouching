@@ -29,8 +29,8 @@ pre{white-space:pre-wrap;background:#0f172a;color:#dbeafe;padding:12px;border-ra
 <main>
 <section class="panel">
 <div class="grid">
-<div><label>Bearer Token</label><input id="token" type="password" placeholder="Token dari login"></div>
 <div><label>Cabang / Scope Upload</label><input id="branch" placeholder="Contoh: GRESIK — branch baru boleh langsung diketik"></div>
+<div><label>Status Sesi</label><input id="session" value="Memeriksa sesi login..." disabled></div>
 <div><label>Jenis Upload</label>
 <select id="type">
 <option value="SAP">SAP</option>
@@ -52,36 +52,103 @@ pre{white-space:pre-wrap;background:#0f172a;color:#dbeafe;padding:12px;border-ra
 </main>
 <script>
 const allowed=['pdf','png','jpg','jpeg','xlsx','xls','csv','zip'];
-const tokenEl=document.getElementById('token'); tokenEl.value=localStorage.getItem('auditToken')||'';
-function headers(){const t=tokenEl.value.trim();if(!t)throw new Error('Bearer token wajib diisi.');localStorage.setItem('auditToken',t);return {Authorization:'Bearer '+t};}
+const branchEl=document.getElementById('branch');
+const sessionEl=document.getElementById('session');
+const logEl=document.getElementById('log');
+
+function sessionToken(){
+  return (localStorage.getItem('auditToken')||'').trim();
+}
+function headers(){
+  const token=sessionToken();
+  if(!token) throw new Error('Sesi login tidak ditemukan. Silakan login ulang.');
+  return {Authorization:'Bearer '+token};
+}
 function ext(name){const p=(name||'').split('.');return p.length>1?p.pop().toLowerCase():'';}
+function endpointWithQuery(endpoint,params){
+  const query=new URLSearchParams();
+  Object.entries(params||{}).forEach(([key,value])=>{
+    if(value!==undefined&&value!==null&&String(value).trim()!=='') query.set(key,String(value).trim());
+  });
+  const suffix=query.toString();
+  return suffix?endpoint+'?'+suffix:endpoint;
+}
+function setLog(message,kind='info',payload=null){
+  const prefix=kind==='success'?'UPLOAD BERHASIL':kind==='error'?'UPLOAD GAGAL':'INFO';
+  logEl.textContent=prefix+': '+message+(payload?'\n\n'+JSON.stringify(payload,null,2):'');
+}
+async function loadSessionScope(){
+  const token=sessionToken();
+  if(!token){
+    sessionEl.value='Sesi login tidak ditemukan';
+    setLog('Sesi login tidak ditemukan. Silakan login ulang.','error');
+    return;
+  }
+  try{
+    const response=await fetch('/auth/me',{headers:{Authorization:'Bearer '+token}});
+    const profile=await response.json();
+    if(!response.ok) throw new Error(profile.detail||'Sesi login tidak valid.');
+    const role=String(profile.role||'-').toUpperCase();
+    const scope=profile.branch||profile.access_scope||'ALL';
+    sessionEl.value=role+' · '+scope;
+    if(profile.branch){
+      branchEl.value=profile.branch;
+      branchEl.disabled=true;
+      branchEl.title='Cabang dikunci mengikuti scope akun.';
+    }
+  }catch(error){
+    sessionEl.value='Sesi login tidak valid';
+    setLog(error.message||'Sesi login tidak valid.','error');
+  }
+}
 async function submitUpload(){
  const type=document.getElementById('type').value;
- const branch=document.getElementById('branch').value.trim();
+ const branch=branchEl.value.trim();
  const mode=document.getElementById('mode').value;
  const url=document.getElementById('url').value.trim();
  const file=document.getElementById('file').files[0];
  let endpoint='', opts={method:'POST',headers:headers()};
  if(type==='DRIVE'||type==='DRIVE_FOLDER'){
    if(!url)throw new Error('Google Drive URL wajib diisi.');
-   const fd=new FormData();fd.append('url',url);fd.append('mode',mode);if(branch)fd.append('branch',branch);opts.body=fd;
+   const fd=new FormData();
+   fd.append('url',url);
+   fd.append('mode',mode);
+   if(branch)fd.append('branch',branch);
+   opts.body=fd;
    endpoint=type==='DRIVE'?'/documents/drive-import':'/documents/drive-folder-import';
  }else{
    if(!file)throw new Error('File wajib dipilih.');
    if(!allowed.includes(ext(file.name)))throw new Error('Ekstensi file tidak didukung.');
-   const fd=new FormData();fd.append('file',file);if(branch)fd.append('branch',branch);
+   const fd=new FormData();
+   fd.append('file',file);
+   const query={};
+   if(branch)query.branch=branch;
    if(type==='SAP') endpoint='/sap/import';
    if(type==='BILLING') endpoint='/documents/BILLING';
    if(type==='SPJ') endpoint='/documents/SPJ';
    if(type==='COMBINED') endpoint='/documents/combined';
-   if(type==='BULK'){endpoint='/documents/bulk-zip?mode='+encodeURIComponent(mode); if(ext(file.name)!=='zip')throw new Error('Bulk upload wajib file ZIP.');}
+   if(type==='BULK'){
+     if(ext(file.name)!=='zip')throw new Error('Bulk upload wajib file ZIP.');
+     endpoint='/documents/bulk-zip';
+     query.mode=mode;
+   }
+   endpoint=endpointWithQuery(endpoint,query);
    opts.body=fd;
  }
- const r=await fetch(endpoint,opts); const body=await r.json().catch(()=>({detail:'Response bukan JSON'}));
- document.getElementById('log').textContent=JSON.stringify({status:r.status,endpoint,body},null,2);
+ setLog('Mengirim data ke server...','info',{jenis:type,cabang:branch||'AUTO-DETECT',file:file?file.name:null});
+ const r=await fetch(endpoint,opts);
+ const body=await r.json().catch(()=>({detail:'Response bukan JSON'}));
  if(!r.ok) throw new Error(body.detail||'Upload gagal.');
+ setLog('Data berhasil diproses oleh server.','success',body);
 }
-document.getElementById('send').onclick=()=>submitUpload().catch(e=>document.getElementById('log').textContent='ERROR: '+e.message);
+document.getElementById('send').onclick=()=>{
+  const button=document.getElementById('send');
+  button.disabled=true;
+  submitUpload()
+    .catch(error=>setLog(error.message||'Upload gagal.','error'))
+    .finally(()=>{button.disabled=false;});
+};
+loadSessionScope();
 </script>
 </body></html>"""
 
