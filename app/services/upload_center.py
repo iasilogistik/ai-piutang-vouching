@@ -26,7 +26,7 @@ label{display:block;font-size:12px;font-weight:750;color:#475569;margin:11px 0 6
 input,select,textarea{width:100%;min-height:42px;padding:9px 11px;border:1px solid #cfd9e6;border-radius:10px;background:#fff;font:inherit}
 input:focus,select:focus,textarea:focus{outline:none;border-color:#93c5fd;box-shadow:0 0 0 3px rgba(37,99,235,.09)}
 button{border:0;border-radius:10px;padding:10px 14px;background:var(--blue);color:#fff;font-weight:800;cursor:pointer}
-button:disabled{opacity:.55;cursor:not-allowed}.danger{background:var(--red)}.secondary{background:#475569}.small-btn{padding:7px 10px;font-size:11px}
+button:disabled{opacity:.55;cursor:not-allowed}.danger{background:var(--red)}.secondary{background:#475569}.locked{background:#94a3b8;color:#fff;cursor:not-allowed}.small-btn{padding:7px 10px;font-size:11px}
 .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
 .note{margin:12px 0 0;padding:10px 12px;border-radius:10px;background:#eff6ff;color:#475569;font-size:11px;line-height:1.55}
 .warn{background:#fff7ed;color:#9a3412}
@@ -375,6 +375,10 @@ async function loadHistory(){
   historyRows.innerHTML=items.map(item=>{
     const detail=item.kind==='SAP'?(item.period||'-'):(item.document_type||'-');
     const time=item.uploaded_at?new Date(item.uploaded_at).toLocaleString('id-ID'):'-';
+    const evidenceLocked=item.kind==='EVIDENCE'&&item.delete_allowed===false;
+    const deleteAction=evidenceLocked
+      ? '<button class="locked small-btn" type="button" disabled title="'+esc(item.delete_reason||'Evidence sudah dipakai proses audit manual/final.')+'">Locked</button>'
+      : '<button class="danger small-btn" data-delete="'+esc(item.kind)+'" data-id="'+item.id+'">Delete</button>';
     return '<tr>'+
       '<td class="kind">'+esc(item.kind)+'</td>'+
       '<td>'+esc(item.file_name)+'</td>'+
@@ -382,8 +386,7 @@ async function loadHistory(){
       '<td>'+esc(detail)+'</td>'+
       '<td>'+esc(item.status)+'</td>'+
       '<td class="muted">'+esc(time)+'</td>'+
-      '<td><button class="secondary small-btn" data-edit="'+esc(item.kind)+'" data-id="'+item.id+'">Edit</button> '+
-      '<button class="danger small-btn" data-delete="'+esc(item.kind)+'" data-id="'+item.id+'">Delete</button></td>'+
+      '<td><button class="secondary small-btn" data-edit="'+esc(item.kind)+'" data-id="'+item.id+'">Edit</button> '+deleteAction+'</td>'+
       '</tr>';
   }).join('');
   historyRows.querySelectorAll('[data-edit]').forEach(btn=>btn.addEventListener('click',()=>editItem(btn.dataset.edit,Number(btn.dataset.id),items)));
@@ -415,7 +418,10 @@ async function editItem(kind,id,items){
 async function deleteItem(kind,id,items){
   const item=items.find(row=>row.kind===kind&&Number(row.id)===id);
   if(!item)return;
-  if(!confirm('Delete '+item.kind+' "'+item.file_name+'"? Aksi akan ditolak jika data sudah dipakai proses audit.'))return;
+  const correctionNote=item.kind==='EVIDENCE'
+    ? ' Jika hanya terkait proses otomatis, hasil reconciliation/vouching akan di-reset dan perlu dijalankan ulang.'
+    : ' Aksi akan ditolak jika data sudah dipakai proses audit.';
+  if(!confirm('Delete '+item.kind+' "'+item.file_name+'"?'+correctionNote))return;
   try{
     const endpoint=kind==='SAP'?'/uploads/sap/'+id:'/uploads/evidence/'+id;
     const response=await fetch(endpoint,{method:'DELETE',headers:authHeaders()});
