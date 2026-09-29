@@ -61,3 +61,10 @@ def test_upload_center_shows_friendly_upload_status_instead_of_raw_error_log():
     assert "UPLOAD GAGAL" in html
     assert "Mengirim data ke server..." in html
     assert "Data berhasil diproses oleh server." in html
+
+
+def test_upload_center_rendered_javascript_keeps_escaped_newlines():
+    html = upload_center_html()
+
+    assert r"payload?'\n\n'+JSON.stringify" in html
+    assert "payload?'\n\n'+JSON.stringify" not in html

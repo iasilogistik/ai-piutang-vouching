@@ -75,7 +75,7 @@ function endpointWithQuery(endpoint,params){
 }
 function setLog(message,kind='info',payload=null){
   const prefix=kind==='success'?'UPLOAD BERHASIL':kind==='error'?'UPLOAD GAGAL':'INFO';
-  logEl.textContent=prefix+': '+message+(payload?'\n\n'+JSON.stringify(payload,null,2):'');
+  logEl.textContent=prefix+': '+message+(payload?'\\n\\n'+JSON.stringify(payload,null,2):'');
 }
 async function loadSessionScope(){
   const token=sessionToken();
