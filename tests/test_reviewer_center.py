@@ -102,3 +102,12 @@ def test_reviewer_center_route_is_registered():
 
     assert response.status_code == 200
     assert "Menunggu Keputusan Reviewer" in response.text
+
+
+
+def test_reviewer_center_uses_cached_session_before_network_profile_lookup():
+    html = reviewer_center_html()
+
+    assert "cachedSession()" in html
+    assert "localStorage.getItem('auditUser')" in html
+    assert "const dashboardPromise=loadDashboard()" in html

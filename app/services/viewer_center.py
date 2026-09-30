@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 from fastapi.responses import HTMLResponse
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.auth import CurrentUser, require_roles
 from app.branch_access import normalize_branch, scoped_branch
@@ -106,12 +106,64 @@ def _vouching_payload(row: VouchingResult) -> dict[str, object]:
     }
 
 
+def _reconciliation_rows(
+    db: Session,
+    *,
+    branch: str | None,
+    attention_only: bool,
+    limit: int,
+) -> list[dict[str, object]]:
+    query = (
+        select(BillingReconciliation)
+        .join(BillingReconciliation.sap_billing)
+        .join(SAPBilling.import_batch)
+        .options(
+            joinedload(BillingReconciliation.sap_billing).joinedload(SAPBilling.import_batch),
+            joinedload(BillingReconciliation.physical_billing),
+        )
+        .order_by(BillingReconciliation.id.desc())
+        .limit(limit)
+    )
+    if attention_only:
+        query = query.where(BillingReconciliation.status.in_(["REVIEW", "EXCEPTION", "NOT_FOUND"]))
+    if branch is not None:
+        query = query.where(ImportBatch.branch == branch)
+    return [_reconciliation_payload(row) for row in db.scalars(query).all()]
+
+
+def _vouching_attention_rows(
+    db: Session,
+    *,
+    branch: str | None,
+    limit: int,
+) -> list[dict[str, object]]:
+    query = (
+        select(VouchingResult)
+        .join(VouchingResult.billing)
+        .join(PhysicalBilling.document)
+        .options(
+            joinedload(VouchingResult.billing).joinedload(PhysicalBilling.document),
+        )
+        .where(VouchingResult.status.in_(["REVIEW", "EXCEPTION"]))
+        .order_by(VouchingResult.id.desc())
+        .limit(limit)
+    )
+    if branch is not None:
+        query = query.where(Document.branch == branch)
+    return [_vouching_payload(row) for row in db.scalars(query).all()]
+
+
 def build_viewer_dashboard(
     db: Session,
     *,
     branch: str | None = None,
+    include_recent: bool = True,
+    include_attention: bool = True,
+    limit: int = 60,
 ) -> dict[str, object]:
+    """Build the read-only dashboard with a compact number of DB round-trips."""
     branch = normalize_branch(branch)
+    limit = max(1, min(int(limit), 100))
 
     sap_count_q = select(func.count(SAPBilling.id)).join(ImportBatch)
     match_q = (
@@ -150,9 +202,6 @@ def build_viewer_dashboard(
         .where(DocumentControlEvidence.review_required.is_(True))
     )
 
-    for name in ("sap_count_q", "match_q", "review_q", "exception_q", "billing_missing_q"):
-        locals()[name]
-
     if branch is not None:
         sap_count_q = sap_count_q.where(ImportBatch.branch == branch)
         match_q = match_q.where(ImportBatch.branch == branch)
@@ -162,51 +211,48 @@ def build_viewer_dashboard(
         spj_missing_q = spj_missing_q.where(Document.branch == branch)
         evidence_review_q = evidence_review_q.where(Document.branch == branch)
 
-    rec_q = (
-        select(BillingReconciliation)
-        .join(BillingReconciliation.sap_billing)
-        .join(SAPBilling.import_batch)
-        .order_by(BillingReconciliation.id.desc())
-        .limit(100)
-    )
-    rec_attention_q = (
-        select(BillingReconciliation)
-        .join(BillingReconciliation.sap_billing)
-        .join(SAPBilling.import_batch)
-        .where(BillingReconciliation.status.in_(["REVIEW", "EXCEPTION", "NOT_FOUND"]))
-        .order_by(BillingReconciliation.id.desc())
-        .limit(100)
-    )
-    vouch_attention_q = (
-        select(VouchingResult)
-        .join(VouchingResult.billing)
-        .join(PhysicalBilling.document)
-        .where(VouchingResult.status.in_(["REVIEW", "EXCEPTION"]))
-        .order_by(VouchingResult.id.desc())
-        .limit(100)
-    )
-    if branch is not None:
-        rec_q = rec_q.where(ImportBatch.branch == branch)
-        rec_attention_q = rec_attention_q.where(ImportBatch.branch == branch)
-        vouch_attention_q = vouch_attention_q.where(Document.branch == branch)
+    metric_row = db.execute(
+        select(
+            sap_count_q.scalar_subquery().label("sap_population"),
+            match_q.scalar_subquery().label("matched"),
+            review_q.scalar_subquery().label("review"),
+            exception_q.scalar_subquery().label("exception"),
+            billing_missing_q.scalar_subquery().label("billing_missing"),
+            spj_missing_q.scalar_subquery().label("spj_missing"),
+            evidence_review_q.scalar_subquery().label("control_evidence_review"),
+        )
+    ).mappings().one()
 
-    recent_results = [_reconciliation_payload(row) for row in db.scalars(rec_q).all()]
-    attention_items = [_reconciliation_payload(row) for row in db.scalars(rec_attention_q).all()]
-    attention_items.extend(_vouching_payload(row) for row in db.scalars(vouch_attention_q).all())
+    recent_results: list[dict[str, object]] = []
+    attention_items: list[dict[str, object]] = []
+    if include_recent:
+        recent_results = _reconciliation_rows(
+            db,
+            branch=branch,
+            attention_only=False,
+            limit=limit,
+        )
+    if include_attention:
+        rec_limit = max(1, limit // 2)
+        attention_items = _reconciliation_rows(
+            db,
+            branch=branch,
+            attention_only=True,
+            limit=rec_limit,
+        )
+        attention_items.extend(
+            _vouching_attention_rows(
+                db,
+                branch=branch,
+                limit=max(1, limit - rec_limit),
+            )
+        )
 
     return {
         "branch": branch,
-        "metrics": {
-            "sap_population": int(db.scalar(sap_count_q) or 0),
-            "matched": int(db.scalar(match_q) or 0),
-            "review": int(db.scalar(review_q) or 0),
-            "exception": int(db.scalar(exception_q) or 0),
-            "billing_missing": int(db.scalar(billing_missing_q) or 0),
-            "spj_missing": int(db.scalar(spj_missing_q) or 0),
-            "control_evidence_review": int(db.scalar(evidence_review_q) or 0),
-        },
+        "metrics": {key: int(value or 0) for key, value in metric_row.items()},
         "recent_results": recent_results,
-        "attention_items": attention_items[:150],
+        "attention_items": attention_items[:limit],
     }
 
 
@@ -284,12 +330,27 @@ async function body(r){const text=await r.text();let x={};try{x=text?JSON.parse(
 function log(message,data=null){logEl.textContent=message+(data?'\n\n'+JSON.stringify(data,null,2):'');}
 function statusPill(status){const value=String(status||'-').toUpperCase();const cls=value==='MATCH'||value==='PASS'?'match':value==='REVIEW'?'review':value==='NOT_FOUND'?'not-found':'exception';return '<span class="status '+cls+'">'+esc(value)+'</span>';}
 function issueClass(state){return state==='LENGKAP'?'ok':(state==='REVIEW'||state==='SPJ_BELUM_LENGKAP'||state==='SPJ_PERLU_REVIEW'?'warn':'bad');}
-async function loadSession(){
-  const x=await body(await fetch('/auth/me',{headers:headers()}));profile=x;
-  const role=String(x.role||'').toUpperCase();
-  if(!['VIEWER','ADMIN'].includes(role))throw new Error('Viewer Center hanya untuk role VIEWER atau ADMIN.');
+function applySession(x){
+  profile=x;
+  const role=String(x?.role||'').toUpperCase();
+  if(!['VIEWER','ADMIN'].includes(role))return false;
   const scope=x.branch||x.access_scope||'ALL';sessionEl.value=role+' · '+scope;
   if(x.branch){branchEl.value=x.branch;branchEl.disabled=true;}
+  return true;
+}
+function cachedSession(){
+  try{
+    const raw=localStorage.getItem('auditUser');
+    if(!raw)return null;
+    const x=JSON.parse(raw);
+    return applySession(x)?x:null;
+  }catch(_){return null;}
+}
+async function loadSession(){
+  const x=await body(await fetch('/auth/me',{headers:headers()}));
+  if(!applySession(x))throw new Error('Viewer Center hanya untuk role VIEWER atau ADMIN.');
+  localStorage.setItem('auditUser',JSON.stringify(x));
+  return x;
 }
 function renderMetrics(m){
   const defs=[
@@ -317,16 +378,36 @@ function renderRows(){
   '</tr>').join('');
 }
 async function loadDashboard(){
-  const p=new URLSearchParams();const b=branchEl.value.trim();if(b)p.set('branch',b);
+  const p=new URLSearchParams();const b=branchEl.value.trim();if(b)p.set('branch',b);p.set('limit','50');
   payload=await body(await fetch('/viewer/dashboard?'+p.toString(),{headers:headers()}));
+  if(payload.branch && !branchEl.value.trim()){branchEl.value=payload.branch;branchEl.disabled=true;}
   renderMetrics(payload.metrics||{});renderRows();
-  log('Viewer Center berhasil dimuat.',{branch:payload.branch,attention:(payload.attention_items||[]).length,results:(payload.recent_results||[]).length});
+  log('Viewer Center berhasil dimuat cepat.',{branch:payload.branch,attention:(payload.attention_items||[]).length});
+  return payload;
 }
-function setMode(next){mode=next;attentionTab.classList.toggle('active',mode==='attention');resultsTab.classList.toggle('active',mode==='results');renderRows();}
-async function refresh(){try{await loadSession();await loadDashboard();}catch(error){log('VIEWER CENTER GAGAL: '+error.message);}}
+async function loadRecentResults(){
+  if((payload?.recent_results||[]).length)return;
+  rowsEl.innerHTML='<tr><td colspan="7">Memuat hasil terbaru...</td></tr>';
+  const p=new URLSearchParams();const b=branchEl.value.trim();if(b)p.set('branch',b);p.set('limit','50');
+  const x=await body(await fetch('/viewer/results?'+p.toString(),{headers:headers()}));
+  payload=payload||{};payload.recent_results=x.results||[];
+}
+async function setMode(next){
+  mode=next;attentionTab.classList.toggle('active',mode==='attention');resultsTab.classList.toggle('active',mode==='results');
+  if(mode==='results')await loadRecentResults();
+  renderRows();
+}
+async function refresh(){
+  try{
+    const cached=cachedSession();
+    const dashboardPromise=loadDashboard();
+    if(!cached)await loadSession();
+    await dashboardPromise;
+  }catch(error){log('VIEWER CENTER GAGAL: '+error.message);}
+}
 document.getElementById('refresh').addEventListener('click',refresh);
-attentionTab.addEventListener('click',()=>setMode('attention'));
-resultsTab.addEventListener('click',()=>setMode('results'));
+attentionTab.addEventListener('click',()=>setMode('attention').catch(e=>log('TAMPILKAN DATA GAGAL: '+e.message)));
+resultsTab.addEventListener('click',()=>setMode('results').catch(e=>log('TAMPILKAN DATA GAGAL: '+e.message)));
 branchEl.addEventListener('change',()=>loadDashboard().catch(e=>log('REFRESH GAGAL: '+e.message)));
 refresh();
 </script>
@@ -341,13 +422,37 @@ def viewer_center_ui():
 @router.get("/viewer/dashboard")
 def viewer_dashboard_api(
     branch: str | None = None,
+    limit: int = 50,
     db: Session = Depends(_db),
     user: CurrentUser = Depends(require_roles("ADMIN", "VIEWER")),
 ):
     effective_branch = scoped_branch(user, branch)
-    payload = build_viewer_dashboard(db, branch=effective_branch)
+    payload = build_viewer_dashboard(
+        db,
+        branch=effective_branch,
+        include_recent=False,
+        include_attention=True,
+        limit=limit,
+    )
     payload["role"] = user.role
     return payload
+
+
+@router.get("/viewer/results")
+def viewer_results_api(
+    branch: str | None = None,
+    limit: int = 50,
+    db: Session = Depends(_db),
+    user: CurrentUser = Depends(require_roles("ADMIN", "VIEWER")),
+):
+    effective_branch = scoped_branch(user, branch)
+    rows = _reconciliation_rows(
+        db,
+        branch=normalize_branch(effective_branch),
+        attention_only=False,
+        limit=max(1, min(int(limit), 100)),
+    )
+    return {"branch": effective_branch, "total": len(rows), "results": rows}
 
 
 def register_viewer_center_routes(app) -> None:

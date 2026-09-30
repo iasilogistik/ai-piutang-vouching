@@ -185,3 +185,14 @@ def test_viewer_center_route_is_registered():
 
     assert response.status_code == 200
     assert "Hasil &amp; Kelengkapan Evidence" in response.text
+
+
+
+def test_viewer_center_lazy_loads_recent_results_and_uses_cached_session():
+    html = viewer_center_html()
+
+    assert "cachedSession()" in html
+    assert "localStorage.getItem('auditUser')" in html
+    assert "loadRecentResults" in html
+    assert "/viewer/results?" in html
+    assert "const dashboardPromise=loadDashboard()" in html

@@ -200,3 +200,14 @@ def test_main_home_adds_reconciliation_vouching_after_upload_center():
     assert upload_index < reconciliation_index < control_index
     assert "Reconciliation &amp; Vouching" in response.text
     assert 'data-roles="ADMIN,AUDITOR"' in response.text
+
+
+
+def test_role_workspace_skips_duplicate_command_center_dashboard_load():
+    response = client.get("/ui/main")
+
+    assert response.status_code == 200
+    assert "function cachedUser()" in response.text
+    assert "const initialCachedUser = cachedUser()" in response.text
+    assert "if (initialPath === '/ui/main')" in response.text
+    assert "loadHealthStatus();" in response.text

@@ -52,26 +52,26 @@ def build_reviewer_dashboard(
     reviewer_id: str,
     branch: str | None = None,
 ) -> dict[str, object]:
+    """Build the reviewer landing payload with only two database round-trips.
+
+    The original implementation executed one SELECT for every metric, which made
+    first paint noticeably slower against a remote PostgreSQL/Supabase database.
+    Scalar subqueries keep the six counters in one statement; the queue is fetched
+    separately with a small first-page limit.
+    """
     branch = normalize_branch(branch)
 
-    workflow_pending_q = select(func.count(ReviewWorkflow.id)).where(
+    pending_q = select(func.count(ReviewWorkflow.id)).where(
         ReviewWorkflow.status == "AUDITOR_REVIEWED"
     )
-    workflow_approved_q = select(func.count(ReviewWorkflow.id)).where(
+    approved_q = select(func.count(ReviewWorkflow.id)).where(
         ReviewWorkflow.reviewer_id == reviewer_id,
         ReviewWorkflow.status.in_(["REVIEWER_APPROVED", "CLOSED"]),
     )
-    workflow_rejected_q = select(func.count(ReviewWorkflow.id)).where(
+    rejected_q = select(func.count(ReviewWorkflow.id)).where(
         ReviewWorkflow.reviewer_id == reviewer_id,
         ReviewWorkflow.status == "REVIEWER_REJECTED",
     )
-    recent_q = (
-        select(ReviewWorkflow)
-        .where(ReviewWorkflow.status == "AUDITOR_REVIEWED")
-        .order_by(ReviewWorkflow.updated_at.desc(), ReviewWorkflow.id.desc())
-        .limit(50)
-    )
-
     reconciliation_q = (
         select(func.count(BillingReconciliation.id))
         .join(BillingReconciliation.sap_billing)
@@ -91,25 +91,37 @@ def build_reviewer_dashboard(
     )
 
     if branch is not None:
-        workflow_pending_q = workflow_pending_q.where(ReviewWorkflow.branch == branch)
-        workflow_approved_q = workflow_approved_q.where(ReviewWorkflow.branch == branch)
-        workflow_rejected_q = workflow_rejected_q.where(ReviewWorkflow.branch == branch)
-        recent_q = recent_q.where(ReviewWorkflow.branch == branch)
+        pending_q = pending_q.where(ReviewWorkflow.branch == branch)
+        approved_q = approved_q.where(ReviewWorkflow.branch == branch)
+        rejected_q = rejected_q.where(ReviewWorkflow.branch == branch)
         reconciliation_q = reconciliation_q.where(ImportBatch.branch == branch)
         vouching_q = vouching_q.where(Document.branch == branch)
         evidence_q = evidence_q.where(Document.branch == branch)
 
+    metric_row = db.execute(
+        select(
+            pending_q.scalar_subquery().label("waiting_reviewer"),
+            reconciliation_q.scalar_subquery().label("reconciliation_attention"),
+            vouching_q.scalar_subquery().label("vouching_attention"),
+            evidence_q.scalar_subquery().label("control_evidence_review"),
+            approved_q.scalar_subquery().label("approved_by_me"),
+            rejected_q.scalar_subquery().label("rejected_by_me"),
+        )
+    ).mappings().one()
+
+    recent_q = (
+        select(ReviewWorkflow)
+        .where(ReviewWorkflow.status == "AUDITOR_REVIEWED")
+        .order_by(ReviewWorkflow.updated_at.desc(), ReviewWorkflow.id.desc())
+        .limit(30)
+    )
+    if branch is not None:
+        recent_q = recent_q.where(ReviewWorkflow.branch == branch)
     pending_rows = list(db.scalars(recent_q).all())
+
     return {
         "branch": branch,
-        "metrics": {
-            "waiting_reviewer": int(db.scalar(workflow_pending_q) or 0),
-            "reconciliation_attention": int(db.scalar(reconciliation_q) or 0),
-            "vouching_attention": int(db.scalar(vouching_q) or 0),
-            "control_evidence_review": int(db.scalar(evidence_q) or 0),
-            "approved_by_me": int(db.scalar(workflow_approved_q) or 0),
-            "rejected_by_me": int(db.scalar(workflow_rejected_q) or 0),
-        },
+        "metrics": {key: int(value or 0) for key, value in metric_row.items()},
         "pending_workflows": [_workflow_payload(row) for row in pending_rows],
     }
 
@@ -191,14 +203,28 @@ function headers(){const t=token();if(!t)throw new Error('Sesi login tidak ditem
 function esc(v){return String(v??'-').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));}
 async function body(r){const text=await r.text();let x={};try{x=text?JSON.parse(text):{};}catch(_){throw new Error('Response server tidak dapat dibaca. HTTP '+r.status);}if(!r.ok)throw new Error(x.detail||('HTTP '+r.status));return x;}
 function log(message,payload=null){logEl.textContent=message+(payload?'\n\n'+JSON.stringify(payload,null,2):'');}
-async function loadSession(){
-  const x=await body(await fetch('/auth/me',{headers:headers()}));
+function applySession(x){
   profile=x;
-  const role=String(x.role||'').toUpperCase();
-  if(!['REVIEWER','ADMIN'].includes(role))throw new Error('Menu Reviewer Center hanya untuk role REVIEWER atau ADMIN.');
+  const role=String(x?.role||'').toUpperCase();
+  if(!['REVIEWER','ADMIN'].includes(role))return false;
   const scope=x.branch||x.access_scope||'ALL';
   sessionEl.value=role+' · '+scope;
   if(x.branch){branchEl.value=x.branch;branchEl.disabled=true;}
+  return true;
+}
+function cachedSession(){
+  try{
+    const raw=localStorage.getItem('auditUser');
+    if(!raw)return null;
+    const x=JSON.parse(raw);
+    return applySession(x)?x:null;
+  }catch(_){return null;}
+}
+async function loadSession(){
+  const x=await body(await fetch('/auth/me',{headers:headers()}));
+  if(!applySession(x))throw new Error('Menu Reviewer Center hanya untuk role REVIEWER atau ADMIN.');
+  localStorage.setItem('auditUser',JSON.stringify(x));
+  return x;
 }
 function renderMetrics(m){
   const defs=[
@@ -230,8 +256,10 @@ function renderRows(items){
 async function loadDashboard(){
   const p=new URLSearchParams();const b=branchEl.value.trim();if(b)p.set('branch',b);
   const x=await body(await fetch('/reviewer/dashboard?'+p.toString(),{headers:headers()}));
+  if(x.branch && !branchEl.value.trim()){branchEl.value=x.branch;branchEl.disabled=true;}
   renderMetrics(x.metrics||{});renderRows(x.pending_workflows||[]);
-  log('Reviewer Center berhasil dimuat.',{branch:x.branch,total_pending:(x.pending_workflows||[]).length});
+  log('Reviewer Center berhasil dimuat cepat.',{branch:x.branch,total_pending:(x.pending_workflows||[]).length});
+  return x;
 }
 async function decide(id,status,button){
   const input=rowsEl.querySelector('[data-remarks="'+id+'"]');
@@ -245,8 +273,12 @@ async function decide(id,status,button){
   finally{button.disabled=false;}
 }
 async function refresh(){
-  try{await loadSession();await loadDashboard();}
-  catch(error){log('REVIEWER CENTER GAGAL: '+error.message);}
+  try{
+    const cached=cachedSession();
+    const dashboardPromise=loadDashboard();
+    if(!cached)await loadSession();
+    await dashboardPromise;
+  }catch(error){log('REVIEWER CENTER GAGAL: '+error.message);}
 }
 document.getElementById('refresh').addEventListener('click',refresh);
 branchEl.addEventListener('change',()=>loadDashboard().catch(e=>log('REFRESH GAGAL: '+e.message)));

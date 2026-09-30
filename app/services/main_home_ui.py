@@ -436,6 +436,16 @@ function authHeaders() {
   const token = storedToken().trim();
   return token ? { Authorization: 'Bearer ' + token } : {};
 }
+function cachedUser() {
+  try {
+    const raw = localStorage.getItem('auditUser');
+    if (!raw) return null;
+    const user = JSON.parse(raw);
+    return user && user.role ? user : null;
+  } catch (_) {
+    return null;
+  }
+}
 function esc(value) {
   return String(value ?? '-').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 }
@@ -527,13 +537,19 @@ function renderMetrics(payload, user) {
     metric('Cabang', branch, 'Active scope')
   ].join('');
 }
-async function loadDashboard() {
+async function loadHealthStatus() {
   const health = await fetch('/health').then(r => r.json()).catch(() => ({ status:'unknown' }));
   const healthy = health.status === 'healthy';
   healthDot.classList.toggle('ok', healthy);
   healthText.textContent = healthy ? 'System healthy' : 'System status unknown';
-
-  const user = await loadMe();
+  return health;
+}
+async function loadDashboard() {
+  const cached = cachedUser();
+  if (cached) setLoggedIn(cached);
+  const healthPromise = loadHealthStatus();
+  const userPromise = cached ? Promise.resolve(cached) : loadMe();
+  const [health, user] = await Promise.all([healthPromise, userPromise]);
   if (!user) {
     setLog('Status aplikasi: ' + health.status + '. Login diperlukan untuk melihat dashboard.');
     return;
@@ -814,12 +830,18 @@ window.addEventListener('popstate', event => {
   else openWorkspace(path, { push:false });
 });
 const initialPath = initialWorkspacePath();
+const initialCachedUser = cachedUser();
+if (initialCachedUser) setLoggedIn(initialCachedUser);
 if (initialPath === '/ui/main') {
   showHome({ push:false });
+  loadDashboard();
 } else {
   openWorkspace(initialPath, { push:false });
+  loadHealthStatus();
+  if (!initialCachedUser) {
+    setTimeout(() => loadMe(), 600);
+  }
 }
-loadDashboard();
 </script>
 </body>
 </html>"""
