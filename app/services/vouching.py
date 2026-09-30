@@ -45,6 +45,15 @@ def _norm_key(value: str | None) -> str | None:
     return re.sub(r"[^A-Za-z0-9]", "", value).upper()
 
 
+def _billing_document_from_filename(file_name: str | None) -> str | None:
+    """Return one unambiguous standalone 10-digit Billing token from filename."""
+    if not file_name:
+        return None
+    stem = Path(file_name).stem
+    matches = list(dict.fromkeys(re.findall(r"(?<!\d)(\d{10})(?!\d)", stem)))
+    return matches[0] if len(matches) == 1 else None
+
+
 def _parse_amount(value: str | None) -> Decimal | None:
     """Parse OCR amount text into Decimal.
 
@@ -326,6 +335,12 @@ def ocr_document(db: Session, document_id: int) -> dict[str, Any]:
         if temporary_path:
             Path(temporary_path).unlink(missing_ok=True)
     fields = parse_document_fields(text)
+    filename_fallback = None
+    if doc.document_type == "BILLING" and not fields.get("billing_document"):
+        filename_fallback = _billing_document_from_filename(doc.file_name)
+        if filename_fallback:
+            fields["billing_document_raw"] = filename_fallback
+            fields["billing_document"] = _norm_key(filename_fallback)
     confidence = Decimal("0.5000") if engine.startswith("TESSERACT") else (Decimal("0.9000") if text else Decimal("0.0000"))
     if doc.document_type == "BILLING":
         row = db.scalar(select(PhysicalBilling).where(PhysicalBilling.document_id == doc.id))
@@ -350,7 +365,8 @@ def ocr_document(db: Session, document_id: int) -> dict[str, Any]:
                          "partial_payment_raw": fields.get("partial_payment_raw"), "partial_payment": fields.get("partial_payment")}
     db.commit()
     return {"document_id": doc.id, "document_type": doc.document_type, "engine": engine,
-            "fields": result_fields, "confidence": str(confidence)}
+            "fields": result_fields, "confidence": str(confidence),
+            "filename_fallback_used": bool(filename_fallback)}
 
 
 def reconcile_batch(db: Session, batch_id: int, *, branch: str | None = None) -> list[BillingReconciliation]:
@@ -359,6 +375,20 @@ def reconcile_batch(db: Session, batch_id: int, *, branch: str | None = None) ->
         raise ValueError("SAP batch validation failed: " + "; ".join(validation["problems"]))
     batch = db.get(ImportBatch, batch_id)
     batch_branch = normalize_branch(batch.branch if batch else None)
+
+    physical_query = select(PhysicalBilling, Document.file_name).join(PhysicalBilling.document)
+    physical_query = physical_query.where(
+        Document.branch == batch_branch if batch_branch is not None else Document.branch.is_(None)
+    )
+    for physical, file_name in db.execute(physical_query).all():
+        if _norm_key(physical.billing_document):
+            continue
+        fallback = _billing_document_from_filename(file_name)
+        if fallback:
+            physical.billing_document_raw = fallback
+            physical.billing_document = _norm_key(fallback)
+    db.flush()
+
     sap_rows = db.scalars(select(SAPBilling).where(SAPBilling.import_batch_id == batch_id)).all()
     results: list[BillingReconciliation] = []
     for sap in sap_rows:
