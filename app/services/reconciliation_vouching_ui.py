@@ -118,6 +118,7 @@ function evidenceLabel(state){
     LENGKAP:'Evidence lengkap',
     BILLING_BELUM_LENGKAP:'Billing belum lengkap',
     SPJ_BELUM_LENGKAP:'SPJ belum lengkap',
+    SPJ_OCR_REVIEW:'SPJ tersedia · OCR perlu review',
     SPJ_PERLU_REVIEW:'SPJ perlu review'
   })[state]||String(state||'-').replaceAll('_',' ');
 }
@@ -130,10 +131,11 @@ function evidenceSummary(summary){
   const rows=(summary&&summary.rows)||[];
   const billingMissing=rows.filter(r=>r.evidence_state==='BILLING_BELUM_LENGKAP').length;
   const spjMissing=rows.filter(r=>r.evidence_state==='SPJ_BELUM_LENGKAP').length;
+  const spjOcr=rows.filter(r=>r.evidence_state==='SPJ_OCR_REVIEW').length;
   const spjReview=rows.filter(r=>r.evidence_state==='SPJ_PERLU_REVIEW').length;
   if(summary&&summary._error)return '<div class="evidence-note bad"><strong>Detail belum terbaca</strong><span>'+esc(summary._error)+'</span></div>';
-  if(billingMissing||spjMissing||spjReview){
-    return '<div class="evidence-note warn"><strong>Proses tetap dilanjutkan</strong><span>Billing belum lengkap: '+billingMissing+' · SPJ belum lengkap: '+spjMissing+(spjReview?' · SPJ review: '+spjReview:'')+'</span></div>';
+  if(billingMissing||spjMissing||spjOcr||spjReview){
+    return '<div class="evidence-note warn"><strong>Proses tetap dilanjutkan</strong><span>Billing belum lengkap: '+billingMissing+' · SPJ belum lengkap: '+spjMissing+(spjOcr?' · SPJ tersedia/OCR review: '+spjOcr:'')+(spjReview?' · SPJ review: '+spjReview:'')+'</span></div>';
   }
   if(rows.length)return '<div class="evidence-note"><strong>Evidence terhubung</strong><span>Tidak ada Billing/SPJ yang ditandai belum lengkap.</span></div>';
   return '<div class="evidence-note warn"><strong>Belum direkonsiliasi</strong><span>Jalankan reconciliation untuk melihat kelengkapan evidence.</span></div>';
@@ -143,6 +145,7 @@ function renderReconciliationDetail(batchId,payload){
   const counts=(payload&&payload.counts)||{};
   const billingMissing=rows.filter(r=>r.evidence_state==='BILLING_BELUM_LENGKAP').length;
   const spjMissing=rows.filter(r=>r.evidence_state==='SPJ_BELUM_LENGKAP').length;
+  const spjOcr=rows.filter(r=>r.evidence_state==='SPJ_OCR_REVIEW').length;
   const spjReview=rows.filter(r=>r.evidence_state==='SPJ_PERLU_REVIEW').length;
   const body=rows.length?rows.map(r=>{
     const state=r.evidence_state||'LENGKAP';
@@ -166,6 +169,7 @@ function renderReconciliationDetail(batchId,payload){
       '<div class="detail-chip bad">Not Found: '+esc(counts.NOT_FOUND||0)+'</div>'+
       '<div class="detail-chip warn">Billing belum lengkap: '+billingMissing+'</div>'+
       '<div class="detail-chip warn">SPJ belum lengkap: '+spjMissing+'</div>'+
+      (spjOcr?'<div class="detail-chip warn">SPJ tersedia · OCR review: '+spjOcr+'</div>':'')+
       (spjReview?'<div class="detail-chip warn">SPJ perlu review: '+spjReview+'</div>':'')+
     '</div>'+
     '<div class="detail-table-wrap"><table class="detail-table"><thead><tr><th>Billing SAP</th><th>Customer</th><th>No. SPJ</th><th>Status</th><th>Evidence</th><th>Keterangan</th><th>Selisih Nominal</th></tr></thead><tbody>'+body+'</tbody></table></div>';
@@ -175,6 +179,7 @@ function renderReconciliationDetail(batchId,payload){
 function renderSpjDetail(branch,payload){
   const rows=(payload&&payload.results)||[];
   const missing=rows.filter(r=>r.evidence_state==='SPJ_BELUM_LENGKAP').length;
+  const ocrReview=rows.filter(r=>r.evidence_state==='SPJ_OCR_REVIEW').length;
   const review=rows.filter(r=>r.evidence_state==='SPJ_PERLU_REVIEW').length;
   const body=rows.length?rows.map(r=>{
     const state=r.evidence_state||'LENGKAP';
@@ -183,7 +188,7 @@ function renderSpjDetail(branch,payload){
       '<td><strong>'+esc(evidenceLabel(state))+'</strong></td><td class="detail-message">'+esc(r.remarks||'SPJ terhubung dan dapat diproses.')+'</td></tr>';
   }).join(''):'<tr><td colspan="5">Belum ada Billing untuk divouching.</td></tr>';
   detailEl.innerHTML='<div class="detail-head"><div><h3>Hasil SPJ Vouching · '+esc(branch)+'</h3><p>SPJ yang belum ada tetap diteruskan ke review, bukan menghentikan seluruh proses.</p></div></div>'+
-    '<div class="detail-summary"><div class="detail-chip">Total: '+rows.length+'</div><div class="detail-chip warn">SPJ belum lengkap: '+missing+'</div><div class="detail-chip warn">Perlu review: '+review+'</div></div>'+
+    '<div class="detail-summary"><div class="detail-chip">Total: '+rows.length+'</div><div class="detail-chip warn">SPJ belum lengkap: '+missing+'</div><div class="detail-chip warn">SPJ tersedia · OCR review: '+ocrReview+'</div><div class="detail-chip warn">Perlu review: '+review+'</div></div>'+
     '<div class="detail-table-wrap"><table class="detail-table"><thead><tr><th>Billing ID</th><th>No. SPJ Billing</th><th>Status</th><th>Evidence</th><th>Keterangan</th></tr></thead><tbody>'+body+'</tbody></table></div>';
   detailEl.hidden=false;
   detailEl.scrollIntoView({behavior:'smooth',block:'nearest'});

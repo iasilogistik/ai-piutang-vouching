@@ -81,7 +81,10 @@ def _vouching_payload(row: VouchingResult) -> dict[str, object]:
     if row.rule_code in {"BILLING_WITHOUT_SPJ", "SPJ_NOT_FOUND"}:
         evidence_state = "SPJ_BELUM_LENGKAP"
         issue = "SPJ belum lengkap"
-    elif row.rule_code == "DUPLICATE_SPJ_NUMBER":
+    elif row.rule_code == "SPJ_NUMBER_UNREADABLE_PAIRED_EVIDENCE":
+        evidence_state = "SPJ_OCR_REVIEW"
+        issue = "SPJ tersedia, nomor belum terbaca OCR"
+    elif row.rule_code in {"DUPLICATE_SPJ_NUMBER", "DUPLICATE_PAIRED_SPJ_EVIDENCE"}:
         evidence_state = "SPJ_PERLU_REVIEW"
         issue = "SPJ perlu review"
     elif row.status == "EXCEPTION":
@@ -329,7 +332,7 @@ function esc(v){return String(v??'-').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'
 async function body(r){const text=await r.text();let x={};try{x=text?JSON.parse(text):{};}catch(_){throw new Error('Response server tidak dapat dibaca. HTTP '+r.status);}if(!r.ok)throw new Error(x.detail||('HTTP '+r.status));return x;}
 function log(message,data=null){logEl.textContent=message+(data?'\n\n'+JSON.stringify(data,null,2):'');}
 function statusPill(status){const value=String(status||'-').toUpperCase();const cls=value==='MATCH'||value==='PASS'?'match':value==='REVIEW'?'review':value==='NOT_FOUND'?'not-found':'exception';return '<span class="status '+cls+'">'+esc(value)+'</span>';}
-function issueClass(state){return state==='LENGKAP'?'ok':(state==='REVIEW'||state==='SPJ_BELUM_LENGKAP'||state==='SPJ_PERLU_REVIEW'?'warn':'bad');}
+function issueClass(state){return state==='LENGKAP'?'ok':(state==='REVIEW'||state==='SPJ_BELUM_LENGKAP'||state==='SPJ_OCR_REVIEW'||state==='SPJ_PERLU_REVIEW'?'warn':'bad');}
 function applySession(x){
   profile=x;
   const role=String(x?.role||'').toUpperCase();
