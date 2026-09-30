@@ -20,7 +20,6 @@ def _upload(name: str, content: bytes) -> UploadFile:
 
 
 def test_incremental_evidence_replaces_same_name_type_branch_and_adds_new_name(monkeypatch):
-    monkeypatch.setattr(main.settings, "use_supabase_storage", False)
     monkeypatch.setattr(
         main,
         "ocr_document",
