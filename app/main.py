@@ -30,6 +30,7 @@ from app.services.bulk_upload_ui import bulk_upload_html
 from app.services.bulk_zip import classify_entry, iter_bulk_zip_entries, make_upload
 from app.services.reports import build_control_evidence_report, build_report
 from app.services.review_workflow import register_review_workflow_routes
+from app.services.reviewer_center import register_reviewer_center_routes
 from app.config import settings
 from app.services.combined_upload_ui import combined_upload_html
 from app.services.control_evidence_dashboard import build_control_evidence_dashboard
@@ -94,6 +95,7 @@ register_exception_management_routes(app)
 register_evidence_repository_routes(app)
 register_global_search_routes(app)
 register_review_workflow_routes(app)
+register_reviewer_center_routes(app)
 register_audit_trail_ui_routes(app)
 register_audit_report_routes(app)
 register_audit_closing_routes(app)

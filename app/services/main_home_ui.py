@@ -250,6 +250,7 @@ def main_home_html() -> str:
         <div class="nav-label">Overview</div>
         <a class="nav-item active" href="/ui/main" data-roles="ADMIN,AUDITOR,REVIEWER,VIEWER"><span class="nav-icon">HM</span><span class="nav-text">Home</span></a>
         <a class="nav-item" href="/ui/dashboard" data-roles="ADMIN,AUDITOR,REVIEWER,VIEWER"><span class="nav-icon">DB</span><span class="nav-text">Dashboard Cabang</span></a>
+        <a class="nav-item" href="/ui/reviewer-center" data-roles="ADMIN,REVIEWER"><span class="nav-icon">RC</span><span class="nav-text">Reviewer Center</span></a>
         <a class="nav-item" href="/ui/audit-management" data-roles="ADMIN,AUDITOR,REVIEWER,VIEWER"><span class="nav-icon">AM</span><span class="nav-text">Audit Management</span></a>
       </div>
 
@@ -375,6 +376,7 @@ def main_home_html() -> str:
           <div class="quick-grid">
             <a class="quick-card" href="/ui/upload" data-roles="ADMIN,AUDITOR"><span class="quick-icon">UP</span><div><strong>Upload Center</strong><span>Upload SAP, Billing, dan SPJ</span></div></a>
             <a class="quick-card" href="/ui/reconciliation-vouching" data-roles="ADMIN,AUDITOR"><span class="quick-icon">RV</span><div><strong>Reconciliation &amp; Vouching</strong><span>Match SAP vs Billing dan Billing vs SPJ</span></div></a>
+            <a class="quick-card" href="/ui/reviewer-center" data-roles="ADMIN,REVIEWER"><span class="quick-icon">RC</span><div><strong>Reviewer Center</strong><span>Dashboard dan keputusan khusus reviewer</span></div></a>
             <a class="quick-card" href="/ui/review-queue" data-roles="ADMIN,AUDITOR,REVIEWER"><span class="quick-icon">RQ</span><div><strong>Review Queue</strong><span>Prioritaskan item REVIEW dan EXCEPTION</span></div></a>
             <a class="quick-card" href="/ui/audit-findings" data-roles="ADMIN,AUDITOR,REVIEWER,VIEWER"><span class="quick-icon">FN</span><div><strong>Audit Findings</strong><span>Kelola siklus hidup temuan audit</span></div></a>
             <a class="quick-card" href="/ui/follow-up" data-roles="ADMIN,AUDITOR,REVIEWER,VIEWER"><span class="quick-icon">FU</span><div><strong>Follow-up</strong><span>Monitor action plan dan verifikasi tindak lanjut</span></div></a>
