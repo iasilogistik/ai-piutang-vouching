@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
 
@@ -155,9 +155,48 @@ def _batch_for_user(db: Session, batch_id: int, user: CurrentUser) -> ImportBatc
 def _ingest_physical_document(db: Session, upload, *, document_type: str, uploaded_by: str | None,
                               source_mode: str, branch: str | None = None,
                               metadata_extra: dict[str, object] | None = None) -> dict[str, object]:
+    incoming_name = Path(upload.filename or "document").name
+    normalized_branch = normalize_branch(branch)
+    previous_query = (
+        select(Document)
+        .where(
+            Document.document_type == document_type,
+            Document.file_name == incoming_name,
+            Document.archived_at.is_(None),
+        )
+        .order_by(Document.evidence_version_number.desc(), Document.id.desc())
+    )
+    previous_query = previous_query.where(
+        Document.branch == normalized_branch if normalized_branch is not None else Document.branch.is_(None)
+    )
+    previous = db.scalar(previous_query)
+
     doc = save_document(db, upload, document_type=document_type, uploaded_by=uploaded_by, branch=branch)
+    ingest_action = "ADDED"
+    if previous is not None and previous.id != doc.id:
+        ingest_action = "REPLACED"
+        doc.supersedes_document_id = previous.id
+        doc.evidence_version_number = max(int(previous.evidence_version_number or 1) + 1, 2)
+        previous.archived_at = datetime.now(timezone.utc)
+        previous.archived_by = uploaded_by
+        previous.archive_reason = f"Replaced by evidence document {doc.id} from {source_mode}"
+        record_audit(
+            db,
+            entity_type="DOCUMENT",
+            entity_id=previous.id,
+            action="EVIDENCE_REPLACED",
+            actor=uploaded_by,
+            status_from="ACTIVE",
+            status_to="ARCHIVED",
+            metadata={"replacement_document_id": doc.id, "file_name": incoming_name, "source_mode": source_mode},
+            branch=previous.branch,
+        )
+        db.flush()
+
     metadata = {"document_type": document_type, "file_name": doc.file_name, "file_hash": doc.file_hash,
-                "source_mode": source_mode}
+                "source_mode": source_mode, "ingest_action": ingest_action,
+                "supersedes_document_id": doc.supersedes_document_id,
+                "evidence_version_number": doc.evidence_version_number}
     if metadata_extra:
         metadata.update(metadata_extra)
     record_audit(db, entity_type="DOCUMENT", entity_id=doc.id, action="UPLOAD", actor=uploaded_by,
@@ -173,7 +212,9 @@ def _ingest_physical_document(db: Session, upload, *, document_type: str, upload
                            "control_evidence_review_required": bool(control_evidence and control_evidence.get("review_required")),
                            **(metadata_extra or {})}, branch=doc.branch)
     return {"document_id": doc.id, "file_name": doc.file_name, "file_hash": doc.file_hash,
-            "document_type": document_type, "analysis": analysis, "control_evidence": control_evidence}
+            "document_type": document_type, "analysis": analysis, "control_evidence": control_evidence,
+            "ingest_action": ingest_action, "supersedes_document_id": doc.supersedes_document_id,
+            "evidence_version_number": doc.evidence_version_number}
 
 
 def _ingest_classified_upload(db: Session, upload, *, document_types: list[str], uploaded_by: str | None,
@@ -186,17 +227,21 @@ def _ingest_classified_upload(db: Session, upload, *, document_types: list[str],
         upload.file.seek(0)
         spj_meta = {**(metadata_extra or {}), "billing_document_id": billing["document_id"]}
         spj = _ingest_physical_document(db, upload, document_type="SPJ", uploaded_by=uploaded_by,
-                                        source_mode=source_mode,
+                                        source_mode=source_mode, branch=branch,
                                         metadata_extra=spj_meta)
         return {"mode": "COMBINED", "status": "SUCCESS", "billing_document_id": billing["document_id"],
                 "spj_document_id": spj["document_id"],
+                "ingest_action": "REPLACED" if "REPLACED" in {billing["ingest_action"], spj["ingest_action"]} else "ADDED",
+                "billing_ingest_action": billing["ingest_action"], "spj_ingest_action": spj["ingest_action"],
                 "control_evidence_review_required": bool(spj.get("control_evidence") and spj["control_evidence"].get("review_required"))}
 
     document_type = document_types[0]
     payload = _ingest_physical_document(db, upload, document_type=document_type, uploaded_by=uploaded_by,
                                         source_mode=source_mode, branch=branch,
                                         metadata_extra=metadata_extra)
-    return {"mode": document_type, "status": "SUCCESS",
+    return {"mode": document_type, "status": "SUCCESS", "ingest_action": payload["ingest_action"],
+            "supersedes_document_id": payload["supersedes_document_id"],
+            "evidence_version_number": payload["evidence_version_number"],
             "billing_document_id": payload["document_id"] if document_type == "BILLING" else None,
             "spj_document_id": payload["document_id"] if document_type == "SPJ" else None,
             "control_evidence_review_required": bool(payload.get("control_evidence") and payload["control_evidence"].get("review_required"))}
@@ -238,6 +283,8 @@ def _process_upload_or_zip(db: Session, upload, *, mode: str, uploaded_by: str |
 
 def _summary(results: list[dict[str, object]]) -> dict[str, int]:
     return {"success": sum(1 for row in results if row["status"] == "SUCCESS"),
+            "added": sum(1 for row in results if row.get("status") == "SUCCESS" and row.get("ingest_action") == "ADDED"),
+            "replaced": sum(1 for row in results if row.get("status") == "SUCCESS" and row.get("ingest_action") == "REPLACED"),
             "skipped": sum(1 for row in results if row["status"] == "SKIPPED"),
             "error": sum(1 for row in results if row["status"] == "ERROR")}
 

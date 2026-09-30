@@ -376,7 +376,7 @@ def reconcile_batch(db: Session, batch_id: int, *, branch: str | None = None) ->
     batch = db.get(ImportBatch, batch_id)
     batch_branch = normalize_branch(batch.branch if batch else None)
 
-    physical_query = select(PhysicalBilling, Document.file_name).join(PhysicalBilling.document)
+    physical_query = select(PhysicalBilling, Document.file_name).join(PhysicalBilling.document).where(Document.archived_at.is_(None))
     physical_query = physical_query.where(
         Document.branch == batch_branch if batch_branch is not None else Document.branch.is_(None)
     )
@@ -393,7 +393,8 @@ def reconcile_batch(db: Session, batch_id: int, *, branch: str | None = None) ->
     results: list[BillingReconciliation] = []
     for sap in sap_rows:
         candidate_query = select(PhysicalBilling).join(PhysicalBilling.document).where(
-            PhysicalBilling.billing_document == _norm_key(sap.billing_document)
+            PhysicalBilling.billing_document == _norm_key(sap.billing_document),
+            Document.archived_at.is_(None),
         )
         candidate_query = candidate_query.where(
             Document.branch == batch_branch if batch_branch is not None else Document.branch.is_(None)
@@ -429,7 +430,10 @@ def reconcile_batch(db: Session, batch_id: int, *, branch: str | None = None) ->
             spj_partial = Decimal("0.00")
             partial_note: str | None = None
             if physical.no_spj:
-                spj_query = select(SPJ).join(SPJ.document).where(SPJ.no_spj == _norm_key(physical.no_spj))
+                spj_query = select(SPJ).join(SPJ.document).where(
+                    SPJ.no_spj == _norm_key(physical.no_spj),
+                    Document.archived_at.is_(None),
+                )
                 spj_query = spj_query.where(
                     Document.branch == batch_branch if batch_branch is not None else Document.branch.is_(None)
                 )
@@ -548,7 +552,7 @@ def _upsert_vouching_result(
 
 
 def vouch_spj(db: Session, *, branch: str | None = None) -> list[VouchingResult]:
-    billing_query = select(PhysicalBilling).join(PhysicalBilling.document)
+    billing_query = select(PhysicalBilling).join(PhysicalBilling.document).where(Document.archived_at.is_(None))
     if branch is not None:
         billing_query = billing_query.where(Document.branch == normalize_branch(branch))
     billings = db.scalars(billing_query).all()
@@ -570,7 +574,10 @@ def vouch_spj(db: Session, *, branch: str | None = None) -> list[VouchingResult]
             )
         else:
             billing_branch = normalize_branch(billing.document.branch)
-            match_query = select(SPJ).join(SPJ.document).where(SPJ.no_spj == no_spj)
+            match_query = select(SPJ).join(SPJ.document).where(
+                SPJ.no_spj == no_spj,
+                Document.archived_at.is_(None),
+            )
             match_query = match_query.where(
                 Document.branch == billing_branch if billing_branch is not None else Document.branch.is_(None)
             )
