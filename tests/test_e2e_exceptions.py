@@ -42,3 +42,77 @@ def test_duplicate_spj_number_requires_review():
         result = vouch_spj(db)[0]
         assert result.status == "REVIEW"
         assert result.rule_code == "DUPLICATE_SPJ_NUMBER"
+
+
+
+def test_missing_billing_is_not_found_and_does_not_stop_reconciliation():
+    with Session(_db()) as db:
+        batch = ImportBatch(file_name="missing-billing.xlsx", total_records=1, status="IMPORTED")
+        db.add(batch)
+        db.flush()
+        db.add(
+            SAPBilling(
+                import_batch_id=batch.id,
+                billing_document="B-404",
+                doc_date=date(2026, 9, 1),
+                nominal=Decimal("250000.00"),
+            )
+        )
+        db.commit()
+
+        [result] = reconcile_batch(db, batch.id)
+
+        assert result.status == "NOT_FOUND"
+        assert result.exception_code == "BILLING_DOCUMENT_NOT_FOUND"
+        assert "Billing belum lengkap" in (result.remarks or "")
+        assert "tetap dilanjutkan" in (result.remarks or "")
+
+
+def test_missing_spj_moves_to_review_and_does_not_stop_vouching():
+    with Session(_db()) as db:
+        billing_doc = Document(
+            file_name="billing-missing-spj.pdf",
+            file_type="PDF",
+            document_type="BILLING",
+            file_hash="missing-spj-billing",
+            storage_path="billing-missing-spj.pdf",
+        )
+        db.add(billing_doc)
+        db.flush()
+        db.add(
+            PhysicalBilling(
+                document_id=billing_doc.id,
+                billing_document="B500",
+                no_spj_raw="SPJ-500",
+                no_spj="SPJ500",
+            )
+        )
+        db.commit()
+
+        [result] = vouch_spj(db)
+
+        assert result.status == "REVIEW"
+        assert result.rule_code == "SPJ_NOT_FOUND"
+        assert "SPJ belum lengkap" in (result.remarks or "")
+        assert "tetap dilanjutkan" in (result.remarks or "")
+
+
+def test_billing_without_spj_number_moves_to_review():
+    with Session(_db()) as db:
+        billing_doc = Document(
+            file_name="billing-without-spj.pdf",
+            file_type="PDF",
+            document_type="BILLING",
+            file_hash="without-spj-number",
+            storage_path="billing-without-spj.pdf",
+        )
+        db.add(billing_doc)
+        db.flush()
+        db.add(PhysicalBilling(document_id=billing_doc.id, billing_document="B501"))
+        db.commit()
+
+        [result] = vouch_spj(db)
+
+        assert result.status == "REVIEW"
+        assert result.rule_code == "BILLING_WITHOUT_SPJ"
+        assert "SPJ belum lengkap" in (result.remarks or "")
