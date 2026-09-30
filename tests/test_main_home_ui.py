@@ -21,6 +21,7 @@ def test_main_home_layout_uses_left_sidebar_and_session_based_dashboard():
     assert "Alur Kerja Audit" in response.text
     assert "Akses Cepat" in response.text
     assert "/ui/dashboard" in response.text
+    assert "/ui/reviewer-center" in response.text
     assert "/ui/upload" in response.text
     assert "/ui/users" in response.text
     assert "Filter cabang (opsional)" in response.text
