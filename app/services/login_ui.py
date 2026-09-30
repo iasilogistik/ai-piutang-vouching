@@ -76,7 +76,12 @@ async function resolvePostLoginDestination(accessToken) {
   try {
     const response = await fetch('/auth/me', { headers: { Authorization: 'Bearer ' + accessToken } });
     const profile = await response.json();
-    if (response.ok && profile.role) return '/ui/main';
+    if (response.ok && profile.role) {
+      const role = String(profile.role).toUpperCase();
+      if (role === 'REVIEWER') return '/ui/main?view=' + encodeURIComponent('/ui/reviewer-center');
+      if (role === 'VIEWER') return '/ui/main?view=' + encodeURIComponent('/ui/viewer-center');
+      return '/ui/main';
+    }
   } catch (error) {
     return '/ui/main';
   }
