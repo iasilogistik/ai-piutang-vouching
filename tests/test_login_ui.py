@@ -31,13 +31,17 @@ def test_login_ui_does_not_render_application_navigation():
     assert "Buka Google Drive Import" not in response.text
 
 
-def test_login_ui_redirects_all_roles_to_main_command_center():
+def test_login_ui_routes_reviewer_and_viewer_to_role_centers():
     response = client.get("/login")
 
     assert response.status_code == 200
     assert "resolvePostLoginDestination" in response.text
     assert "fetch('/auth/me'" in response.text
     assert "profile.role" in response.text
+    assert "role === 'REVIEWER'" in response.text
+    assert "encodeURIComponent('/ui/reviewer-center')" in response.text
+    assert "role === 'VIEWER'" in response.text
+    assert "encodeURIComponent('/ui/viewer-center')" in response.text
     assert "return '/ui/main'" in response.text
     assert "return '/ui/users'" not in response.text
     assert "window.location.replace(destination)" in response.text
