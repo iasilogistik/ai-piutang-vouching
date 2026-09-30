@@ -117,7 +117,7 @@ main .next-step-action:hover{
 
     <section class="panel">
       <h2>2. Upload Evidence Billing &amp; SPJ</h2>
-      <p class="subtitle">Pilih metode sesuai bentuk evidence: Billing saja, SPJ saja, terpisah, satu file gabungan, arsip ZIP/RAR, atau Google Drive.</p>
+      <p class="subtitle">Pilih metode sesuai bentuk evidence: Billing saja, SPJ saja, terpisah, satu file gabungan, arsip ZIP/RAR, atau Google Drive. Upload tambahan bersifat incremental: evidence baru ditambahkan, sedangkan file dengan nama + jenis + cabang yang sudah ada dibuat sebagai versi pengganti.</p>
 
       <div class="evidence-mode">
         <label>Metode Upload Evidence</label>
@@ -182,7 +182,7 @@ main .next-step-action:hover{
       </div>
 
       <div class="actions"><button id="evidenceUploadBtn" type="button">Upload / Import Evidence</button></div>
-      <div class="note">File langsung diproses satu-per-satu. Arsip dan Google Drive memakai engine klasifikasi Billing/SPJ/Combined yang sama.</div>
+      <div class="note"><strong>Mode update otomatis:</strong> jika evidence belum ada → <strong>ADDED</strong>. Jika nama file + jenis evidence + cabang sudah ada → <strong>REPLACED</strong> sebagai versi baru; versi lama diarsipkan dan audit trail tetap tersimpan. ZIP dan Google Drive dapat di-upload ulang kapan saja untuk menambah evidence berikutnya.</div>
       <div class="result" id="evidenceLog">Belum ada upload evidence.</div>
     </section>
   </div>
