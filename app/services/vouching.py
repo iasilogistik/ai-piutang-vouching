@@ -54,6 +54,54 @@ def _billing_document_from_filename(file_name: str | None) -> str | None:
     return matches[0] if len(matches) == 1 else None
 
 
+def _customer_match_key(value: str | None) -> str | None:
+    """Normalize a customer label for conservative filename-to-SAP matching."""
+    value = _norm(value)
+    if not value:
+        return None
+    tokens = re.findall(r"[A-Za-z0-9]+", value.upper())
+    while tokens and tokens[-1] in {"TB", "TK", "TOKO", "CV", "PT", "UD", "PD"}:
+        tokens.pop()
+    return "".join(tokens) or None
+
+
+def _filename_customer_key(file_name: str | None) -> str | None:
+    """Return customer text from a filename after removing evidence labels and billing tokens."""
+    if not file_name:
+        return None
+    stem = Path(file_name).stem
+    stem = re.sub(r"(?<!\d)\d{10}(?!\d)", " ", stem)
+    tokens = re.findall(r"[A-Za-z0-9]+", stem.upper())
+    tokens = [token for token in tokens if token not in {"BILLING", "INVOICE", "FAKTUR", "SPJ", "EVIDENCE"}]
+    while tokens and tokens[-1] in {"TB", "TK", "TOKO", "CV", "PT", "UD", "PD"}:
+        tokens.pop()
+    return "".join(tokens) or None
+
+
+def _paired_spj_candidates(db: Session, billing: PhysicalBilling) -> list[SPJ]:
+    """Find SPJ evidence registered from the exact same uploaded file package.
+
+    Combined Billing+SPJ uploads create two document rows with the same hash/name/branch.
+    This provides a deterministic pairing even when scan OCR cannot read the SPJ number.
+    """
+    doc = billing.document
+    if doc is None:
+        return []
+    query = (
+        select(SPJ)
+        .join(SPJ.document)
+        .where(
+            Document.document_type == "SPJ",
+            Document.file_hash == doc.file_hash,
+            Document.file_name == doc.file_name,
+            Document.archived_at.is_(None),
+        )
+    )
+    branch = normalize_branch(doc.branch)
+    query = query.where(Document.branch == branch if branch is not None else Document.branch.is_(None))
+    return list(db.scalars(query).all())
+
+
 def _parse_amount(value: str | None) -> Decimal | None:
     """Parse OCR amount text into Decimal.
 
@@ -376,6 +424,13 @@ def reconcile_batch(db: Session, batch_id: int, *, branch: str | None = None) ->
     batch = db.get(ImportBatch, batch_id)
     batch_branch = normalize_branch(batch.branch if batch else None)
 
+    sap_rows = db.scalars(select(SAPBilling).where(SAPBilling.import_batch_id == batch_id)).all()
+    customer_map: dict[str, list[SAPBilling]] = {}
+    for sap_row in sap_rows:
+        customer_key = _customer_match_key(sap_row.customer_account_name or sap_row.customer)
+        if customer_key:
+            customer_map.setdefault(customer_key, []).append(sap_row)
+
     physical_query = select(PhysicalBilling, Document.file_name).join(PhysicalBilling.document).where(Document.archived_at.is_(None))
     physical_query = physical_query.where(
         Document.branch == batch_branch if batch_branch is not None else Document.branch.is_(None)
@@ -387,9 +442,19 @@ def reconcile_batch(db: Session, batch_id: int, *, branch: str | None = None) ->
         if fallback:
             physical.billing_document_raw = fallback
             physical.billing_document = _norm_key(fallback)
+            continue
+
+        # OCR can be unavailable for scanned PDFs in serverless runtime. When the
+        # filename contains a unique customer label, link only if exactly one SAP
+        # row in the current batch has the same normalized customer name.
+        customer_key = _filename_customer_key(file_name)
+        customer_matches = customer_map.get(customer_key or "", [])
+        if customer_key and len(customer_matches) == 1:
+            matched_sap = customer_matches[0]
+            physical.billing_document_raw = matched_sap.billing_document
+            physical.billing_document = _norm_key(matched_sap.billing_document)
     db.flush()
 
-    sap_rows = db.scalars(select(SAPBilling).where(SAPBilling.import_batch_id == batch_id)).all()
     results: list[BillingReconciliation] = []
     for sap in sap_rows:
         candidate_query = select(PhysicalBilling).join(PhysicalBilling.document).where(
@@ -453,10 +518,25 @@ def reconcile_batch(db: Session, batch_id: int, *, branch: str | None = None) ->
                         f"{physical.no_spj_raw or physical.no_spj}. Proses reconciliation tetap dilanjutkan."
                     )
             else:
-                partial_note = (
-                    "SPJ belum lengkap: nomor SPJ belum tersedia/terbaca pada Billing. "
-                    "Proses reconciliation tetap dilanjutkan."
-                )
+                paired_spj = _paired_spj_candidates(db, physical)
+                if len(paired_spj) == 1:
+                    paired = paired_spj[0]
+                    if paired.partial_payment is not None:
+                        spj_partial = paired.partial_payment
+                    partial_note = (
+                        "Evidence SPJ tersedia dalam paket/file yang sama, tetapi nomor SPJ belum terbaca oleh OCR. "
+                        "Proses reconciliation tetap dilanjutkan ke review."
+                    )
+                elif len(paired_spj) > 1:
+                    partial_note = (
+                        f"SPJ perlu review: ditemukan {len(paired_spj)} evidence SPJ dari file yang sama "
+                        "sementara nomor SPJ belum terbaca OCR."
+                    )
+                else:
+                    partial_note = (
+                        "SPJ belum lengkap: nomor SPJ belum tersedia/terbaca pada Billing dan evidence pasangan tidak ditemukan. "
+                        "Proses reconciliation tetap dilanjutkan."
+                    )
             billing_partial = physical.partial_payment or Decimal("0.00")
             net_nominal = _net_document_amount(physical.nominal, billing_partial, spj_partial)
             difference = sap.nominal - net_nominal if net_nominal is not None else sap.nominal
@@ -560,18 +640,51 @@ def vouch_spj(db: Session, *, branch: str | None = None) -> list[VouchingResult]
     for billing in billings:
         no_spj = _norm_key(billing.no_spj)
         if not no_spj:
-            result = _upsert_vouching_result(
-                db,
-                billing=billing,
-                spj=None,
-                spj_match=False,
-                automated_status="REVIEW",
-                automated_rule_code="BILLING_WITHOUT_SPJ",
-                automated_remarks=(
-                    "SPJ belum lengkap: nomor SPJ belum tersedia/terbaca pada Billing. "
-                    "Vouching tetap dilanjutkan dan item masuk ke review."
-                ),
-            )
+            paired_spj = _paired_spj_candidates(db, billing)
+            if len(paired_spj) == 1:
+                spj = paired_spj[0]
+                control_evidence = _control_evidence_for_spj(db, spj)
+                result = _upsert_vouching_result(
+                    db,
+                    billing=billing,
+                    spj=spj,
+                    spj_match=False,
+                    automated_status="REVIEW",
+                    automated_rule_code="SPJ_NUMBER_UNREADABLE_PAIRED_EVIDENCE",
+                    automated_remarks=(
+                        "Evidence SPJ ditemukan dari file/hash yang sama dengan Billing. "
+                        "Nomor SPJ belum terbaca OCR, sehingga evidence tidak dianggap hilang; "
+                        "vouching dilanjutkan ke review auditor."
+                    ),
+                    control_evidence=control_evidence,
+                )
+            elif len(paired_spj) > 1:
+                result = _upsert_vouching_result(
+                    db,
+                    billing=billing,
+                    spj=paired_spj[0],
+                    spj_match=False,
+                    automated_status="REVIEW",
+                    automated_rule_code="DUPLICATE_PAIRED_SPJ_EVIDENCE",
+                    automated_remarks=(
+                        f"Ditemukan {len(paired_spj)} evidence SPJ dengan file/hash pasangan yang sama; "
+                        "nomor SPJ belum terbaca OCR dan perlu review auditor."
+                    ),
+                    control_evidence=_control_evidence_for_spj(db, paired_spj[0]),
+                )
+            else:
+                result = _upsert_vouching_result(
+                    db,
+                    billing=billing,
+                    spj=None,
+                    spj_match=False,
+                    automated_status="REVIEW",
+                    automated_rule_code="BILLING_WITHOUT_SPJ",
+                    automated_remarks=(
+                        "SPJ belum lengkap: nomor SPJ belum tersedia/terbaca pada Billing dan evidence pasangan tidak ditemukan. "
+                        "Vouching tetap dilanjutkan dan item masuk ke review."
+                    ),
+                )
         else:
             billing_branch = normalize_branch(billing.document.branch)
             match_query = select(SPJ).join(SPJ.document).where(
