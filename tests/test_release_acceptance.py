@@ -60,6 +60,7 @@ def test_current_protected_audit_api_routes_registered():
         "/notifications",
         "/evidence-repository",
         "/search",
+        "/documents/{document_id}/view",
     }
     assert required <= _route_paths()
 

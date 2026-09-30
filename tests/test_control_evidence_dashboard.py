@@ -53,7 +53,8 @@ def test_control_evidence_dashboard_summarizes_review_queue():
         assert dashboard["summary"]["stamp_customer_match"]["MATCH"] == 1
         assert dashboard["rows"][0]["overall_control_status"] == "REVIEW"
         assert dashboard["rows"][0]["checker_signature_status"] == "MISSING"
-        assert dashboard["rows"][0]["document_url"] == f"/documents/{doc.id}/content"
+        assert dashboard["rows"][0]["document_url"] == f"/documents/{doc.id}/view"
+        assert dashboard["rows"][0]["document_content_url"] == f"/documents/{doc.id}/content"
         assert dashboard["manual_review_queue"][0]["review_reasons"] == [
             "Label tanda tangan checker tidak ditemukan",
             "Label satpam harus dicek manual",
