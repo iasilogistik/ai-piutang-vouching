@@ -129,3 +129,13 @@ def test_upload_center_shows_locked_state_only_for_final_manual_evidence():
     assert ">Locked</button>" in html
     assert "item.delete_reason" in html
     assert "hasil reconciliation/vouching akan di-reset" in html
+
+
+def test_upload_center_explains_incremental_add_and_replace_for_archive_and_drive():
+    html = upload_center_html()
+
+    assert "Upload tambahan bersifat incremental" in html
+    assert "ADDED" in html
+    assert "REPLACED" in html
+    assert "versi lama diarsipkan" in html
+    assert "ZIP dan Google Drive dapat di-upload ulang" in html
