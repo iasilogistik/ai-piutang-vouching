@@ -35,8 +35,10 @@ button.secondary,.link-btn.secondary{background:#475569}button.success,.link-btn
 .actions{display:flex;gap:7px;flex-wrap:wrap}
 .table-wrap{overflow:auto}table{width:100%;min-width:1020px;border-collapse:separate;border-spacing:0;border:1px solid var(--line);border-radius:12px;overflow:hidden}
 th,td{padding:10px 10px;text-align:left;border-bottom:1px solid #edf2f7;font-size:11px;vertical-align:middle}th{background:#f8fafc;color:#475569;font-weight:850}tr:last-child td{border-bottom:0}
-.badge{display:inline-flex;padding:5px 7px;border-radius:999px;background:#eff6ff;color:#1d4ed8;font-size:9px;font-weight:850}.badge.ok{background:#ecfdf5;color:#047857}.badge.warn{background:#fff7ed;color:#b45309}.badge.bad{background:#fef2f2;color:#b91c1c}
-.log{margin-top:14px;min-height:110px;max-height:260px;overflow:auto;padding:13px;border-radius:12px;background:#0f172a;color:#dbeafe;white-space:pre-wrap;font:11px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}
+.badge{display:inline-flex;padding:5px 7px;border-radius:999px;background:#eff6ff;color:#1d4ed8;font-size:10px;font-weight:850}.badge.ok{background:#ecfdf5;color:#047857}.badge.warn{background:#fff7ed;color:#9a4b08}.badge.bad{background:#fef2f2;color:#b91c1c}
+.evidence-note{min-width:190px;padding:9px 10px;border-radius:10px;border:1px solid #bbf7d0;background:#f0fdf4;color:#166534;font-size:11px;line-height:1.45}.evidence-note strong{display:block;font-size:11px;margin-bottom:2px}.evidence-note.warn{border-color:#fcd34d;background:#fffbeb;color:#854d0e}.evidence-note.bad{border-color:#fecaca;background:#fff7f7;color:#991b1b}
+.status-pill{display:inline-flex;align-items:center;border-radius:999px;padding:5px 8px;font-size:10px;font-weight:900;letter-spacing:.1px}.status-pill.match,.status-pill.pass{background:#dcfce7;color:#166534}.status-pill.review{background:#fef3c7;color:#92400e}.status-pill.exception,.status-pill.not-found{background:#fee2e2;color:#991b1b}
+.detail-panel{margin-top:14px;border:1px solid #cbd5e1;border-radius:14px;background:#fff;padding:14px;box-shadow:0 6px 18px rgba(15,23,42,.04)}.detail-panel[hidden]{display:none}.detail-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:10px}.detail-head h3{margin:0;font-size:15px}.detail-head p{margin:4px 0 0;color:#64748b;font-size:11px}.detail-summary{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}.detail-chip{padding:7px 9px;border-radius:9px;background:#f8fafc;border:1px solid #e2e8f0;font-size:11px;font-weight:800;color:#334155}.detail-chip.warn{background:#fffbeb;border-color:#fcd34d;color:#854d0e}.detail-chip.bad{background:#fff1f2;border-color:#fecdd3;color:#9f1239}.detail-table-wrap{max-height:430px;overflow:auto;border:1px solid #e2e8f0;border-radius:10px}.detail-table{min-width:980px;border:0;border-radius:0}.detail-table th{position:sticky;top:0;z-index:1}.detail-table td{font-size:11px;line-height:1.45}.detail-table tr.missing td{background:#fffdf2}.detail-table tr.problem td{background:#fff8f8}.detail-message{max-width:470px;white-space:normal;color:#334155;font-weight:650}.log{margin-top:14px;min-height:82px;max-height:220px;overflow:auto;padding:13px;border-radius:12px;background:#0f172a;color:#e2e8f0;white-space:pre-wrap;font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace}
 .next{margin-top:14px;display:flex;gap:8px;flex-wrap:wrap}
 @media(max-width:1100px){.metrics{grid-template-columns:repeat(3,1fr)}.workflow{grid-template-columns:repeat(3,1fr)}}
 @media(max-width:760px){main{padding:16px}.scope{grid-template-columns:1fr}.metrics{grid-template-columns:repeat(2,1fr)}.workflow{grid-template-columns:1fr 1fr}}
@@ -80,10 +82,11 @@ th,td{padding:10px 10px;text-align:left;border-bottom:1px solid #edf2f7;font-siz
     </div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Batch</th><th>File SAP</th><th>Cabang</th><th>Periode</th><th>Rows</th><th>Match</th><th>Review</th><th>Exception</th><th>Not Found</th><th>Aksi</th></tr></thead>
-        <tbody id="batchRows"><tr><td colspan="10">Memuat batch SAP...</td></tr></tbody>
+        <thead><tr><th>Batch</th><th>File SAP</th><th>Cabang</th><th>Periode</th><th>Rows</th><th>Match</th><th>Review</th><th>Exception</th><th>Not Found</th><th>Keterangan Evidence</th><th>Aksi</th></tr></thead>
+        <tbody id="batchRows"><tr><td colspan="11">Memuat batch SAP...</td></tr></tbody>
       </table>
     </div>
+    <div class="detail-panel" id="detailPanel" hidden></div>
     <div class="next">
       <a class="link-btn secondary" href="/ui/control-evidence">Lanjut: Control Evidence</a>
       <a class="link-btn secondary" href="/ui/review-queue">Lanjut: Review Queue</a>
@@ -98,6 +101,7 @@ const sessionEl=document.getElementById('session');
 const rowsEl=document.getElementById('batchRows');
 const metricsEl=document.getElementById('metrics');
 const logEl=document.getElementById('log');
+const detailEl=document.getElementById('detailPanel');
 let currentUser=null;
 let batches=[];
 let batchSummaries=new Map();
@@ -109,6 +113,81 @@ function log(title,payload=null){logEl.textContent=title;if(payload)logEl.textCo
 async function body(response){const text=await response.text();let payload={};try{payload=text?JSON.parse(text):{};}catch(_){throw new Error('Response server tidak dapat dibaca. HTTP '+response.status);}if(!response.ok)throw new Error(payload.detail||('HTTP '+response.status));return payload;}
 function selectedBranch(){return branchEl.value.trim().toUpperCase();}
 function badge(value){const n=Number(value||0);return '<span class="badge '+(n===0?'ok':n<5?'warn':'bad')+'">'+n+'</span>';}
+function evidenceLabel(state){
+  return ({
+    LENGKAP:'Evidence lengkap',
+    BILLING_BELUM_LENGKAP:'Billing belum lengkap',
+    SPJ_BELUM_LENGKAP:'SPJ belum lengkap',
+    SPJ_PERLU_REVIEW:'SPJ perlu review'
+  })[state]||String(state||'-').replaceAll('_',' ');
+}
+function statusPill(status){
+  const value=String(status||'-').toUpperCase();
+  const cls=value==='MATCH'?'match':value==='PASS'?'pass':value==='REVIEW'?'review':value==='NOT_FOUND'?'not-found':'exception';
+  return '<span class="status-pill '+cls+'">'+esc(value)+'</span>';
+}
+function evidenceSummary(summary){
+  const rows=(summary&&summary.rows)||[];
+  const billingMissing=rows.filter(r=>r.evidence_state==='BILLING_BELUM_LENGKAP').length;
+  const spjMissing=rows.filter(r=>r.evidence_state==='SPJ_BELUM_LENGKAP').length;
+  const spjReview=rows.filter(r=>r.evidence_state==='SPJ_PERLU_REVIEW').length;
+  if(summary&&summary._error)return '<div class="evidence-note bad"><strong>Detail belum terbaca</strong><span>'+esc(summary._error)+'</span></div>';
+  if(billingMissing||spjMissing||spjReview){
+    return '<div class="evidence-note warn"><strong>Proses tetap dilanjutkan</strong><span>Billing belum lengkap: '+billingMissing+' · SPJ belum lengkap: '+spjMissing+(spjReview?' · SPJ review: '+spjReview:'')+'</span></div>';
+  }
+  if(rows.length)return '<div class="evidence-note"><strong>Evidence terhubung</strong><span>Tidak ada Billing/SPJ yang ditandai belum lengkap.</span></div>';
+  return '<div class="evidence-note warn"><strong>Belum direkonsiliasi</strong><span>Jalankan reconciliation untuk melihat kelengkapan evidence.</span></div>';
+}
+function renderReconciliationDetail(batchId,payload){
+  const rows=(payload&&payload.rows)||[];
+  const counts=(payload&&payload.counts)||{};
+  const billingMissing=rows.filter(r=>r.evidence_state==='BILLING_BELUM_LENGKAP').length;
+  const spjMissing=rows.filter(r=>r.evidence_state==='SPJ_BELUM_LENGKAP').length;
+  const spjReview=rows.filter(r=>r.evidence_state==='SPJ_PERLU_REVIEW').length;
+  const body=rows.length?rows.map(r=>{
+    const state=r.evidence_state||'LENGKAP';
+    const rowClass=state==='LENGKAP'?'':(state==='SPJ_PERLU_REVIEW'?'problem':'missing');
+    return '<tr class="'+rowClass+'">'+
+      '<td>'+esc(r.billing_document||'-')+'</td>'+
+      '<td>'+esc(r.customer||'-')+'</td>'+
+      '<td>'+esc(r.spj_number||'-')+'</td>'+
+      '<td>'+statusPill(r.status)+'</td>'+
+      '<td><strong>'+esc(evidenceLabel(state))+'</strong></td>'+
+      '<td class="detail-message">'+esc(r.remarks||'Tidak ada catatan khusus.')+'</td>'+
+      '<td>'+esc(r.nominal_difference||'0')+'</td>'+
+    '</tr>';
+  }).join(''):'<tr><td colspan="7">Belum ada hasil reconciliation. Klik Run Reconciliation.</td></tr>';
+  detailEl.innerHTML=
+    '<div class="detail-head"><div><h3>Detail Reconciliation Batch #'+esc(batchId)+'</h3><p>Evidence yang belum lengkap tidak menghentikan proses. Item tetap diteruskan dan ditandai untuk review.</p></div></div>'+
+    '<div class="detail-summary">'+
+      '<div class="detail-chip">Match: '+esc(counts.MATCH||0)+'</div>'+
+      '<div class="detail-chip warn">Review: '+esc(counts.REVIEW||0)+'</div>'+
+      '<div class="detail-chip bad">Exception: '+esc(counts.EXCEPTION||0)+'</div>'+
+      '<div class="detail-chip bad">Not Found: '+esc(counts.NOT_FOUND||0)+'</div>'+
+      '<div class="detail-chip warn">Billing belum lengkap: '+billingMissing+'</div>'+
+      '<div class="detail-chip warn">SPJ belum lengkap: '+spjMissing+'</div>'+
+      (spjReview?'<div class="detail-chip warn">SPJ perlu review: '+spjReview+'</div>':'')+
+    '</div>'+
+    '<div class="detail-table-wrap"><table class="detail-table"><thead><tr><th>Billing SAP</th><th>Customer</th><th>No. SPJ</th><th>Status</th><th>Evidence</th><th>Keterangan</th><th>Selisih Nominal</th></tr></thead><tbody>'+body+'</tbody></table></div>';
+  detailEl.hidden=false;
+  detailEl.scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+function renderSpjDetail(branch,payload){
+  const rows=(payload&&payload.results)||[];
+  const missing=rows.filter(r=>r.evidence_state==='SPJ_BELUM_LENGKAP').length;
+  const review=rows.filter(r=>r.evidence_state==='SPJ_PERLU_REVIEW').length;
+  const body=rows.length?rows.map(r=>{
+    const state=r.evidence_state||'LENGKAP';
+    return '<tr class="'+(state==='LENGKAP'?'':'missing')+'">'+
+      '<td>'+esc(r.billing_id)+'</td><td>'+esc(r.no_spj_billing||'-')+'</td><td>'+statusPill(r.status)+'</td>'+
+      '<td><strong>'+esc(evidenceLabel(state))+'</strong></td><td class="detail-message">'+esc(r.remarks||'SPJ terhubung dan dapat diproses.')+'</td></tr>';
+  }).join(''):'<tr><td colspan="5">Belum ada Billing untuk divouching.</td></tr>';
+  detailEl.innerHTML='<div class="detail-head"><div><h3>Hasil SPJ Vouching · '+esc(branch)+'</h3><p>SPJ yang belum ada tetap diteruskan ke review, bukan menghentikan seluruh proses.</p></div></div>'+
+    '<div class="detail-summary"><div class="detail-chip">Total: '+rows.length+'</div><div class="detail-chip warn">SPJ belum lengkap: '+missing+'</div><div class="detail-chip warn">Perlu review: '+review+'</div></div>'+
+    '<div class="detail-table-wrap"><table class="detail-table"><thead><tr><th>Billing ID</th><th>No. SPJ Billing</th><th>Status</th><th>Evidence</th><th>Keterangan</th></tr></thead><tbody>'+body+'</tbody></table></div>';
+  detailEl.hidden=false;
+  detailEl.scrollIntoView({behavior:'smooth',block:'nearest'});
+}
 
 async function loadSession(){
   const response=await fetch('/auth/me',{headers:headers()});
@@ -122,10 +201,9 @@ async function loadSession(){
 async function reconciliationSummary(batchId){
   try{
     const response=await fetch('/reconciliation/'+batchId,{headers:headers()});
-    const payload=await body(response);
-    return payload.counts||{MATCH:0,REVIEW:0,EXCEPTION:0,NOT_FOUND:0};
+    return await body(response);
   }catch(error){
-    return {MATCH:0,REVIEW:0,EXCEPTION:0,NOT_FOUND:0,_error:error.message};
+    return {counts:{MATCH:0,REVIEW:0,EXCEPTION:0,NOT_FOUND:0},rows:[],_error:error.message};
   }
 }
 async function loadBatches(){
@@ -143,19 +221,22 @@ function renderMetrics(){
   batches.forEach(item=>{
     population+=Number(item.total_records||0);
     const s=batchSummaries.get(item.id)||{};
-    match+=Number(s.MATCH||0);review+=Number(s.REVIEW||0);exception+=Number(s.EXCEPTION||0);notFound+=Number(s.NOT_FOUND||0);
+    const counts=s.counts||{};
+    match+=Number(counts.MATCH||0);review+=Number(counts.REVIEW||0);exception+=Number(counts.EXCEPTION||0);notFound+=Number(counts.NOT_FOUND||0);
   });
   const values=[['Batch SAP',batches.length],['Population SAP',population],['Match',match],['Review',review],['Exception',exception],['Not Found',notFound]];
   metricsEl.innerHTML=values.map(([label,value])=>'<div class="metric"><span>'+esc(label)+'</span><b>'+esc(value)+'</b></div>').join('');
 }
 function render(){
   renderMetrics();
-  if(!batches.length){rowsEl.innerHTML='<tr><td colspan="10">Belum ada batch SAP pada scope ini.</td></tr>';return;}
+  if(!batches.length){rowsEl.innerHTML='<tr><td colspan="11">Belum ada batch SAP pada scope ini.</td></tr>';return;}
   rowsEl.innerHTML=batches.map(item=>{
     const s=batchSummaries.get(item.id)||{};
+    const counts=s.counts||{};
     return '<tr>'+
       '<td>#'+item.id+'</td><td>'+esc(item.file_name)+'</td><td>'+esc(item.branch)+'</td><td>'+esc(item.period||'-')+'</td><td>'+esc(item.total_records||0)+'</td>'+
-      '<td>'+badge(s.MATCH)+'</td><td>'+badge(s.REVIEW)+'</td><td>'+badge(s.EXCEPTION)+'</td><td>'+badge(s.NOT_FOUND)+'</td>'+
+      '<td>'+badge(counts.MATCH)+'</td><td>'+badge(counts.REVIEW)+'</td><td>'+badge(counts.EXCEPTION)+'</td><td>'+badge(counts.NOT_FOUND)+'</td>'+
+      '<td>'+evidenceSummary(s)+'</td>'+
       '<td><div class="actions">'+
         '<button class="secondary" data-validate="'+item.id+'" type="button">Validate SAP</button>'+
         '<button data-run="'+item.id+'" type="button">Run Reconciliation</button>'+
@@ -182,8 +263,10 @@ async function runReconciliation(id,button){
     const response=await fetch('/reconciliation/'+id+'/run',{method:'POST',headers:headers()});
     const payload=await body(response);
     log('RECONCILIATION SELESAI - BATCH #'+id,payload);
-    batchSummaries.set(id,await reconciliationSummary(id));
+    const summary=await reconciliationSummary(id);
+    batchSummaries.set(id,summary);
     render();
+    renderReconciliationDetail(id,summary);
   }catch(error){log('RECONCILIATION GAGAL: '+error.message);}
   finally{button.disabled=false;}
 }
@@ -192,6 +275,7 @@ async function showDetail(id){
     const response=await fetch('/reconciliation/'+id,{headers:headers()});
     const payload=await body(response);
     log('DETAIL RECONCILIATION - BATCH #'+id,payload);
+    renderReconciliationDetail(id,payload);
   }catch(error){log('DETAIL GAGAL: '+error.message);}
 }
 async function runSpjVouch(){
@@ -203,6 +287,7 @@ async function runSpjVouch(){
     const response=await fetch('/spj/vouch?branch='+encodeURIComponent(branch),{method:'POST',headers:headers()});
     const payload=await body(response);
     log('SPJ VOUCHING SELESAI - '+branch,payload);
+    renderSpjDetail(branch,payload);
   }catch(error){log('SPJ VOUCHING GAGAL: '+error.message);}
   finally{button.disabled=false;}
 }
