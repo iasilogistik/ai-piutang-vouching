@@ -26,6 +26,19 @@ def test_non_admin_navigation_hides_administration_links():
         assert "Branches" not in labels
 
 
+def test_reviewer_has_dedicated_reviewer_center_and_dashboard():
+    reviewer = _labels("REVIEWER")
+    admin = _labels("ADMIN")
+    auditor = _labels("AUDITOR")
+    viewer = _labels("VIEWER")
+
+    assert "Dashboard" in reviewer
+    assert "Reviewer Center" in reviewer
+    assert "Reviewer Center" in admin
+    assert "Reviewer Center" not in auditor
+    assert "Reviewer Center" not in viewer
+
+
 def test_viewer_navigation_is_read_focused():
     labels = _labels("VIEWER")
     assert labels == ["Dashboard", "Audit Management", "Engagements", "Sampling", "Working Papers", "Findings", "Management Actions", "Follow-up", "Evidence Repository", "Workflow", "Reports", "Evidence"]
@@ -88,6 +101,7 @@ def test_wave2_navigation_uses_new_primary_routes():
     assert auditor["Workflow"] == "/ui/audit-workflow"
 
     assert reviewer["Dashboard"] == "/ui/dashboard"
+    assert reviewer["Reviewer Center"] == "/ui/reviewer-center"
     assert reviewer["Audit Management"] == "/ui/audit-management"
     assert reviewer["Engagements"] == "/ui/audit-engagements"
     assert reviewer["Sampling"] == "/ui/audit-sampling"
