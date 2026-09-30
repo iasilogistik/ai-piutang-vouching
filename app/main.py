@@ -41,6 +41,7 @@ from app.services.control_evidence_ui import control_evidence_dashboard_html
 from app.services.drive_folder import download_drive_folder_file, is_supported_drive_folder_file, list_google_drive_folder_files
 from app.services.drive_import_ui import drive_import_html
 from app.services.drive_link import download_drive_link_file
+from app.services.document_viewer import register_document_viewer_routes
 from app.services.exception_management import register_exception_management_routes
 from app.services.evidence_repository import register_evidence_repository_routes
 from app.services.global_search import register_global_search_routes
@@ -98,6 +99,7 @@ register_global_search_routes(app)
 register_review_workflow_routes(app)
 register_reviewer_center_routes(app)
 register_viewer_center_routes(app)
+register_document_viewer_routes(app)
 register_audit_trail_ui_routes(app)
 register_audit_report_routes(app)
 register_audit_closing_routes(app)
