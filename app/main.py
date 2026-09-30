@@ -567,6 +567,8 @@ def _reconciliation_row_payload(row: BillingReconciliation) -> dict:
     remarks = row.remarks or ""
     if row.exception_code == "BILLING_DOCUMENT_NOT_FOUND" or physical is None:
         evidence_state = "BILLING_BELUM_LENGKAP"
+    elif "Evidence SPJ tersedia" in remarks:
+        evidence_state = "SPJ_OCR_REVIEW"
     elif "SPJ belum lengkap" in remarks:
         evidence_state = "SPJ_BELUM_LENGKAP"
     elif "SPJ perlu review" in remarks:
@@ -638,7 +640,15 @@ def run_spj_vouching(branch: str | None = None, db: Session = Depends(get_db),
         "evidence_state": (
             "SPJ_BELUM_LENGKAP"
             if r.rule_code in {"BILLING_WITHOUT_SPJ", "SPJ_NOT_FOUND"}
-            else ("SPJ_PERLU_REVIEW" if r.rule_code == "DUPLICATE_SPJ_NUMBER" else "LENGKAP")
+            else (
+                "SPJ_OCR_REVIEW"
+                if r.rule_code == "SPJ_NUMBER_UNREADABLE_PAIRED_EVIDENCE"
+                else (
+                    "SPJ_PERLU_REVIEW"
+                    if r.rule_code in {"DUPLICATE_SPJ_NUMBER", "DUPLICATE_PAIRED_SPJ_EVIDENCE"}
+                    else "LENGKAP"
+                )
+            )
         ),
     } for r in rows]}
 
