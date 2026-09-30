@@ -34,3 +34,15 @@ def test_reconciliation_vouching_route_is_registered():
 
     assert response.status_code == 200
     assert "Batch SAP &amp; Hasil Reconciliation" in response.text
+
+
+
+def test_reconciliation_vouching_page_highlights_incomplete_evidence_readably():
+    html = reconciliation_vouching_html()
+
+    assert "Keterangan Evidence" in html
+    assert "Billing belum lengkap" in html
+    assert "SPJ belum lengkap" in html
+    assert "Proses tetap dilanjutkan" in html
+    assert "detail-panel" in html
+    assert "renderReconciliationDetail" in html

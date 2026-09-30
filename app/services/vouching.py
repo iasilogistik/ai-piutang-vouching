@@ -404,9 +404,20 @@ def reconcile_batch(db: Session, batch_id: int, *, branch: str | None = None) ->
             db.delete(existing)
             db.flush()
         if len(candidates) == 0:
-            rec = BillingReconciliation(sap_billing_id=sap.id, physical_billing_id=None, billing_match=False,
-                date_match=False, nominal_match=False, nominal_difference=sap.nominal, status="EXCEPTION",
-                exception_code="BILLING_DOCUMENT_NOT_FOUND", remarks="No physical Billing document found")
+            rec = BillingReconciliation(
+                sap_billing_id=sap.id,
+                physical_billing_id=None,
+                billing_match=False,
+                date_match=False,
+                nominal_match=False,
+                nominal_difference=sap.nominal,
+                status="NOT_FOUND",
+                exception_code="BILLING_DOCUMENT_NOT_FOUND",
+                remarks=(
+                    "Billing belum lengkap: evidence Billing belum ditemukan untuk Billing Document "
+                    f"{sap.billing_document}. Proses reconciliation tetap dilanjutkan dan item masuk ke review."
+                ),
+            )
         elif len(candidates) > 1:
             rec = BillingReconciliation(sap_billing_id=sap.id, physical_billing_id=None, billing_match=False,
                 date_match=False, nominal_match=False, nominal_difference=Decimal("0.00"), status="EXCEPTION",
@@ -423,8 +434,25 @@ def reconcile_batch(db: Session, batch_id: int, *, branch: str | None = None) ->
                     Document.branch == batch_branch if batch_branch is not None else Document.branch.is_(None)
                 )
                 spj_matches = db.scalars(spj_query).all()
-                if len(spj_matches) == 1 and spj_matches[0].partial_payment is not None:
-                    spj_partial = spj_matches[0].partial_payment
+                if len(spj_matches) == 1:
+                    if spj_matches[0].partial_payment is not None:
+                        spj_partial = spj_matches[0].partial_payment
+                elif len(spj_matches) == 0:
+                    partial_note = (
+                        "SPJ belum lengkap: evidence SPJ "
+                        f"{physical.no_spj_raw or physical.no_spj} belum ditemukan. "
+                        "Proses reconciliation tetap dilanjutkan."
+                    )
+                else:
+                    partial_note = (
+                        f"SPJ perlu review: ditemukan {len(spj_matches)} evidence dengan nomor "
+                        f"{physical.no_spj_raw or physical.no_spj}. Proses reconciliation tetap dilanjutkan."
+                    )
+            else:
+                partial_note = (
+                    "SPJ belum lengkap: nomor SPJ belum tersedia/terbaca pada Billing. "
+                    "Proses reconciliation tetap dilanjutkan."
+                )
             billing_partial = physical.partial_payment or Decimal("0.00")
             net_nominal = _net_document_amount(physical.nominal, billing_partial, spj_partial)
             difference = sap.nominal - net_nominal if net_nominal is not None else sap.nominal
@@ -437,7 +465,12 @@ def reconcile_batch(db: Session, batch_id: int, *, branch: str | None = None) ->
             if spj_partial:
                 remarks_parts.append(f"SPJ partial payment deducted: {spj_partial}")
             if missing_ocr:
-                remarks_parts.append("OCR field incomplete; human review required")
+                remarks_parts.append(
+                    "Billing belum lengkap: field Billing hasil OCR belum lengkap; "
+                    "proses tetap dilanjutkan ke review auditor."
+                )
+            if partial_note:
+                remarks_parts.append(partial_note)
             rec = BillingReconciliation(sap_billing_id=sap.id, physical_billing_id=physical.id,
                 billing_match=billing_match, date_match=date_match, nominal_match=nominal_match,
                 nominal_difference=difference, status=status,
@@ -528,8 +561,12 @@ def vouch_spj(db: Session, *, branch: str | None = None) -> list[VouchingResult]
                 billing=billing,
                 spj=None,
                 spj_match=False,
-                automated_status="EXCEPTION",
+                automated_status="REVIEW",
                 automated_rule_code="BILLING_WITHOUT_SPJ",
+                automated_remarks=(
+                    "SPJ belum lengkap: nomor SPJ belum tersedia/terbaca pada Billing. "
+                    "Vouching tetap dilanjutkan dan item masuk ke review."
+                ),
             )
         else:
             billing_branch = normalize_branch(billing.document.branch)
@@ -544,8 +581,12 @@ def vouch_spj(db: Session, *, branch: str | None = None) -> list[VouchingResult]
                     billing=billing,
                     spj=None,
                     spj_match=False,
-                    automated_status="EXCEPTION",
+                    automated_status="REVIEW",
                     automated_rule_code="SPJ_NOT_FOUND",
+                    automated_remarks=(
+                        f"SPJ belum lengkap: evidence SPJ {billing.no_spj_raw or billing.no_spj} "
+                        "belum ditemukan. Vouching tetap dilanjutkan dan item masuk ke review."
+                    ),
                 )
             elif len(matches) > 1:
                 result = _upsert_vouching_result(
@@ -671,7 +712,7 @@ def overall_result(db: Session, billing_id: int, *, branch: str | None = None) -
     vouch = db.scalar(select(VouchingResult).where(VouchingResult.billing_id == billing_id))
     if rec is None:
         overall = "EXCEPTION"
-    elif rec.status == "EXCEPTION":
+    elif rec.status in {"EXCEPTION", "NOT_FOUND"}:
         overall = "EXCEPTION"
     elif vouch is None or vouch.status == "EXCEPTION":
         overall = "EXCEPTION"

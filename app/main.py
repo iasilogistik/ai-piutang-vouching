@@ -508,6 +508,38 @@ def run_ocr(document_id: int, db: Session = Depends(get_db),
     except ValueError as exc: raise handle_error(exc) from exc
 
 
+def _reconciliation_row_payload(row: BillingReconciliation) -> dict:
+    sap = row.sap_billing
+    physical = row.physical_billing
+    remarks = row.remarks or ""
+    if row.exception_code == "BILLING_DOCUMENT_NOT_FOUND" or physical is None:
+        evidence_state = "BILLING_BELUM_LENGKAP"
+    elif "SPJ belum lengkap" in remarks:
+        evidence_state = "SPJ_BELUM_LENGKAP"
+    elif "SPJ perlu review" in remarks:
+        evidence_state = "SPJ_PERLU_REVIEW"
+    elif "Billing belum lengkap" in remarks:
+        evidence_state = "BILLING_BELUM_LENGKAP"
+    else:
+        evidence_state = "LENGKAP"
+    return {
+        "id": row.id,
+        "sap_billing_id": row.sap_billing_id,
+        "physical_billing_id": row.physical_billing_id,
+        "billing_document": sap.billing_document if sap else None,
+        "customer": (sap.customer_account_name or sap.customer) if sap else None,
+        "spj_number": physical.no_spj_raw or physical.no_spj if physical else None,
+        "billing_match": row.billing_match,
+        "date_match": row.date_match,
+        "nominal_match": row.nominal_match,
+        "nominal_difference": str(row.nominal_difference),
+        "status": row.status,
+        "exception_code": row.exception_code,
+        "remarks": row.remarks,
+        "evidence_state": evidence_state,
+    }
+
+
 @app.post("/reconciliation/{batch_id}/run")
 def run_reconciliation(batch_id: int, db: Session = Depends(get_db),
                        user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR"))):
@@ -519,8 +551,7 @@ def run_reconciliation(batch_id: int, db: Session = Depends(get_db),
                      branch=batch.branch)
         db.commit()
     except ValueError as exc: raise handle_error(exc) from exc
-    return {"batch_id": batch_id, "total": len(rows), "results": [{"id": r.id, "status": r.status,
-        "exception_code": r.exception_code, "nominal_difference": str(r.nominal_difference)} for r in rows]}
+    return {"batch_id": batch_id, "total": len(rows), "results": [_reconciliation_row_payload(r) for r in rows]}
 
 
 @app.get("/reconciliation/{batch_id}")
@@ -530,9 +561,7 @@ def reconciliation_dashboard(batch_id: int, db: Session = Depends(get_db), user:
         BillingReconciliation.sap_billing.has(import_batch_id=batch_id))).all()
     counts = {status: sum(1 for row in rows if row.status == status) for status in ("MATCH", "REVIEW", "EXCEPTION", "NOT_FOUND")}
     return {"batch_id": batch_id, "total": len(rows), "counts": counts,
-            "rows": [{"id": r.id, "sap_billing_id": r.sap_billing_id, "physical_billing_id": r.physical_billing_id,
-                       "billing_match": r.billing_match, "date_match": r.date_match, "nominal_match": r.nominal_match,
-                       "nominal_difference": str(r.nominal_difference), "status": r.status, "exception_code": r.exception_code} for r in rows]}
+            "rows": [_reconciliation_row_payload(r) for r in rows]}
 
 
 @app.post("/spj/vouch")
@@ -544,8 +573,21 @@ def run_spj_vouching(branch: str | None = None, db: Session = Depends(get_db),
                  actor=user.user_id, status_to="COMPLETED", metadata={"total": len(rows)},
                  branch=effective_branch)
     db.commit()
-    return {"total": len(rows), "results": [{"id": r.id, "billing_id": r.billing_id, "spj_id": r.spj_id,
-        "status": r.status, "rule_code": r.rule_code} for r in rows]}
+    return {"total": len(rows), "results": [{
+        "id": r.id,
+        "billing_id": r.billing_id,
+        "spj_id": r.spj_id,
+        "no_spj_billing": r.no_spj_billing,
+        "no_spj_document": r.no_spj_document,
+        "status": r.status,
+        "rule_code": r.rule_code,
+        "remarks": r.remarks,
+        "evidence_state": (
+            "SPJ_BELUM_LENGKAP"
+            if r.rule_code in {"BILLING_WITHOUT_SPJ", "SPJ_NOT_FOUND"}
+            else ("SPJ_PERLU_REVIEW" if r.rule_code == "DUPLICATE_SPJ_NUMBER" else "LENGKAP")
+        ),
+    } for r in rows]}
 
 
 @app.get("/results/{billing_id}")
@@ -561,7 +603,7 @@ def exceptions(branch: str | None = None, db: Session = Depends(get_db), user: C
         select(BillingReconciliation)
         .join(BillingReconciliation.sap_billing)
         .join(SAPBilling.import_batch)
-        .where(BillingReconciliation.status.in_(["EXCEPTION", "REVIEW"]))
+        .where(BillingReconciliation.status.in_(["EXCEPTION", "REVIEW", "NOT_FOUND"]))
     )
     vouch_query = (
         select(VouchingResult)
