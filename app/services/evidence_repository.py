@@ -102,6 +102,8 @@ def evidence_payload(db: Session, row: Document) -> dict[str, object]:
         "document_type": row.document_type,
         "file_hash": row.file_hash,
         "storage_path": row.storage_path,
+        "view_url": f"/documents/{row.id}/view",
+        "content_url": f"/documents/{row.id}/content",
         "uploaded_by": row.uploaded_by,
         "branch": row.branch,
         "uploaded_at": row.uploaded_at.isoformat() if row.uploaded_at else None,
