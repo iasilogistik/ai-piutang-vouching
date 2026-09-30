@@ -41,9 +41,10 @@ def test_reviewer_has_dedicated_reviewer_center_and_dashboard():
 
 def test_viewer_navigation_is_read_focused():
     labels = _labels("VIEWER")
-    assert labels == ["Dashboard", "Audit Management", "Engagements", "Sampling", "Working Papers", "Findings", "Management Actions", "Follow-up", "Evidence Repository", "Workflow", "Reports", "Evidence"]
+    assert labels == ["Dashboard", "Viewer Center", "Audit Management", "Engagements", "Sampling", "Working Papers", "Findings", "Management Actions", "Follow-up", "Evidence Repository", "Workflow", "Reports", "Evidence"]
     assert "Upload" not in labels
     assert "Vouching" not in labels
+    assert "Viewer Center" in labels
 
 
 def test_navigation_fragment_uses_authenticated_role_and_branch():
@@ -115,6 +116,7 @@ def test_wave2_navigation_uses_new_primary_routes():
     assert reviewer["Workflow"] == "/ui/audit-workflow"
 
     assert viewer["Dashboard"] == "/ui/dashboard"
+    assert viewer["Viewer Center"] == "/ui/viewer-center"
     assert viewer["Audit Management"] == "/ui/audit-management"
     assert viewer["Engagements"] == "/ui/audit-engagements"
     assert viewer["Sampling"] == "/ui/audit-sampling"
