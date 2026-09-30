@@ -44,6 +44,7 @@ def test_current_audit_ui_routes_registered():
         "/ui/audit-reports",
         "/ui/audit-closing",
         "/ui/reviewer-center",
+        "/ui/viewer-center",
     }
     assert required <= _route_paths()
 

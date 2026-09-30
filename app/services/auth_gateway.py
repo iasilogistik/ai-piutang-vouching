@@ -8,7 +8,7 @@ from sqlalchemy import text
 from app.config import settings
 from app.database import SessionLocal
 
-_ALLOWED_LOGIN_ROLES = {"ADMIN", "AUDITOR"}
+_ALLOWED_LOGIN_ROLES = {"ADMIN", "AUDITOR", "REVIEWER", "VIEWER"}
 
 
 def _auth_url(path: str) -> str:
@@ -56,7 +56,7 @@ def _normalize_session(data: dict[str, object]) -> dict[str, object]:
     }
 
 
-def _enforce_admin_or_auditor(session: dict[str, object]) -> dict[str, object]:
+def _enforce_application_user(session: dict[str, object]) -> dict[str, object]:
     user = session.get("user")
     user_id = user.get("id") if isinstance(user, dict) else None
     email = user.get("email") if isinstance(user, dict) else None
@@ -79,11 +79,11 @@ def _enforce_admin_or_auditor(session: dict[str, object]) -> dict[str, object]:
         ).mappings().one_or_none()
 
     if row is None:
-        raise ValueError("Login ditolak. User belum didaftarkan sebagai ADMIN atau AUDITOR")
+        raise ValueError("Login ditolak. User belum didaftarkan pada aplikasi")
     if not row["is_active"]:
         raise ValueError("Login ditolak. User aplikasi berstatus nonaktif")
     if row["role"] not in _ALLOWED_LOGIN_ROLES:
-        raise ValueError("Login ditolak. Hanya role ADMIN dan AUDITOR yang dapat login")
+        raise ValueError("Login ditolak. Role aplikasi tidak dikenali")
 
     session_user = session.get("user")
     if isinstance(session_user, dict):
@@ -110,7 +110,7 @@ def login_with_password(email: str, password: str) -> dict[str, object]:
     data = response.json()
     if not data.get("access_token"):
         raise ValueError("Login gagal. Access token tidak diterima")
-    return _enforce_admin_or_auditor(_normalize_session(data))
+    return _enforce_application_user(_normalize_session(data))
 
 
 def refresh_access_token(refresh_token: str) -> dict[str, object]:
