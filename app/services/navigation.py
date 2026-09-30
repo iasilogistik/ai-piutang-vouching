@@ -40,6 +40,7 @@ _MENU = {
         ("Control Evidence", "/ui/control-evidence"),
         ("Exceptions", "/ui/exceptions"),
         ("Reviewer Center", "/ui/reviewer-center"),
+        ("Viewer Center", "/ui/viewer-center"),
         ("Review Queue", "/ui/review-queue"),
         ("Audit Trail", "/ui/audit-trail"),
         ("Reports", "/ui/audit-reports"),
@@ -87,6 +88,7 @@ _MENU = {
     ],
     "VIEWER": [
         ("Dashboard", "/ui/dashboard"),
+        ("Viewer Center", "/ui/viewer-center"),
         ("Audit Management", "/ui/audit-management"),
         ("Engagements", "/ui/audit-engagements"),
         ("Sampling", "/ui/audit-sampling"),
