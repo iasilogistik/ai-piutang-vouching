@@ -51,8 +51,10 @@ def _dashboard_row(db: Session, row: DocumentControlEvidence) -> dict[str, Any]:
     spj = document.spj if document else None
     vouching = _latest_vouching_for_spj(db, spj.id if spj else None)
 
+    payload = evidence_payload(row) or {}
     return {
         "control_evidence_id": row.id,
+        "receiver_name": payload.get("receiver_name"),
         "document_id": row.document_id,
         "file_name": document.file_name if document else None,
         "document_type": document.document_type if document else None,
@@ -64,6 +66,8 @@ def _dashboard_row(db: Session, row: DocumentControlEvidence) -> dict[str, Any]:
         "no_spj_raw": spj.no_spj_raw if spj else None,
         "spj_id": spj.id if spj else None,
         "billing_id": vouching.billing_id if vouching else None,
+        "billing_partial_payment": str(vouching.billing.partial_payment) if vouching and vouching.billing.partial_payment is not None else None,
+        "spj_partial_payment": str(spj.partial_payment) if spj and spj.partial_payment is not None else None,
         "vouching_result_id": vouching.id if vouching else None,
         "spj_vouching_status": vouching.status if vouching else None,
         "overall_control_status": _control_status(row),
@@ -83,7 +87,7 @@ def _dashboard_row(db: Session, row: DocumentControlEvidence) -> dict[str, Any]:
         "stamp_text_normalized": row.stamp_text_normalized,
         "stamp_customer_match_status": row.stamp_customer_match_status,
         "updated_at": row.updated_at,
-        "evidence": evidence_payload(row),
+        "evidence": payload,
     }
 
 
