@@ -1,9 +1,20 @@
 import { Hono } from 'hono';
-import path from 'node:path';
+import { createRequire } from 'node:module';
 import sharp from 'sharp';
 import { createWorker } from 'tesseract.js';
 
 const app = new Hono();
+const requireForTrace = createRequire(import.meta.url);
+const TESSERACT_CORE_RUNTIME_ASSETS = [
+  requireForTrace.resolve('tesseract.js-core/tesseract-core.wasm'),
+  requireForTrace.resolve('tesseract.js-core/tesseract-core-simd.wasm'),
+  requireForTrace.resolve('tesseract.js-core/tesseract-core-lstm.wasm'),
+  requireForTrace.resolve('tesseract.js-core/tesseract-core-simd-lstm.wasm'),
+  requireForTrace.resolve('tesseract.js-core/tesseract-core-relaxedsimd.wasm'),
+  requireForTrace.resolve('tesseract.js-core/tesseract-core-relaxedsimd-lstm.wasm'),
+];
+void TESSERACT_CORE_RUNTIME_ASSETS;
+
 
 type BBox = { x0: number; y0: number; x1: number; y1: number };
 type OcrLine = { text: string; bbox: BBox };
@@ -22,7 +33,6 @@ let workerPromise: ReturnType<typeof createWorker> | null = null;
 function getWorker() {
   if (!workerPromise) {
     workerPromise = createWorker('eng', undefined, {
-      corePath: path.resolve(process.cwd(), 'src/tesseract-core'),
       langPath: 'https://tessdata.projectnaptha.com/4.0.0_fast',
       logger: (message) => {
         if (message?.status === 'recognizing text' && message?.progress === 1) {
