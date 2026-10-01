@@ -337,6 +337,8 @@ def analyze_and_persist_control_evidence(
     *,
     expected_customer: str | None = None,
     vision_result: dict[str, Any] | None = None,
+    ocr_text: str | None = None,
+    ocr_engine: str | None = None,
 ) -> dict[str, Any]:
     """Analyze SPJ visual evidence with OCR first and multimodal vision fallback."""
 
@@ -352,22 +354,26 @@ def analyze_and_persist_control_evidence(
     from app.services.vision_evidence import analyze_document_vision, vision_available
     from pathlib import Path
 
-    ocr_path = document.storage_path
-    temporary_path: str | None = None
-    if settings.use_supabase_storage:
-        temporary_path = materialize(document.storage_path, Path(document.file_name).suffix.lower())
-        ocr_path = temporary_path
-    try:
-        text, engine = extract_text(ocr_path)
-        if vision_result is None and vision_available() and not text:
-            vision_result = analyze_document_vision(
-                ocr_path,
-                file_name=document.file_name,
-                expected_customer=expected_customer,
-            )
-    finally:
-        if temporary_path:
-            Path(temporary_path).unlink(missing_ok=True)
+    if ocr_text is not None:
+        text = ocr_text
+        engine = ocr_engine or "OCR_REUSED"
+    else:
+        ocr_path = document.storage_path
+        temporary_path: str | None = None
+        if settings.use_supabase_storage:
+            temporary_path = materialize(document.storage_path, Path(document.file_name).suffix.lower())
+            ocr_path = temporary_path
+        try:
+            text, engine = extract_text(ocr_path)
+            if vision_result is None and vision_available() and not text:
+                vision_result = analyze_document_vision(
+                    ocr_path,
+                    file_name=document.file_name,
+                    expected_customer=expected_customer,
+                )
+        finally:
+            if temporary_path:
+                Path(temporary_path).unlink(missing_ok=True)
 
     if not expected_customer:
         expected_customer = _customer_from_vision(db, vision_result)

@@ -118,6 +118,7 @@ function evidenceLabel(state){
     LENGKAP:'Evidence lengkap',
     BILLING_BELUM_LENGKAP:'Billing belum lengkap',
     SPJ_BELUM_LENGKAP:'SPJ belum lengkap',
+    SPJ_OCR_INFO:'SPJ tersedia · OCR info',
     SPJ_OCR_REVIEW:'SPJ tersedia · OCR perlu review',
     SPJ_PERLU_REVIEW:'SPJ perlu review'
   })[state]||String(state||'-').replaceAll('_',' ');
@@ -131,11 +132,15 @@ function evidenceSummary(summary){
   const rows=(summary&&summary.rows)||[];
   const billingMissing=rows.filter(r=>r.evidence_state==='BILLING_BELUM_LENGKAP').length;
   const spjMissing=rows.filter(r=>r.evidence_state==='SPJ_BELUM_LENGKAP').length;
+  const spjOcrInfo=rows.filter(r=>r.evidence_state==='SPJ_OCR_INFO').length;
   const spjOcr=rows.filter(r=>r.evidence_state==='SPJ_OCR_REVIEW').length;
   const spjReview=rows.filter(r=>r.evidence_state==='SPJ_PERLU_REVIEW').length;
   if(summary&&summary._error)return '<div class="evidence-note bad"><strong>Detail belum terbaca</strong><span>'+esc(summary._error)+'</span></div>';
   if(billingMissing||spjMissing||spjOcr||spjReview){
-    return '<div class="evidence-note warn"><strong>Proses tetap dilanjutkan</strong><span>Billing belum lengkap: '+billingMissing+' · SPJ belum lengkap: '+spjMissing+(spjOcr?' · SPJ tersedia/OCR review: '+spjOcr:'')+(spjReview?' · SPJ review: '+spjReview:'')+'</span></div>';
+    return '<div class="evidence-note warn"><strong>Proses tetap dilanjutkan</strong><span>Perlu perhatian: Billing belum lengkap: '+billingMissing+' · SPJ belum lengkap: '+spjMissing+(spjOcr?' · SPJ tersedia/OCR review: '+spjOcr:'')+(spjReview?' · SPJ review: '+spjReview:'')+'</span></div>';
+  }
+  if(spjOcrInfo){
+    return '<div class="evidence-note"><strong>Evidence terhubung</strong><span>SPJ tersedia; nomor/field OCR yang belum terbaca hanya informasi, bukan REVIEW: '+spjOcrInfo+'</span></div>';
   }
   if(rows.length)return '<div class="evidence-note"><strong>Evidence terhubung</strong><span>Tidak ada Billing/SPJ yang ditandai belum lengkap.</span></div>';
   return '<div class="evidence-note warn"><strong>Belum direkonsiliasi</strong><span>Jalankan reconciliation untuk melihat kelengkapan evidence.</span></div>';
@@ -145,6 +150,7 @@ function renderReconciliationDetail(batchId,payload){
   const counts=(payload&&payload.counts)||{};
   const billingMissing=rows.filter(r=>r.evidence_state==='BILLING_BELUM_LENGKAP').length;
   const spjMissing=rows.filter(r=>r.evidence_state==='SPJ_BELUM_LENGKAP').length;
+  const spjOcrInfo=rows.filter(r=>r.evidence_state==='SPJ_OCR_INFO').length;
   const spjOcr=rows.filter(r=>r.evidence_state==='SPJ_OCR_REVIEW').length;
   const spjReview=rows.filter(r=>r.evidence_state==='SPJ_PERLU_REVIEW').length;
   const body=rows.length?rows.map(r=>{
@@ -170,7 +176,7 @@ function renderReconciliationDetail(batchId,payload){
     ? '<button class="mini-confirm bulk" type="button" onclick="confirmManualBatch('+Number(batchId)+')">Konfirmasi Semua REVIEW yang Sudah Dicek</button>'
     : '';
   detailEl.innerHTML=
-    '<div class="detail-head"><div><h3>Detail Reconciliation Batch #'+esc(batchId)+'</h3><p>Status REVIEW berarti OCR belum mampu memastikan seluruh field. Setelah pemeriksaan visual/manual Billing, tanggal/nominal, SPJ, tanda tangan dan stempel selesai, gunakan Konfirmasi Sesuai agar hasil tercatat sebagai keputusan manual dengan audit trail.</p></div>'+bulkAction+'</div>'+
+    '<div class="detail-head"><div><h3>Detail Reconciliation Batch #'+esc(batchId)+'</h3><p>Reconciliation otomatis menggunakan Billing Document unik sebagai identitas utama. Field scan yang belum terbaca dicatat sebagai informasi dan tidak memaksa REVIEW; REVIEW hanya digunakan bila ada kondisi yang benar-benar perlu keputusan auditor.</p></div>'+bulkAction+'</div>'+
     '<div class="detail-summary">'+
       '<div class="detail-chip">Match: '+esc(counts.MATCH||0)+'</div>'+
       '<div class="detail-chip warn">Review: '+esc(counts.REVIEW||0)+'</div>'+
@@ -178,6 +184,7 @@ function renderReconciliationDetail(batchId,payload){
       '<div class="detail-chip bad">Not Found: '+esc(counts.NOT_FOUND||0)+'</div>'+
       '<div class="detail-chip warn">Billing belum lengkap: '+billingMissing+'</div>'+
       '<div class="detail-chip warn">SPJ belum lengkap: '+spjMissing+'</div>'+
+      (spjOcrInfo?'<div class="detail-chip">SPJ tersedia · OCR info: '+spjOcrInfo+'</div>':'')+
       (spjOcr?'<div class="detail-chip warn">SPJ tersedia · OCR review: '+spjOcr+'</div>':'')+
       (spjReview?'<div class="detail-chip warn">SPJ perlu review: '+spjReview+'</div>':'')+
     '</div>'+

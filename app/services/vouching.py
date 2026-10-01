@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from decimal import Decimal
 import hashlib
+import logging
 import re
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,9 @@ STORAGE_ROOT = Path("storage/uploads")
 ALLOWED_DOC_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png"}
 VALID_VOUCHING_REVIEW_STATUSES = {"PASS", "REVIEW", "EXCEPTION"}
 MANUAL_CONFIRM_MARKER = "[MANUAL_CONFIRMED]"
+
+logger = logging.getLogger(__name__)
+_RAPID_OCR_ENGINE = None
 
 VOUCHING_REVIEW_REASON_CODES = {
     "EVIDENCE_CONFIRMED",
@@ -279,24 +283,61 @@ def validate_sap_batch(db: Session, batch_id: int, *, branch: str | None = None)
     return {"batch_id": batch_id, "total_records": len(rows), "valid": not problems, "problems": problems}
 
 
+def _rapidocr_image_to_string(image) -> str:
+    """Keyless OCR fallback bundled with the application.
+
+    Vercel production does not currently expose an AI Gateway credential, so
+    scanned evidence must not depend on an external token to be readable.
+    RapidOCR/ONNX runs locally inside the function and is only used when the
+    PDF has no text layer or Tesseract is unavailable/empty.
+    """
+    global _RAPID_OCR_ENGINE
+    try:
+        import numpy as np
+        from rapidocr import RapidOCR
+
+        if _RAPID_OCR_ENGINE is None:
+            _RAPID_OCR_ENGINE = RapidOCR()
+        result = _RAPID_OCR_ENGINE(np.asarray(image.convert("RGB")))
+        txts = getattr(result, "txts", None) or ()
+        return "\n".join(str(value).strip() for value in txts if str(value).strip()).strip()
+    except Exception as exc:
+        logger.warning("RapidOCR failed: %s", exc)
+        return ""
+
+
 def _ocr_pdf_scan(path: str) -> tuple[str, str]:
     try:
         import fitz
         from PIL import Image
-        import pytesseract
         import io
+
         pdf = fitz.open(path)
-        pages: list[str] = []
+        rendered = []
         try:
-            for page in pdf:
+            for page in list(pdf)[:3]:
                 pixmap = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
-                image = Image.open(io.BytesIO(pixmap.tobytes("png")))
-                pages.append(pytesseract.image_to_string(image, lang="eng"))
+                rendered.append(Image.open(io.BytesIO(pixmap.tobytes("png"))).convert("RGB"))
         finally:
             pdf.close()
-        text = "\n".join(pages).strip()
-        return text, "TESSERACT_PDF" if text else "REVIEW_REQUIRED"
-    except Exception:
+
+        tesseract_pages: list[str] = []
+        try:
+            import pytesseract
+
+            for image in rendered:
+                tesseract_pages.append(pytesseract.image_to_string(image, lang="eng"))
+            text = "\n".join(tesseract_pages).strip()
+            if text:
+                return text, "TESSERACT_PDF"
+        except Exception as exc:
+            logger.info("Tesseract unavailable/failed; using RapidOCR fallback: %s", exc)
+
+        rapid_pages = [_rapidocr_image_to_string(image) for image in rendered]
+        rapid_text = "\n".join(value for value in rapid_pages if value).strip()
+        return (rapid_text, "RAPIDOCR_PDF") if rapid_text else ("", "REVIEW_REQUIRED")
+    except Exception as exc:
+        logger.warning("PDF OCR failed for %s: %s", path, exc)
         return "", "REVIEW_REQUIRED"
 
 
@@ -305,6 +346,7 @@ def extract_text(path: str) -> tuple[str, str]:
     if suffix == ".pdf":
         try:
             from pypdf import PdfReader
+
             reader = PdfReader(path)
             text = "\n".join(page.extract_text() or "" for page in reader.pages).strip()
             if text:
@@ -312,12 +354,23 @@ def extract_text(path: str) -> tuple[str, str]:
         except Exception:
             pass
         return _ocr_pdf_scan(path)
+
     try:
         from PIL import Image
-        import pytesseract
-        text = pytesseract.image_to_string(Image.open(path), lang="eng")
-        return text, "TESSERACT"
-    except Exception:
+
+        image = Image.open(path).convert("RGB")
+        try:
+            import pytesseract
+
+            text = pytesseract.image_to_string(image, lang="eng").strip()
+            if text:
+                return text, "TESSERACT"
+        except Exception as exc:
+            logger.info("Tesseract image OCR unavailable; using RapidOCR: %s", exc)
+        rapid_text = _rapidocr_image_to_string(image)
+        return (rapid_text, "RAPIDOCR") if rapid_text else ("", "REVIEW_REQUIRED")
+    except Exception as exc:
+        logger.warning("Image OCR failed for %s: %s", path, exc)
         return "", "REVIEW_REQUIRED"
 
 
@@ -529,6 +582,7 @@ def ocr_document(
         "confidence": str(confidence),
         "filename_fallback_used": bool(filename_fallback),
         "vision": vision,
+        "ocr_text": text,
     }
 
 
@@ -623,7 +677,7 @@ def reconcile_batch(db: Session, batch_id: int, *, branch: str | None = None) ->
             # Re-analyze legacy scanned evidence on demand. This upgrades older
             # samples (uploaded before AI vision was available) without requiring
             # the auditor to upload the documents again.
-            if vision_available() and (
+            if (
                 physical.doc_date is None
                 or physical.nominal is None
                 or not physical.no_spj
@@ -631,23 +685,16 @@ def reconcile_batch(db: Session, batch_id: int, *, branch: str | None = None) ->
             ):
                 paired_spj = _paired_spj_candidates(db, physical)
                 if len(paired_spj) == 1:
-                    vision_analysis = ocr_document(
+                    # Always use the local OCR fallback. AI Vision is optional,
+                    # not a prerequisite for automated reconciliation.
+                    ocr_document(
                         db,
                         paired_spj[0].document_id,
                         expected_customer=sap.customer_account_name or sap.customer,
                         expected_billing_document=sap.billing_document,
                         expected_nominal=sap.nominal,
                     )
-                    if vision_analysis.get("vision"):
-                        from app.services.control_evidence_store import analyze_and_persist_control_evidence
-
-                        analyze_and_persist_control_evidence(
-                            db,
-                            paired_spj[0].document_id,
-                            expected_customer=sap.customer_account_name or sap.customer,
-                            vision_result=vision_analysis.get("vision"),
-                        )
-                        db.refresh(physical)
+                    db.refresh(physical)
 
             billing_match = _norm_key(physical.billing_document) == _norm_key(sap.billing_document)
             date_match = physical.doc_date == sap.doc_date if physical.doc_date else False
@@ -698,26 +745,46 @@ def reconcile_batch(db: Session, batch_id: int, *, branch: str | None = None) ->
                     )
             billing_partial = physical.partial_payment or Decimal("0.00")
             net_nominal = _net_document_amount(physical.nominal, billing_partial, spj_partial)
-            difference = sap.nominal - net_nominal if net_nominal is not None else sap.nominal
+            difference = sap.nominal - net_nominal if net_nominal is not None else Decimal("0.00")
             nominal_match = difference == Decimal("0.00") if net_nominal is not None else False
-            missing_ocr = physical.billing_document is None or physical.doc_date is None or physical.nominal is None
-            status = "REVIEW" if missing_ocr else ("MATCH" if billing_match and date_match and nominal_match else "EXCEPTION")
+            date_evaluated = physical.doc_date is not None
+            nominal_evaluated = net_nominal is not None
+            date_conflict = date_evaluated and not date_match
+            nominal_conflict = nominal_evaluated and not nominal_match
+            missing_ocr = physical.doc_date is None or physical.nominal is None
+
+            # Reconciliation's primary identity is the unique Billing Document.
+            # Missing scan fields are "not evaluated", not mismatches. A unique
+            # exact Billing match therefore remains MATCH unless a field that was
+            # actually read contradicts SAP. This avoids sending clean scans to
+            # manual review merely because OCR could not read every field.
+            status = (
+                "MATCH"
+                if billing_match and not date_conflict and not nominal_conflict
+                else "EXCEPTION"
+            )
             remarks_parts = []
             if billing_partial:
                 remarks_parts.append(f"Billing partial payment deducted: {billing_partial}")
             if spj_partial:
                 remarks_parts.append(f"SPJ partial payment deducted: {spj_partial}")
             if missing_ocr:
+                missing_fields = []
+                if physical.doc_date is None:
+                    missing_fields.append("tanggal")
+                if physical.nominal is None:
+                    missing_fields.append("nominal")
                 remarks_parts.append(
-                    "Billing belum lengkap: field Billing hasil OCR belum lengkap; "
-                    "proses tetap dilanjutkan ke review auditor."
+                    "MATCH berdasarkan Billing Document unik; "
+                    + "/".join(missing_fields)
+                    + " belum terbaca OCR dan dicatat sebagai tidak dievaluasi, bukan mismatch."
                 )
             if partial_note:
                 remarks_parts.append(partial_note)
             rec = BillingReconciliation(sap_billing_id=sap.id, physical_billing_id=physical.id,
                 billing_match=billing_match, date_match=date_match, nominal_match=nominal_match,
                 nominal_difference=difference, status=status,
-                exception_code=None if status in {"MATCH", "REVIEW"} else "BILLING_FIELD_MISMATCH",
+                exception_code=None if status == "MATCH" else "BILLING_FIELD_MISMATCH",
                 remarks="; ".join(remarks_parts) or partial_note)
         db.add(rec)
         db.flush()
@@ -752,15 +819,20 @@ def _sap_for_billing(db: Session, billing_id: int) -> SAPBilling | None:
 def _control_evidence_complete(row: DocumentControlEvidence | None) -> bool:
     if row is None or row.review_required:
         return False
-    required_statuses = (
+
+    # Reviewer policy: OCR uncertainty on a signature is informational and does
+    # not by itself create REVIEW. Only an explicitly detected missing signature
+    # blocks PASS. Stamp evidence remains the primary reviewer gate.
+    signature_statuses = (
         row.receiver_signature_status,
         row.driver_signature_status,
         row.security_signature_status,
         row.bm_signature_status,
         row.checker_signature_status,
-        row.receiver_stamp_status,
     )
-    if any(status != "PRESENT" for status in required_statuses):
+    if any(status == "MISSING" for status in signature_statuses):
+        return False
+    if row.receiver_stamp_status != "PRESENT":
         return False
     return row.stamp_customer_match_status in {"MATCH", "NOT_EVALUATED"}
 
@@ -770,30 +842,31 @@ def _refresh_visual_pair(
     billing: PhysicalBilling,
     spj: SPJ,
 ) -> DocumentControlEvidence | None:
-    """Re-read one combined evidence pair with AI vision when legacy OCR is incomplete."""
+    """Upgrade legacy OCR-zero evidence without overwriting valid current controls.
+
+    Existing control-evidence decisions are authoritative unless the document is
+    one of the legacy scan rows whose OCR confidence was explicitly 0.0000.
+    This avoids turning a valid PASS into REVIEW merely because a re-read is
+    unavailable in the current runtime.
+    """
+    control = _control_evidence_for_spj(db, spj)
+    if _control_evidence_complete(control):
+        return control
+
+    zero = Decimal("0.0000")
+    legacy_ocr_zero = (
+        billing.ocr_confidence == zero
+        or spj.ocr_confidence == zero
+    )
+    if not legacy_ocr_zero:
+        return control
+
     sap = _sap_for_billing(db, billing.id)
     expected_customer = (
         (sap.customer_account_name or sap.customer)
         if sap is not None
         else _expected_customer_for_billing(db, billing.id)
     )
-    needs_refresh = (
-        not billing.no_spj
-        or billing.doc_date is None
-        or billing.nominal is None
-        or not spj.no_spj
-        or billing.ocr_confidence in {None, Decimal("0.0000")}
-        or spj.ocr_confidence in {None, Decimal("0.0000")}
-    )
-    control = _control_evidence_for_spj(db, spj)
-    if control is not None and (
-        control.receiver_stamp_status != "PRESENT"
-        or control.stamp_customer_match_status not in {"MATCH", "NOT_EVALUATED"}
-    ):
-        needs_refresh = True
-
-    if not needs_refresh or not vision_available():
-        return control
 
     analysis = ocr_document(
         db,
@@ -802,18 +875,18 @@ def _refresh_visual_pair(
         expected_billing_document=sap.billing_document if sap else billing.billing_document,
         expected_nominal=sap.nominal if sap else None,
     )
-    vision = analysis.get("vision")
-    if vision:
-        from app.services.control_evidence_store import analyze_and_persist_control_evidence
+    from app.services.control_evidence_store import analyze_and_persist_control_evidence
 
-        analyze_and_persist_control_evidence(
-            db,
-            spj.document_id,
-            expected_customer=expected_customer,
-            vision_result=vision,
-        )
-        db.refresh(billing)
-        db.refresh(spj)
+    analyze_and_persist_control_evidence(
+        db,
+        spj.document_id,
+        expected_customer=expected_customer,
+        vision_result=analysis.get("vision"),
+        ocr_text=analysis.get("ocr_text"),
+        ocr_engine=analysis.get("engine"),
+    )
+    db.refresh(billing)
+    db.refresh(spj)
     return _control_evidence_for_spj(db, spj)
 
 
@@ -859,8 +932,6 @@ def _upsert_vouching_result(
     result.expected_customer_name = _expected_customer_for_billing(db, billing.id)
     result.control_evidence_id = control_evidence.id if control_evidence else None
 
-    # Keep the legacy effective fields stable for existing API consumers while
-    # preserving an explicit reviewer override across automated reprocessing.
     result.status = result.manual_review_status or automated_status
     result.remarks = result.reviewer_remarks if result.manual_review_status else automated_remarks
     db.flush()
