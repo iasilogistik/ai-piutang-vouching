@@ -89,7 +89,7 @@ def test_unreadable_stamp_is_reviewer_priority_even_when_signatures_are_only_unk
 def test_explicit_missing_signature_still_requires_review():
     text = """
     Nomor SPJ 2501744403
-    Tanda tangan checker: tidak ada
+    tidak ada tanda tangan checker
     Stempel: Ada
     """
 
