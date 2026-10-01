@@ -133,6 +133,8 @@ def analyze_document_vision(
     *,
     file_name: str | None = None,
     expected_customer: str | None = None,
+    expected_billing_document: str | None = None,
+    expected_nominal: Decimal | None = None,
 ) -> dict[str, Any] | None:
     token = _gateway_token()
     if not token:
@@ -148,6 +150,8 @@ Tujuan: ekstraksi fakta dari gambar, bukan menilai keaslian tanda tangan/stempel
 
 Nama file: {file_name or Path(path).name}
 Customer SAP yang diharapkan: {expected_customer or "-"}
+Billing Document SAP yang diharapkan: {expected_billing_document or "-"}
+Nominal SAP/net outstanding yang diharapkan: {expected_nominal if expected_nominal is not None else "-"}
 
 Baca SELURUH halaman yang diberikan. Return ONLY valid JSON tanpa markdown dengan struktur:
 {{
@@ -180,7 +184,8 @@ Aturan:
 - PRESENT tanda tangan = ada coretan/tanda tangan visual pada kotak/area role tersebut. Jangan menilai siapa penandatangan atau autentik/tidak.
 - PRESENT stempel = ada cap/stempel visual. Jika cap terlihat tetapi tulisannya tidak terbaca, status tetap PRESENT dan text=null.
 - receiver_name hanya isi jika nama penerima tertulis/terbaca pada area penerima/diterima customer.
-- partial_payments hanya untuk pembayaran sebagian/pelunasan sebagian/payment history yang eksplisit. Jangan masukkan grand_total sebagai partial payment.
+- partial_payments hanya untuk pembayaran sebagian/pelunasan sebagian/payment history yang eksplisit, termasuk istilah DP, payment received, telah dibayar, pembayaran terdahulu, atau nilai yang jelas mengurangi grand total menjadi outstanding/net amount. Jangan masukkan grand_total sebagai partial payment.
+- Nilai SAP di atas hanya referensi rekonsiliasi. Jangan mengubah hasil pembacaan gambar agar cocok dengan SAP. Jika ada partial payment yang eksplisit dan grand_total - partial payment = nominal SAP, tetap laporkan nilai yang benar-benar terlihat pada dokumen.
 - Jika nilai tidak yakin, gunakan null/UNCLEAR dan confidence rendah. Jangan mengarang.
 - Gunakan angka IDR tanpa separator ribuan, contoh 5644800.
 """.strip()
