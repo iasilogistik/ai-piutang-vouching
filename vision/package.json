@@ -8,5 +8,8 @@
     "hono": "^4.9.0",
     "tesseract.js": "^6.0.1",
     "sharp": "^0.34.4"
+  },
+  "scripts": {
+    "postinstall": "mkdir -p src/tesseract-core && cp node_modules/tesseract.js-core/tesseract-core*.wasm node_modules/tesseract.js-core/tesseract-core*.wasm.js src/tesseract-core/"
   }
 }
