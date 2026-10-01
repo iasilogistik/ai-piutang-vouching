@@ -184,6 +184,8 @@ def _parse_date(value: str | None) -> date | None:
 def _extract_partial_payments(text: str) -> tuple[Decimal | None, str | None]:
     patterns = [
         r"(?:Pembayaran\s+(?:Partial|Parsial)|(?:Partial|Parsial)\s+Payment|Bayar\s+(?:Partial|Parsial)|Partial)\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9][0-9.,:\s-]*)",
+        r"(?:Payment\s+Received|Pembayaran\s+Diterima|Telah\s+Dibayar|Sudah\s+Dibayar)\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9][0-9.,:\s-]*)",
+        r"(?:DP|Down\s+Payment|Uang\s+Muka)\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9][0-9.,:\s-]*)",
     ]
     amounts: list[Decimal] = []
     raw_matches: list[str] = []
@@ -724,14 +726,26 @@ def reconcile_batch(db: Session, batch_id: int, *, branch: str | None = None) ->
             ):
                 paired_spj = _paired_spj_candidates(db, physical)
                 if len(paired_spj) == 1:
-                    # Always use the local OCR fallback. AI Vision is optional,
-                    # not a prerequisite for automated reconciliation.
-                    ocr_document(
+                    # Read the combined scan once and persist both text
+                    # fields and visual control evidence (signatures/stamp). The
+                    # previous flow only updated SPJ text fields, leaving Control
+                    # Evidence stuck at UNKNOWN until a separate vouching run.
+                    scan_analysis = ocr_document(
                         db,
                         paired_spj[0].document_id,
                         expected_customer=sap.customer_account_name or sap.customer,
                         expected_billing_document=sap.billing_document,
                         expected_nominal=sap.nominal,
+                    )
+                    from app.services.control_evidence_store import analyze_and_persist_control_evidence
+
+                    analyze_and_persist_control_evidence(
+                        db,
+                        paired_spj[0].document_id,
+                        expected_customer=sap.customer_account_name or sap.customer,
+                        vision_result=scan_analysis.get("vision"),
+                        ocr_text=scan_analysis.get("ocr_text"),
+                        ocr_engine=scan_analysis.get("engine"),
                     )
                     db.refresh(physical)
 
