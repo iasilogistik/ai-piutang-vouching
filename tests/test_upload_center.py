@@ -123,12 +123,14 @@ def test_upload_center_explains_multi_fallback_drive_folder_import():
     assert "API key tidak wajib" in html
 
 
-def test_upload_center_shows_locked_state_only_for_final_manual_evidence():
+def test_upload_center_unlocks_match_for_correction_but_keeps_final_links_locked():
     html = upload_center_html()
     assert "item.delete_allowed===false" in html
     assert ">Locked</button>" in html
     assert "item.delete_reason" in html
-    assert "hasil reconciliation/vouching akan di-reset" in html
+    assert "Delete + Reset" in html
+    assert "item.delete_requires_reset" in html
+    assert "File ini sudah menghasilkan MATCH/PASS" in html
 
 
 def test_upload_center_explains_incremental_add_and_replace_for_archive_and_drive():
