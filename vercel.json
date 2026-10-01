@@ -29,7 +29,7 @@
       "framework": "hono",
       "functions": {
         "src/index.ts": {
-          "includeFiles": "node_modules/tesseract.js-core/**/*",
+          "includeFiles": "src/tesseract-core/**/*",
           "maxDuration": 120
         }
       }
