@@ -21,6 +21,8 @@ let workerPromise: ReturnType<typeof createWorker> | null = null;
 function getWorker() {
   if (!workerPromise) {
     workerPromise = createWorker('eng', undefined, {
+      corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@6.1.2',
+      langPath: 'https://tessdata.projectnaptha.com/4.0.0_fast',
       logger: (message) => {
         if (message?.status === 'recognizing text' && message?.progress === 1) {
           console.log('LOCAL_OCR_PAGE_COMPLETE');
