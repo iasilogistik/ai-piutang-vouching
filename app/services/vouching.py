@@ -19,6 +19,8 @@ from app.services.storage import materialize, upload_bytes
 STORAGE_ROOT = Path("storage/uploads")
 ALLOWED_DOC_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png"}
 VALID_VOUCHING_REVIEW_STATUSES = {"PASS", "REVIEW", "EXCEPTION"}
+MANUAL_CONFIRM_MARKER = "[MANUAL_CONFIRMED]"
+
 VOUCHING_REVIEW_REASON_CODES = {
     "EVIDENCE_CONFIRMED",
     "EVIDENCE_MISSING",
@@ -466,6 +468,20 @@ def reconcile_batch(db: Session, batch_id: int, *, branch: str | None = None) ->
         )
         candidates = db.scalars(candidate_query).all()
         existing = db.scalar(select(BillingReconciliation).where(BillingReconciliation.sap_billing_id == sap.id))
+        manual_confirmed_same_evidence = bool(
+            existing
+            and existing.status == "MATCH"
+            and MANUAL_CONFIRM_MARKER in (existing.remarks or "")
+            and len(candidates) == 1
+            and existing.physical_billing_id == candidates[0].id
+        )
+        if manual_confirmed_same_evidence:
+            # A manual confirmation is an explicit auditor/reviewer conclusion.
+            # Preserve it across automated re-runs while the exact physical
+            # evidence link remains unchanged. Replaced/removed evidence causes
+            # the normal automated reconciliation to run again.
+            results.append(existing)
+            continue
         if existing:
             db.delete(existing)
             db.flush()
@@ -767,6 +783,132 @@ def vouching_result_payload(row: VouchingResult) -> dict[str, Any]:
         "linked_customer": row.expected_customer_name,
         "control_evidence_id": row.control_evidence_id,
         "control_evidence": evidence_payload(row.control_evidence) if row.control_evidence else None,
+    }
+
+
+def confirm_reconciliation_manual(
+    db: Session,
+    reconciliation_id: int,
+    *,
+    reviewer_id: str,
+    remarks: str | None = None,
+    branch: str | None = None,
+) -> dict[str, Any]:
+    """Record an explicit manual confirmation for one sampled Billing/SPJ item.
+
+    This is used when scan OCR cannot read the fields but the auditor/reviewer
+    has visually checked Billing vs SAP, the paired SPJ, signatures and stamp.
+    It does not fabricate OCR output: instead it stores a clearly-marked manual
+    conclusion and preserves the automated OCR limitations in the audit trail.
+    """
+
+    query = (
+        select(BillingReconciliation)
+        .join(BillingReconciliation.sap_billing)
+        .join(SAPBilling.import_batch)
+        .where(BillingReconciliation.id == reconciliation_id)
+    )
+    if branch is not None:
+        query = query.where(ImportBatch.branch == normalize_branch(branch))
+    rec = db.scalar(query)
+    if rec is None:
+        raise ValueError("Reconciliation result not found")
+    if rec.physical_billing_id is None:
+        raise ValueError("Manual confirmation requires linked Billing evidence")
+
+    billing = db.get(PhysicalBilling, rec.physical_billing_id)
+    if billing is None or billing.document is None or billing.document.archived_at is not None:
+        raise ValueError("Linked Billing evidence is not active")
+
+    # Prefer a number-based SPJ match. For scanned combined evidence where the
+    # number is unreadable, use the deterministic same file/hash/branch pair.
+    spj: SPJ | None = None
+    if billing.no_spj:
+        spj_query = (
+            select(SPJ)
+            .join(SPJ.document)
+            .where(
+                SPJ.no_spj == _norm_key(billing.no_spj),
+                Document.archived_at.is_(None),
+            )
+        )
+        branch_key = normalize_branch(billing.document.branch)
+        spj_query = spj_query.where(
+            Document.branch == branch_key if branch_key is not None else Document.branch.is_(None)
+        )
+        spj_matches = list(db.scalars(spj_query).all())
+        if len(spj_matches) == 1:
+            spj = spj_matches[0]
+    if spj is None:
+        paired = _paired_spj_candidates(db, billing)
+        if len(paired) == 1:
+            spj = paired[0]
+    if spj is None:
+        raise ValueError("Manual confirmation requires exactly one linked SPJ evidence")
+
+    note = _norm(remarks) or (
+        "Billing, tanggal/nominal, SPJ, tanda tangan, dan stempel telah diperiksa manual dan dinyatakan sesuai."
+    )
+    now = datetime.now(timezone.utc)
+
+    control_evidence = _control_evidence_for_spj(db, spj)
+    if control_evidence is not None:
+        control_evidence.review_status = "PASS"
+        control_evidence.review_required = False
+        control_evidence.reviewer_id = reviewer_id
+        control_evidence.reviewer_remarks = note
+        control_evidence.reviewed_at = now
+
+    vouch = db.scalar(select(VouchingResult).where(VouchingResult.billing_id == billing.id))
+    if vouch is None:
+        vouch = _upsert_vouching_result(
+            db,
+            billing=billing,
+            spj=spj,
+            spj_match=False,
+            automated_status="REVIEW",
+            automated_rule_code=(
+                None if billing.no_spj and spj.no_spj
+                else "SPJ_NUMBER_UNREADABLE_PAIRED_EVIDENCE"
+            ),
+            automated_remarks="Automatic OCR result required manual confirmation.",
+            control_evidence=control_evidence,
+        )
+    vouch.spj_id = spj.id
+    vouch.spj_match = True
+    vouch.manual_review_status = "PASS"
+    vouch.review_reason_code = "EVIDENCE_CONFIRMED"
+    vouch.reviewer_remarks = note
+    vouch.reviewer_id = reviewer_id
+    vouch.reviewed_at = now
+    vouch.status = "PASS"
+    vouch.remarks = note
+    vouch.control_evidence_id = control_evidence.id if control_evidence else None
+
+    rec.billing_match = True
+    rec.date_match = True
+    rec.nominal_match = True
+    rec.nominal_difference = Decimal("0.00")
+    rec.status = "MATCH"
+    rec.exception_code = None
+    rec.remarks = (
+        f"{MANUAL_CONFIRM_MARKER} {note} "
+        f"Confirmed by {reviewer_id}; physical_billing_id={billing.id}; spj_id={spj.id}."
+    )
+    db.flush()
+
+    return {
+        "reconciliation_id": rec.id,
+        "sap_billing_id": rec.sap_billing_id,
+        "physical_billing_id": rec.physical_billing_id,
+        "spj_id": spj.id,
+        "control_evidence_id": control_evidence.id if control_evidence else None,
+        "vouching_result_id": vouch.id,
+        "status": rec.status,
+        "vouching_status": vouch.status,
+        "manual_confirmed": True,
+        "reviewer_id": reviewer_id,
+        "remarks": note,
     }
 
 
