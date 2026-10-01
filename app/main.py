@@ -575,7 +575,7 @@ def _reconciliation_row_payload(row: BillingReconciliation) -> dict:
     if row.exception_code == "BILLING_DOCUMENT_NOT_FOUND" or physical is None:
         evidence_state = "BILLING_BELUM_LENGKAP"
     elif "Evidence SPJ tersedia" in remarks:
-        evidence_state = "SPJ_OCR_REVIEW"
+        evidence_state = "SPJ_OCR_INFO" if row.status == "MATCH" else "SPJ_OCR_REVIEW"
     elif "SPJ belum lengkap" in remarks:
         evidence_state = "SPJ_BELUM_LENGKAP"
     elif "SPJ perlu review" in remarks:
