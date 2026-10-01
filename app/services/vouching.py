@@ -616,7 +616,12 @@ def reconcile_batch(db: Session, batch_id: int, *, branch: str | None = None) ->
     validation = validate_sap_batch(db, batch_id, branch=branch)
     if not validation["valid"]:
         raise ValueError("SAP batch validation failed: " + "; ".join(validation["problems"]))
-    batch = db.get(ImportBatch, batch_id)
+    # Serialize reconciliation runs for the same batch. This prevents two
+    # browser requests (double click / retry / concurrent tab) from deleting and
+    # recreating the same unique SAP reconciliation row at the same time.
+    batch = db.scalar(
+        select(ImportBatch).where(ImportBatch.id == batch_id).with_for_update()
+    )
     batch_branch = normalize_branch(batch.branch if batch else None)
 
     sap_rows = db.scalars(select(SAPBilling).where(SAPBilling.import_batch_id == batch_id)).all()
@@ -660,7 +665,11 @@ def reconcile_batch(db: Session, batch_id: int, *, branch: str | None = None) ->
             Document.branch == batch_branch if batch_branch is not None else Document.branch.is_(None)
         )
         candidates = db.scalars(candidate_query).all()
-        existing = db.scalar(select(BillingReconciliation).where(BillingReconciliation.sap_billing_id == sap.id))
+        existing = db.scalar(
+            select(BillingReconciliation)
+            .where(BillingReconciliation.sap_billing_id == sap.id)
+            .with_for_update()
+        )
         manual_confirmed_same_evidence = bool(
             existing
             and existing.status == "MATCH"
@@ -675,28 +684,32 @@ def reconcile_batch(db: Session, batch_id: int, *, branch: str | None = None) ->
             # the normal automated reconciliation to run again.
             results.append(existing)
             continue
-        if existing:
-            db.delete(existing)
-            db.flush()
+
+        # Reconciliation is an idempotent upsert. Never delete+insert an
+        # existing SAP row: the table has a unique sap_billing_id constraint and
+        # concurrent/retried runs previously caused HTTP 500 UniqueViolation.
+        rec = existing or BillingReconciliation(sap_billing_id=sap.id)
         if len(candidates) == 0:
-            rec = BillingReconciliation(
-                sap_billing_id=sap.id,
-                physical_billing_id=None,
-                billing_match=False,
-                date_match=False,
-                nominal_match=False,
-                nominal_difference=sap.nominal,
-                status="NOT_FOUND",
-                exception_code="BILLING_DOCUMENT_NOT_FOUND",
-                remarks=(
-                    "Billing belum lengkap: evidence Billing belum ditemukan untuk Billing Document "
-                    f"{sap.billing_document}. Proses reconciliation tetap dilanjutkan dan item masuk ke review."
-                ),
+            rec.physical_billing_id = None
+            rec.billing_match = False
+            rec.date_match = False
+            rec.nominal_match = False
+            rec.nominal_difference = sap.nominal
+            rec.status = "NOT_FOUND"
+            rec.exception_code = "BILLING_DOCUMENT_NOT_FOUND"
+            rec.remarks = (
+                "Billing belum lengkap: evidence Billing belum ditemukan untuk Billing Document "
+                f"{sap.billing_document}. Proses reconciliation tetap dilanjutkan dan item masuk ke review."
             )
         elif len(candidates) > 1:
-            rec = BillingReconciliation(sap_billing_id=sap.id, physical_billing_id=None, billing_match=False,
-                date_match=False, nominal_match=False, nominal_difference=Decimal("0.00"), status="EXCEPTION",
-                exception_code="DUPLICATE_PHYSICAL_BILLING", remarks=f"Found {len(candidates)} physical Billing documents")
+            rec.physical_billing_id = None
+            rec.billing_match = False
+            rec.date_match = False
+            rec.nominal_match = False
+            rec.nominal_difference = Decimal("0.00")
+            rec.status = "EXCEPTION"
+            rec.exception_code = "DUPLICATE_PHYSICAL_BILLING"
+            rec.remarks = f"Found {len(candidates)} physical Billing documents"
         else:
             physical = candidates[0]
 
@@ -807,12 +820,16 @@ def reconcile_batch(db: Session, batch_id: int, *, branch: str | None = None) ->
                 )
             if partial_note:
                 remarks_parts.append(partial_note)
-            rec = BillingReconciliation(sap_billing_id=sap.id, physical_billing_id=physical.id,
-                billing_match=billing_match, date_match=date_match, nominal_match=nominal_match,
-                nominal_difference=difference, status=status,
-                exception_code=None if status == "MATCH" else "BILLING_FIELD_MISMATCH",
-                remarks="; ".join(remarks_parts) or partial_note)
-        db.add(rec)
+            rec.physical_billing_id = physical.id
+            rec.billing_match = billing_match
+            rec.date_match = date_match
+            rec.nominal_match = nominal_match
+            rec.nominal_difference = difference
+            rec.status = status
+            rec.exception_code = None if status == "MATCH" else "BILLING_FIELD_MISMATCH"
+            rec.remarks = "; ".join(remarks_parts) or partial_note
+        if existing is None:
+            db.add(rec)
         db.flush()
         results.append(rec)
     db.commit()
