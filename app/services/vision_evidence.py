@@ -205,6 +205,7 @@ Aturan:
 
     model = os.getenv("AI_VISION_MODEL", DEFAULT_VISION_MODEL)
     text: str | None = None
+    parsed: dict[str, Any] = {}
     last_error: Exception | None = None
 
     for attempt in range(1, 3):
@@ -214,11 +215,24 @@ Aturan:
                     response = client.post(
                         f"{internal_url}/analyze",
                         headers={"Content-Type": "application/json"},
-                        json={"model": model, "prompt": prompt, "images": image_urls},
+                        json={
+                            "model": model,
+                            "prompt": prompt,
+                            "images": image_urls,
+                            "expected_customer": expected_customer,
+                            "expected_billing_document": expected_billing_document,
+                            "expected_nominal": (
+                                str(expected_nominal) if expected_nominal is not None else None
+                            ),
+                        },
                     )
                     response.raise_for_status()
                     data = response.json()
-                    text = str(data.get("text") or "").strip() or None
+                    result = data.get("result")
+                    if isinstance(result, dict):
+                        parsed = result
+                    else:
+                        text = str(data.get("text") or "").strip() or None
                 else:
                     content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
                     content.extend(
@@ -241,7 +255,8 @@ Aturan:
                     response.raise_for_status()
                     data = response.json()
                     text = str(data["choices"][0]["message"]["content"]).strip() or None
-                if text:
+
+                if parsed or text:
                     break
         except Exception as exc:
             last_error = exc
@@ -254,16 +269,14 @@ Aturan:
             if attempt < 2:
                 time.sleep(0.4)
 
-    if not text:
+    if not parsed and text:
+        parsed = _extract_json(text)
+    if not parsed:
         logger.error(
-            "AI vision failed for %s after retries: %s",
+            "AI vision/local vision failed for %s after retries: %s",
             file_name or Path(path).name,
             last_error,
         )
-        return None
-    parsed = _extract_json(text)
-    if not parsed:
-        logger.warning("AI vision returned no parseable JSON for %s", file_name or Path(path).name)
         return None
 
     partials: list[dict[str, Any]] = []
@@ -302,7 +315,7 @@ Aturan:
         stamp_confidence = 0.0
 
     return {
-        "engine": "AI_VISION",
+        "engine": str(parsed.get("engine") or "AI_VISION"),
         "model": model,
         "billing_document": str(parsed.get("billing_document") or "").strip() or None,
         "invoice_date": _normalize_date(parsed.get("invoice_date")),
@@ -319,6 +332,7 @@ Aturan:
             "page_number": stamp.get("page_number") if isinstance(stamp.get("page_number"), int) else None,
         },
         "notes": [str(item) for item in (parsed.get("notes") or []) if str(item).strip()],
+        "ocr_text": str(parsed.get("ocr_text") or "").strip() or None,
     }
 
 
