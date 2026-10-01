@@ -46,3 +46,14 @@ def test_reconciliation_vouching_page_highlights_incomplete_evidence_readably():
     assert "Proses tetap dilanjutkan" in html
     assert "detail-panel" in html
     assert "renderReconciliationDetail" in html
+
+
+
+def test_reconciliation_detail_supports_manual_confirmation_after_visual_check():
+    html = reconciliation_vouching_html()
+
+    assert "Konfirmasi Sesuai" in html
+    assert "Konfirmasi Semua REVIEW yang Sudah Dicek" in html
+    assert "/confirm-manual?" in html
+    assert "/confirm-manual-review?" in html
+    assert "Billing, tanggal/nominal, SPJ, tanda tangan, dan stempel" in html
