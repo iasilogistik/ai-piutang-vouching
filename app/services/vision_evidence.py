@@ -3,6 +3,8 @@ from __future__ import annotations
 import base64
 import io
 import json
+import logging
+import time
 import os
 import re
 from datetime import date
@@ -16,6 +18,7 @@ import httpx
 AI_GATEWAY_URL = "https://ai-gateway.vercel.sh/v1/chat/completions"
 DEFAULT_VISION_MODEL = "openai/gpt-5.6-sol"
 MAX_PAGES = 3
+logger = logging.getLogger(__name__)
 
 
 def _gateway_token() -> str | None:
@@ -23,7 +26,10 @@ def _gateway_token() -> str | None:
 
 
 def vision_available() -> bool:
-    return _gateway_token() is not None
+    available = _gateway_token() is not None
+    if not available:
+        logger.warning("AI vision unavailable: AI_GATEWAY_API_KEY/VERCEL_OIDC_TOKEN not present")
+    return available
 
 
 def _image_data_urls(path: str, *, max_pages: int = MAX_PAGES) -> list[str]:
@@ -202,16 +208,35 @@ Aturan:
         "stream": False,
     }
 
-    try:
-        with httpx.Client(timeout=90.0) as client:
-            response = client.post(
-                AI_GATEWAY_URL,
-                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-                json=payload,
+    data = None
+    last_error: Exception | None = None
+    for attempt in range(1, 3):
+        try:
+            with httpx.Client(timeout=90.0) as client:
+                response = client.post(
+                    AI_GATEWAY_URL,
+                    headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                    json=payload,
+                )
+                response.raise_for_status()
+                data = response.json()
+                break
+        except Exception as exc:
+            last_error = exc
+            logger.warning(
+                "AI vision attempt %s failed for %s: %s",
+                attempt,
+                file_name or Path(path).name,
+                exc,
             )
-            response.raise_for_status()
-            data = response.json()
-    except Exception:
+            if attempt < 2:
+                time.sleep(0.4)
+    if data is None:
+        logger.error(
+            "AI vision failed for %s after retries: %s",
+            file_name or Path(path).name,
+            last_error,
+        )
         return None
 
     try:
@@ -220,6 +245,7 @@ Aturan:
         return None
     parsed = _extract_json(text)
     if not parsed:
+        logger.warning("AI vision returned no parseable JSON for %s", file_name or Path(path).name)
         return None
 
     partials: list[dict[str, Any]] = []
