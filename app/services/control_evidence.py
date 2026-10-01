@@ -171,17 +171,38 @@ def analyze_spj_control_evidence(text: str, expected_customer: str | None = None
         "receiver_stamp": detect_stamp(text, expected_customer),
     }
 
+    # Reviewer triage is intentionally narrow. OCR failing to recognize a
+    # signature label/ink is informational and should not by itself flood the
+    # REVIEWER queue. Reviewer attention is reserved for:
+    #   1) stamp presence/text that is not clear enough to establish, or
+    #   2) a readable stamp that does not sufficiently match the SAP customer, or
+    #   3) an explicitly detected missing signature (not merely UNKNOWN).
     review_reasons: list[str] = []
+    informational_reasons: list[str] = []
+
+    stamp = result["receiver_stamp"]
+    if stamp["status"] != STATUS_PRESENT:
+        review_reasons.append(stamp.get("remarks") or "Stempel penerima belum dapat dipastikan.")
+    stamp_match = stamp.get("customer_match", {})
+    if stamp_match.get("status") == STATUS_REVIEW:
+        review_reasons.append(stamp_match.get("remarks") or "Nama stempel perlu dicek reviewer.")
+
     for key, value in result.items():
         if key == "receiver_stamp":
-            if value["status"] != STATUS_PRESENT:
-                review_reasons.append(value.get("remarks") or "Stempel penerima belum dapat dipastikan.")
-            match = value.get("customer_match", {})
-            if match.get("status") not in {STATUS_MATCH, STATUS_NOT_EVALUATED}:
-                review_reasons.append(match.get("remarks") or "Nama stempel perlu dicek manual.")
-        elif value["status"] != STATUS_PRESENT:
-            review_reasons.append(value.get("remarks") or f"{key} perlu dicek manual.")
+            continue
+        if value["status"] == STATUS_MISSING:
+            review_reasons.append(value.get("remarks") or f"{key} terindikasi tidak ada; perlu review.")
+        elif value["status"] == STATUS_UNKNOWN:
+            informational_reasons.append(
+                value.get("remarks") or f"{key} tidak dapat dipastikan oleh OCR."
+            )
 
     result["review_required"] = bool(review_reasons)
     result["review_reasons"] = review_reasons
+    result["informational_reasons"] = informational_reasons
+    result["review_focus"] = (
+        "STAMP"
+        if any("stempel" in reason.lower() for reason in review_reasons)
+        else ("SIGNATURE_MISSING" if review_reasons else "NONE")
+    )
     return result

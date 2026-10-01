@@ -111,3 +111,12 @@ def test_reviewer_center_uses_cached_session_before_network_profile_lookup():
     assert "cachedSession()" in html
     assert "localStorage.getItem('auditUser')" in html
     assert "const dashboardPromise=loadDashboard()" in html
+
+
+
+def test_reviewer_center_prioritizes_stamp_and_excludes_generic_ocr_noise():
+    html = reviewer_center_html()
+
+    assert "Stamp / Evidence Review" in html
+    assert "OCR yang hanya berstatus UNKNOWN tidak otomatis menambah antrean reviewer" in html
+    assert "stempel tidak terbaca jelas" in html
