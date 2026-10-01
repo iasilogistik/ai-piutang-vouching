@@ -376,9 +376,10 @@ async function loadHistory(){
     const detail=item.kind==='SAP'?(item.period||'-'):(item.document_type||'-');
     const time=item.uploaded_at?new Date(item.uploaded_at).toLocaleString('id-ID'):'-';
     const evidenceLocked=item.kind==='EVIDENCE'&&item.delete_allowed===false;
+    const evidenceReset=item.kind==='EVIDENCE'&&item.delete_allowed!==false&&item.delete_requires_reset===true;
     const deleteAction=evidenceLocked
-      ? '<button class="locked small-btn" type="button" disabled title="'+esc(item.delete_reason||'Evidence sudah dipakai proses audit manual/final.')+'">Locked</button>'
-      : '<button class="danger small-btn" data-delete="'+esc(item.kind)+'" data-id="'+item.id+'">Delete</button>';
+      ? '<button class="locked small-btn" type="button" disabled title="'+esc(item.delete_reason||'Evidence sudah dipakai proses audit final/terhubung.')+'">Locked</button>'
+      : '<button class="danger small-btn" data-delete="'+esc(item.kind)+'" data-id="'+item.id+'" title="'+esc(evidenceReset?(item.delete_reset_note||'MATCH/PASS dan hasil review akan di-reset.'):'Hapus upload')+'">'+(evidenceReset?'Delete + Reset':'Delete')+'</button>';
     return '<tr>'+
       '<td class="kind">'+esc(item.kind)+'</td>'+
       '<td>'+esc(item.file_name)+'</td>'+
@@ -419,7 +420,11 @@ async function deleteItem(kind,id,items){
   const item=items.find(row=>row.kind===kind&&Number(row.id)===id);
   if(!item)return;
   const correctionNote=item.kind==='EVIDENCE'
-    ? ' Jika hanya terkait proses otomatis, hasil reconciliation/vouching akan di-reset dan perlu dijalankan ulang.'
+    ? (
+        item.delete_requires_reset
+          ? ' File ini sudah menghasilkan MATCH/PASS atau hasil review. Jika dihapus, status tersebut serta reconciliation/vouching/control evidence terkait akan di-reset. Setelah upload evidence yang benar, jalankan proses kembali.'
+          : ' Hasil reconciliation/vouching otomatis yang terkait akan di-reset dan perlu dijalankan ulang.'
+      )
     : ' Aksi akan ditolak jika data sudah dipakai proses audit.';
   if(!confirm('Delete '+item.kind+' "'+item.file_name+'"?'+correctionNote))return;
   try{
