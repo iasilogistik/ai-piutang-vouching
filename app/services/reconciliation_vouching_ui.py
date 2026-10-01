@@ -161,10 +161,11 @@ function renderReconciliationDetail(batchId,payload){
       '<td>'+statusPill(r.status)+'</td>'+
       '<td><strong>'+esc(evidenceLabel(state))+'</strong></td>'+
       '<td class="detail-message">'+esc(r.remarks||'Tidak ada catatan khusus.')+'</td>'+
+      '<td>'+esc(r.billing_partial_payment||'-')+'</td>'+
       '<td>'+esc(r.nominal_difference||'0')+'</td>'+
       '<td>'+action+'</td>'+
     '</tr>';
-  }).join(''):'<tr><td colspan="8">Belum ada hasil reconciliation. Klik Run Reconciliation.</td></tr>';
+  }).join(''):'<tr><td colspan="9">Belum ada hasil reconciliation. Klik Run Reconciliation.</td></tr>';
   const bulkAction=Number(counts.REVIEW||0)>0
     ? '<button class="mini-confirm bulk" type="button" onclick="confirmManualBatch('+Number(batchId)+')">Konfirmasi Semua REVIEW yang Sudah Dicek</button>'
     : '';
@@ -180,7 +181,7 @@ function renderReconciliationDetail(batchId,payload){
       (spjOcr?'<div class="detail-chip warn">SPJ tersedia · OCR review: '+spjOcr+'</div>':'')+
       (spjReview?'<div class="detail-chip warn">SPJ perlu review: '+spjReview+'</div>':'')+
     '</div>'+
-    '<div class="detail-table-wrap"><table class="detail-table"><thead><tr><th>Billing SAP</th><th>Customer</th><th>No. SPJ</th><th>Status</th><th>Evidence</th><th>Keterangan</th><th>Selisih Nominal</th><th>Aksi Manual</th></tr></thead><tbody>'+body+'</tbody></table></div>';
+    '<div class="detail-table-wrap"><table class="detail-table"><thead><tr><th>Billing SAP</th><th>Customer</th><th>No. SPJ</th><th>Status</th><th>Evidence</th><th>Keterangan</th><th>Partial Payment</th><th>Selisih Nominal</th><th>Aksi Manual</th></tr></thead><tbody>'+body+'</tbody></table></div>';
   detailEl.hidden=false;
   detailEl.scrollIntoView({behavior:'smooth',block:'nearest'});
 }
