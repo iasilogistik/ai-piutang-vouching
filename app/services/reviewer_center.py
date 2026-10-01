@@ -76,13 +76,23 @@ def build_reviewer_dashboard(
         select(func.count(BillingReconciliation.id))
         .join(BillingReconciliation.sap_billing)
         .join(SAPBilling.import_batch)
-        .where(BillingReconciliation.status.in_(["REVIEW", "EXCEPTION", "NOT_FOUND"]))
+        .where(BillingReconciliation.status == "EXCEPTION")
     )
     vouching_q = (
         select(func.count(VouchingResult.id))
         .join(VouchingResult.billing)
         .join(PhysicalBilling.document)
-        .where(VouchingResult.status.in_(["REVIEW", "EXCEPTION"]))
+        .outerjoin(
+            DocumentControlEvidence,
+            DocumentControlEvidence.id == VouchingResult.control_evidence_id,
+        )
+        .where(
+            (VouchingResult.status == "EXCEPTION")
+            | (
+                (VouchingResult.status == "REVIEW")
+                & (DocumentControlEvidence.review_required.is_(True))
+            )
+        )
     )
     evidence_q = (
         select(func.count(DocumentControlEvidence.id))
@@ -152,7 +162,7 @@ button,.btn{min-height:40px;border:0;border-radius:10px;padding:9px 13px;backgro
 </style>
 </head>
 <body>
-<header><h1>Reviewer Center</h1><p>Area khusus user REVIEWER untuk melihat dashboard, antrean yang menunggu keputusan reviewer, exception, dan kelengkapan evidence sesuai scope cabang.</p></header>
+<header><h1>Reviewer Center</h1><p>Area khusus REVIEWER. Antrean diprioritaskan untuk stempel yang tidak terbaca jelas/tidak cocok dan exception yang benar-benar memerlukan keputusan reviewer.</p></header>
 <main>
 <section class="panel scope">
   <div><label>Cabang / Scope</label><input id="branch" placeholder="Semua cabang jika user memiliki scope global"></div>
@@ -179,7 +189,7 @@ button,.btn{min-height:40px;border:0;border-radius:10px;padding:9px 13px;backgro
       <a class="btn secondary" href="/ui/exceptions">Exceptions</a>
     </div>
   </div>
-  <div class="notice">User REVIEWER tidak perlu akses Upload atau Run Reconciliation. Fokus akses adalah melihat dashboard, memeriksa evidence/exception, lalu memberi keputusan approve atau reject pada antrean reviewer.</div>
+  <div class="notice"><strong>Prioritas reviewer:</strong> stempel tidak terbaca jelas, nama stempel tidak cukup cocok dengan customer SAP, tanda tangan yang secara eksplisit terindikasi hilang, atau exception yang sudah dinaikkan auditor. OCR yang hanya berstatus UNKNOWN tidak otomatis menambah antrean reviewer.</div>
 </section>
 
 <section class="panel">
@@ -229,9 +239,9 @@ async function loadSession(){
 function renderMetrics(m){
   const defs=[
     ['Menunggu Reviewer',m.waiting_reviewer,'warn'],
-    ['Reconciliation Attention',m.reconciliation_attention,'bad'],
-    ['Vouching Attention',m.vouching_attention,'warn'],
-    ['Evidence Review',m.control_evidence_review,'warn'],
+    ['Reconciliation Exception',m.reconciliation_attention,'bad'],
+    ['Vouching Reviewer',m.vouching_attention,'warn'],
+    ['Stamp / Evidence Review',m.control_evidence_review,'warn'],
     ['Approved by Me',m.approved_by_me,'ok'],
     ['Rejected by Me',m.rejected_by_me,'bad']
   ];
