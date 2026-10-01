@@ -592,6 +592,8 @@ def _reconciliation_row_payload(row: BillingReconciliation) -> dict:
         "date_match": row.date_match,
         "nominal_match": row.nominal_match,
         "nominal_difference": str(row.nominal_difference),
+        "billing_partial_payment": str(physical.partial_payment) if physical and physical.partial_payment is not None else None,
+        "billing_partial_payment_raw": physical.partial_payment_raw if physical else None,
         "status": row.status,
         "exception_code": row.exception_code,
         "remarks": row.remarks,
