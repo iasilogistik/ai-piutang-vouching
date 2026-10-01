@@ -715,40 +715,11 @@ def reconcile_batch(db: Session, batch_id: int, *, branch: str | None = None) ->
         else:
             physical = candidates[0]
 
-            # Re-analyze legacy scanned evidence on demand. This upgrades older
-            # samples (uploaded before AI vision was available) without requiring
-            # the auditor to upload the documents again.
-            if (
-                physical.doc_date is None
-                or physical.nominal is None
-                or not physical.no_spj
-                or (physical.ocr_confidence is not None and physical.ocr_confidence == Decimal("0.0000"))
-            ):
-                paired_spj = _paired_spj_candidates(db, physical)
-                if len(paired_spj) == 1:
-                    # Read the combined scan once and persist both text
-                    # fields and visual control evidence (signatures/stamp). The
-                    # previous flow only updated SPJ text fields, leaving Control
-                    # Evidence stuck at UNKNOWN until a separate vouching run.
-                    scan_analysis = ocr_document(
-                        db,
-                        paired_spj[0].document_id,
-                        expected_customer=sap.customer_account_name or sap.customer,
-                        expected_billing_document=sap.billing_document,
-                        expected_nominal=sap.nominal,
-                    )
-                    from app.services.control_evidence_store import analyze_and_persist_control_evidence
-
-                    analyze_and_persist_control_evidence(
-                        db,
-                        paired_spj[0].document_id,
-                        expected_customer=sap.customer_account_name or sap.customer,
-                        vision_result=scan_analysis.get("vision"),
-                        ocr_text=scan_analysis.get("ocr_text"),
-                        ocr_engine=scan_analysis.get("engine"),
-                    )
-                    db.refresh(physical)
-
+            # Keep reconciliation deterministic and fast. Image/OCR analysis is
+            # intentionally executed through the per-document visual refresh
+            # endpoint, not inside this batch transaction. Running 10 scanned
+            # PDFs synchronously here previously exceeded Vercel's request
+            # timeout and surfaced as HTTP 500/timeout to the auditor.
             billing_match = _norm_key(physical.billing_document) == _norm_key(sap.billing_document)
             date_match = physical.doc_date == sap.doc_date if physical.doc_date else False
             spj_partial = Decimal("0.00")
@@ -784,7 +755,7 @@ def reconcile_batch(db: Session, batch_id: int, *, branch: str | None = None) ->
                         spj_partial = paired.partial_payment
                     partial_note = (
                         "Evidence SPJ tersedia dalam paket/file yang sama, tetapi nomor SPJ belum terbaca oleh OCR. "
-                        "Proses reconciliation tetap dilanjutkan ke review."
+                        "Kondisi ini dicatat sebagai OCR info dan tidak mengubah MATCH menjadi REVIEW."
                     )
                 elif len(paired_spj) > 1:
                     partial_note = (
