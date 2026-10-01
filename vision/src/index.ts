@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
 import { createWorker } from 'tesseract.js';
 
@@ -24,7 +24,7 @@ let workerPromise: ReturnType<typeof createWorker> | null = null;
 function getWorker() {
   if (!workerPromise) {
     workerPromise = createWorker('eng', undefined, {
-      workerPath: path.resolve(process.cwd(), 'worker.cjs'),
+      workerPath: fileURLToPath(new URL('../worker.cjs', import.meta.url)),
       langPath: 'https://tessdata.projectnaptha.com/4.0.0_fast',
       logger: (message) => {
         if (message?.status === 'recognizing text' && message?.progress === 1) {
