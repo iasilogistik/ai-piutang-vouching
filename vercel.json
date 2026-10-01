@@ -29,6 +29,7 @@
       "framework": "hono",
       "functions": {
         "src/index.ts": {
+          "includeFiles": "worker.cjs",
           "maxDuration": 120
         }
       }
