@@ -27,10 +27,12 @@
     "vision": {
       "root": "vision/",
       "framework": "hono",
-      "includeFiles": [
-        "node_modules/tesseract.js-core/**/*"
-      ],
-      "maxDuration": 120
+      "functions": {
+        "src/index.ts": {
+          "includeFiles": "node_modules/tesseract.js-core/**/*",
+          "maxDuration": 120
+        }
+      }
     }
   },
   "rewrites": [
