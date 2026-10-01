@@ -842,30 +842,31 @@ def _refresh_visual_pair(
     billing: PhysicalBilling,
     spj: SPJ,
 ) -> DocumentControlEvidence | None:
-    """Re-read one combined evidence pair with AI vision when legacy OCR is incomplete."""
+    """Upgrade legacy OCR-zero evidence without overwriting valid current controls.
+
+    Existing control-evidence decisions are authoritative unless the document is
+    one of the legacy scan rows whose OCR confidence was explicitly 0.0000.
+    This avoids turning a valid PASS into REVIEW merely because a re-read is
+    unavailable in the current runtime.
+    """
+    control = _control_evidence_for_spj(db, spj)
+    if _control_evidence_complete(control):
+        return control
+
+    zero = Decimal("0.0000")
+    legacy_ocr_zero = (
+        billing.ocr_confidence == zero
+        or spj.ocr_confidence == zero
+    )
+    if not legacy_ocr_zero:
+        return control
+
     sap = _sap_for_billing(db, billing.id)
     expected_customer = (
         (sap.customer_account_name or sap.customer)
         if sap is not None
         else _expected_customer_for_billing(db, billing.id)
     )
-    needs_refresh = (
-        not billing.no_spj
-        or billing.doc_date is None
-        or billing.nominal is None
-        or not spj.no_spj
-        or billing.ocr_confidence in {None, Decimal("0.0000")}
-        or spj.ocr_confidence in {None, Decimal("0.0000")}
-    )
-    control = _control_evidence_for_spj(db, spj)
-    if control is not None and (
-        control.receiver_stamp_status != "PRESENT"
-        or control.stamp_customer_match_status not in {"MATCH", "NOT_EVALUATED"}
-    ):
-        needs_refresh = True
-
-    if not needs_refresh:
-        return control
 
     analysis = ocr_document(
         db,
@@ -887,56 +888,6 @@ def _refresh_visual_pair(
     db.refresh(billing)
     db.refresh(spj)
     return _control_evidence_for_spj(db, spj)
-
-
-def _control_evidence_for_spj(db: Session, spj: SPJ | None) -> DocumentControlEvidence | None:
-    if spj is None:
-        return None
-    return db.scalar(
-        select(DocumentControlEvidence).where(DocumentControlEvidence.document_id == spj.document_id)
-    )
-
-
-def _upsert_vouching_result(
-    db: Session,
-    *,
-    billing: PhysicalBilling,
-    spj: SPJ | None,
-    spj_match: bool,
-    automated_status: str,
-    automated_rule_code: str | None,
-    automated_remarks: str | None = None,
-    control_evidence: DocumentControlEvidence | None = None,
-) -> VouchingResult:
-    result = db.scalar(select(VouchingResult).where(VouchingResult.billing_id == billing.id))
-    if result is None:
-        result = VouchingResult(
-            billing_id=billing.id,
-            spj_id=spj.id if spj else None,
-            no_spj_billing=billing.no_spj,
-            no_spj_document=spj.no_spj if spj else None,
-            spj_match=spj_match,
-            status=automated_status,
-        )
-        db.add(result)
-
-    result.spj_id = spj.id if spj else None
-    result.no_spj_billing = billing.no_spj
-    result.no_spj_document = spj.no_spj if spj else None
-    result.spj_match = spj_match
-    result.automated_status = automated_status
-    result.automated_rule_code = automated_rule_code
-    result.automated_remarks = automated_remarks
-    result.rule_code = automated_rule_code
-    result.expected_customer_name = _expected_customer_for_billing(db, billing.id)
-    result.control_evidence_id = control_evidence.id if control_evidence else None
-
-    # Keep the legacy effective fields stable for existing API consumers while
-    # preserving an explicit reviewer override across automated reprocessing.
-    result.status = result.manual_review_status or automated_status
-    result.remarks = result.reviewer_remarks if result.manual_review_status else automated_remarks
-    db.flush()
-    return result
 
 
 def vouch_spj(db: Session, *, branch: str | None = None) -> list[VouchingResult]:
