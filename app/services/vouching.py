@@ -740,6 +740,83 @@ def _expected_customer_for_billing(db: Session, billing_id: int) -> str | None:
     return _norm(sap.customer_account_name) or _norm(sap.customer)
 
 
+def _sap_for_billing(db: Session, billing_id: int) -> SAPBilling | None:
+    rec = db.scalar(
+        select(BillingReconciliation)
+        .where(BillingReconciliation.physical_billing_id == billing_id)
+        .order_by(BillingReconciliation.id.desc())
+    )
+    return db.get(SAPBilling, rec.sap_billing_id) if rec is not None else None
+
+
+def _control_evidence_complete(row: DocumentControlEvidence | None) -> bool:
+    if row is None or row.review_required:
+        return False
+    required_statuses = (
+        row.receiver_signature_status,
+        row.driver_signature_status,
+        row.security_signature_status,
+        row.bm_signature_status,
+        row.checker_signature_status,
+        row.receiver_stamp_status,
+    )
+    if any(status != "PRESENT" for status in required_statuses):
+        return False
+    return row.stamp_customer_match_status in {"MATCH", "NOT_EVALUATED"}
+
+
+def _refresh_visual_pair(
+    db: Session,
+    billing: PhysicalBilling,
+    spj: SPJ,
+) -> DocumentControlEvidence | None:
+    """Re-read one combined evidence pair with AI vision when legacy OCR is incomplete."""
+    sap = _sap_for_billing(db, billing.id)
+    expected_customer = (
+        (sap.customer_account_name or sap.customer)
+        if sap is not None
+        else _expected_customer_for_billing(db, billing.id)
+    )
+    needs_refresh = (
+        not billing.no_spj
+        or billing.doc_date is None
+        or billing.nominal is None
+        or not spj.no_spj
+        or billing.ocr_confidence in {None, Decimal("0.0000")}
+        or spj.ocr_confidence in {None, Decimal("0.0000")}
+    )
+    control = _control_evidence_for_spj(db, spj)
+    if control is not None and (
+        control.receiver_stamp_status != "PRESENT"
+        or control.stamp_customer_match_status not in {"MATCH", "NOT_EVALUATED"}
+    ):
+        needs_refresh = True
+
+    if not needs_refresh or not vision_available():
+        return control
+
+    analysis = ocr_document(
+        db,
+        spj.document_id,
+        expected_customer=expected_customer,
+        expected_billing_document=sap.billing_document if sap else billing.billing_document,
+        expected_nominal=sap.nominal if sap else None,
+    )
+    vision = analysis.get("vision")
+    if vision:
+        from app.services.control_evidence_store import analyze_and_persist_control_evidence
+
+        analyze_and_persist_control_evidence(
+            db,
+            spj.document_id,
+            expected_customer=expected_customer,
+            vision_result=vision,
+        )
+        db.refresh(billing)
+        db.refresh(spj)
+    return _control_evidence_for_spj(db, spj)
+
+
 def _control_evidence_for_spj(db: Session, spj: SPJ | None) -> DocumentControlEvidence | None:
     if spj is None:
         return None
@@ -796,27 +873,47 @@ def vouch_spj(db: Session, *, branch: str | None = None) -> list[VouchingResult]
         billing_query = billing_query.where(Document.branch == normalize_branch(branch))
     billings = db.scalars(billing_query).all()
     results: list[VouchingResult] = []
+
     for billing in billings:
+        paired_spj = _paired_spj_candidates(db, billing)
+        if len(paired_spj) == 1:
+            _refresh_visual_pair(db, billing, paired_spj[0])
+
         no_spj = _norm_key(billing.no_spj)
         if not no_spj:
             paired_spj = _paired_spj_candidates(db, billing)
             if len(paired_spj) == 1:
                 spj = paired_spj[0]
-                control_evidence = _control_evidence_for_spj(db, spj)
-                result = _upsert_vouching_result(
-                    db,
-                    billing=billing,
-                    spj=spj,
-                    spj_match=False,
-                    automated_status="REVIEW",
-                    automated_rule_code="SPJ_NUMBER_UNREADABLE_PAIRED_EVIDENCE",
-                    automated_remarks=(
-                        "Evidence SPJ ditemukan dari file/hash yang sama dengan Billing. "
-                        "Nomor SPJ belum terbaca OCR, sehingga evidence tidak dianggap hilang; "
-                        "vouching dilanjutkan ke review auditor."
-                    ),
-                    control_evidence=control_evidence,
-                )
+                control_evidence = _refresh_visual_pair(db, billing, spj)
+                if _control_evidence_complete(control_evidence):
+                    result = _upsert_vouching_result(
+                        db,
+                        billing=billing,
+                        spj=spj,
+                        spj_match=True,
+                        automated_status="PASS",
+                        automated_rule_code="PAIRED_EVIDENCE_COMPLETE",
+                        automated_remarks=(
+                            "Billing dan SPJ berasal dari file/hash/cabang yang sama; seluruh tanda tangan "
+                            "wajib dan stempel terdeteksi lengkap. Nomor SPJ belum terbaca dengan yakin, "
+                            "namun evidence visual lengkap sehingga vouching dinyatakan PASS."
+                        ),
+                        control_evidence=control_evidence,
+                    )
+                else:
+                    result = _upsert_vouching_result(
+                        db,
+                        billing=billing,
+                        spj=spj,
+                        spj_match=False,
+                        automated_status="REVIEW",
+                        automated_rule_code="SPJ_NUMBER_UNREADABLE_PAIRED_EVIDENCE",
+                        automated_remarks=(
+                            "Evidence SPJ ditemukan dari file/hash yang sama dengan Billing, tetapi nomor SPJ "
+                            "atau control evidence belum dapat dipastikan. Vouching diteruskan ke review."
+                        ),
+                        control_evidence=control_evidence,
+                    )
             elif len(paired_spj) > 1:
                 result = _upsert_vouching_result(
                     db,
@@ -827,7 +924,7 @@ def vouch_spj(db: Session, *, branch: str | None = None) -> list[VouchingResult]
                     automated_rule_code="DUPLICATE_PAIRED_SPJ_EVIDENCE",
                     automated_remarks=(
                         f"Ditemukan {len(paired_spj)} evidence SPJ dengan file/hash pasangan yang sama; "
-                        "nomor SPJ belum terbaca OCR dan perlu review auditor."
+                        "perlu review auditor."
                     ),
                     control_evidence=_control_evidence_for_spj(db, paired_spj[0]),
                 )
@@ -840,7 +937,7 @@ def vouch_spj(db: Session, *, branch: str | None = None) -> list[VouchingResult]
                     automated_status="REVIEW",
                     automated_rule_code="BILLING_WITHOUT_SPJ",
                     automated_remarks=(
-                        "SPJ belum lengkap: nomor SPJ belum tersedia/terbaca pada Billing dan evidence pasangan tidak ditemukan. "
+                        "SPJ belum lengkap: evidence pasangan tidak ditemukan. "
                         "Vouching tetap dilanjutkan dan item masuk ke review."
                     ),
                 )
@@ -854,6 +951,18 @@ def vouch_spj(db: Session, *, branch: str | None = None) -> list[VouchingResult]
                 Document.branch == billing_branch if billing_branch is not None else Document.branch.is_(None)
             )
             matches = db.scalars(match_query).all()
+
+            # Some scans contain punctuation/noise differences in the SPJ number.
+            # If the exact normalized number is not found, the deterministic
+            # combined-file pair remains the preferred fallback.
+            if not matches:
+                paired_spj = _paired_spj_candidates(db, billing)
+                if len(paired_spj) == 1:
+                    spj = paired_spj[0]
+                    _refresh_visual_pair(db, billing, spj)
+                    if _norm_key(spj.no_spj) == no_spj:
+                        matches = [spj]
+
             if not matches:
                 result = _upsert_vouching_result(
                     db,
@@ -864,7 +973,7 @@ def vouch_spj(db: Session, *, branch: str | None = None) -> list[VouchingResult]
                     automated_rule_code="SPJ_NOT_FOUND",
                     automated_remarks=(
                         f"SPJ belum lengkap: evidence SPJ {billing.no_spj_raw or billing.no_spj} "
-                        "belum ditemukan. Vouching tetap dilanjutkan dan item masuk ke review."
+                        "belum ditemukan. Vouching tetap dilanjutkan ke review."
                     ),
                 )
             elif len(matches) > 1:
@@ -876,17 +985,42 @@ def vouch_spj(db: Session, *, branch: str | None = None) -> list[VouchingResult]
                     automated_status="REVIEW",
                     automated_rule_code="DUPLICATE_SPJ_NUMBER",
                     automated_remarks=f"Found {len(matches)} SPJ documents with the same number",
+                    control_evidence=_control_evidence_for_spj(db, matches[0]),
                 )
             else:
                 spj = matches[0]
-                control_evidence = _control_evidence_for_spj(db, spj)
+                control_evidence = _refresh_visual_pair(db, billing, spj)
+                if control_evidence is None:
+                    status = "REVIEW"
+                    rule = "CONTROL_EVIDENCE_NOT_AVAILABLE"
+                    remarks = "Nomor SPJ cocok, tetapi hasil control evidence belum tersedia."
+                elif control_evidence.review_required:
+                    status = "REVIEW"
+                    rule = "CONTROL_EVIDENCE_REVIEW"
+                    remarks = (
+                        control_evidence.review_reasons
+                        or "Nomor SPJ cocok, tetapi stempel/tanda tangan masih memerlukan review."
+                    )
+                elif _control_evidence_complete(control_evidence):
+                    status = "PASS"
+                    rule = None
+                    remarks = (
+                        "Nomor SPJ cocok dan seluruh control evidence wajib terdeteksi lengkap: "
+                        "tanda tangan serta stempel sesuai."
+                    )
+                else:
+                    status = "REVIEW"
+                    rule = "CONTROL_EVIDENCE_INCOMPLETE"
+                    remarks = "Nomor SPJ cocok, tetapi sebagian control evidence belum lengkap."
+
                 result = _upsert_vouching_result(
                     db,
                     billing=billing,
                     spj=spj,
                     spj_match=True,
-                    automated_status="PASS",
-                    automated_rule_code=None,
+                    automated_status=status,
+                    automated_rule_code=rule,
+                    automated_remarks=remarks,
                     control_evidence=control_evidence,
                 )
         results.append(result)
