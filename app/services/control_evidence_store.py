@@ -20,7 +20,6 @@ _DETECTION_TYPES = (
     "checker_signature",
     "receiver_stamp",
     "stamp_customer_match",
-    "receiver_name",
 )
 
 
@@ -51,18 +50,6 @@ def _join_reasons(reasons: list[str] | None) -> str | None:
 def _detection_values(evidence: dict[str, Any], detection_type: str) -> dict[str, Any]:
     if detection_type == "stamp_customer_match":
         return dict(evidence.get("receiver_stamp", {}).get("customer_match", {}) or {})
-    if detection_type == "receiver_name":
-        value = evidence.get("receiver_name")
-        if isinstance(value, dict):
-            return dict(value)
-        if value:
-            return {
-                "status": "PRESENT",
-                "confidence": 0.8,
-                "remarks": None,
-                "reference": {"text": str(value)},
-            }
-        return {"status": "UNKNOWN", "confidence": 0.0, "remarks": "Nama penerima tidak terbaca."}
     return dict(evidence.get(detection_type, {}) or {})
 
 
@@ -126,17 +113,17 @@ def evidence_payload(row: DocumentControlEvidence | None) -> dict[str, Any] | No
             "remarks": getattr(row, f"{prefix}_remarks"),
         }
 
-    receiver_name_detection = next(
+    receiver_signature_detection = next(
         (
             detection
             for detection in getattr(row.document, "control_evidence_detections", [])
-            if detection.detection_type == "receiver_name"
+            if detection.detection_type == "receiver_signature"
         ),
         None,
     )
     receiver_name = None
-    if receiver_name_detection and isinstance(receiver_name_detection.reference_json, dict):
-        receiver_name = receiver_name_detection.reference_json.get("text")
+    if receiver_signature_detection and isinstance(receiver_signature_detection.reference_json, dict):
+        receiver_name = receiver_signature_detection.reference_json.get("receiver_name")
 
     return {
         "control_evidence_id": row.id,
@@ -262,7 +249,10 @@ def _vision_evidence(vision: dict[str, Any], *, expected_customer: str | None) -
                 )
             ),
             "page_number": value.get("page_number"),
-            "reference": {"source": "AI_VISION"},
+            "reference": {
+                "source": "AI_VISION",
+                **({"receiver_name": vision.get("receiver_name")} if source == "receiver" and vision.get("receiver_name") else {}),
+            },
         }
 
     stamp_value = vision.get("stamp") if isinstance(vision.get("stamp"), dict) else {}
@@ -290,14 +280,6 @@ def _vision_evidence(vision: dict[str, Any], *, expected_customer: str | None) -
         ),
         "page_number": stamp_value.get("page_number"),
         "reference": {"source": "AI_VISION"},
-    }
-
-    receiver_name = vision.get("receiver_name")
-    result["receiver_name"] = {
-        "status": "PRESENT" if receiver_name else "UNKNOWN",
-        "confidence": 0.8 if receiver_name else 0.0,
-        "remarks": None if receiver_name else "Nama penerima tidak terbaca.",
-        "reference": {"text": receiver_name, "source": "AI_VISION"},
     }
 
     review_reasons: list[str] = []
@@ -336,7 +318,6 @@ def _merge_visual_over_ocr(ocr: dict[str, Any], visual: dict[str, Any]) -> dict[
         "bm_signature",
         "checker_signature",
         "receiver_stamp",
-        "receiver_name",
     ):
         value = visual.get(key)
         if value:
