@@ -204,7 +204,11 @@ def _ingest_physical_document(db: Session, upload, *, document_type: str, upload
     analysis = ocr_document(db, doc.id)
     control_evidence = None
     if document_type == "SPJ":
-        control_evidence = analyze_and_persist_control_evidence(db, doc.id)
+        control_evidence = analyze_and_persist_control_evidence(
+            db,
+            doc.id,
+            vision_result=analysis.get("vision"),
+        )
     record_audit(db, entity_type="DOCUMENT", entity_id=doc.id, action="AUTO_EXTRACT",
                  actor=uploaded_by, status_to="EXTRACTED",
                  metadata={"engine": analysis.get("engine"), "confidence": analysis.get("confidence"),
