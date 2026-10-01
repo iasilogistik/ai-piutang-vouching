@@ -87,7 +87,7 @@ def test_reconciliation_and_vouching_keep_combined_scanned_evidence_linked():
         assert billing.billing_document == "8501692627"
         assert rec.physical_billing_id == billing.id
         assert rec.billing_match is True
-        assert rec.status == "REVIEW"
+        assert rec.status == "MATCH"
         assert "Evidence SPJ tersedia" in (rec.remarks or "")
 
         results = vouch_spj(db, branch="KEDIRI")
