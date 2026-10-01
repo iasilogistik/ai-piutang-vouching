@@ -137,7 +137,7 @@ function evidenceSummary(summary){
   const spjReview=rows.filter(r=>r.evidence_state==='SPJ_PERLU_REVIEW').length;
   if(summary&&summary._error)return '<div class="evidence-note bad"><strong>Detail belum terbaca</strong><span>'+esc(summary._error)+'</span></div>';
   if(billingMissing||spjMissing||spjOcr||spjReview){
-    return '<div class="evidence-note warn"><strong>Perlu perhatian</strong><span>Billing belum lengkap: '+billingMissing+' · SPJ belum lengkap: '+spjMissing+(spjOcr?' · SPJ tersedia/OCR review: '+spjOcr:'')+(spjReview?' · SPJ review: '+spjReview:'')+'</span></div>';
+    return '<div class="evidence-note warn"><strong>Proses tetap dilanjutkan</strong><span>Perlu perhatian: Billing belum lengkap: '+billingMissing+' · SPJ belum lengkap: '+spjMissing+(spjOcr?' · SPJ tersedia/OCR review: '+spjOcr:'')+(spjReview?' · SPJ review: '+spjReview:'')+'</span></div>';
   }
   if(spjOcrInfo){
     return '<div class="evidence-note"><strong>Evidence terhubung</strong><span>SPJ tersedia; nomor/field OCR yang belum terbaca hanya informasi, bukan REVIEW: '+spjOcrInfo+'</span></div>';
