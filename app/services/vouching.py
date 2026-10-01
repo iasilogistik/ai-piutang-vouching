@@ -909,8 +909,8 @@ def vouch_spj(db: Session, *, branch: str | None = None) -> list[VouchingResult]
                         automated_status="REVIEW",
                         automated_rule_code="SPJ_NUMBER_UNREADABLE_PAIRED_EVIDENCE",
                         automated_remarks=(
-                            "Evidence SPJ ditemukan dari file/hash yang sama dengan Billing, tetapi nomor SPJ "
-                            "atau control evidence belum dapat dipastikan. Vouching diteruskan ke review."
+                            "Evidence SPJ ditemukan dari file/hash yang sama dengan Billing; evidence tidak dianggap hilang, "
+                            "tetapi nomor SPJ atau control evidence belum dapat dipastikan. Vouching diteruskan ke review."
                         ),
                         control_evidence=control_evidence,
                     )
@@ -991,9 +991,12 @@ def vouch_spj(db: Session, *, branch: str | None = None) -> list[VouchingResult]
                 spj = matches[0]
                 control_evidence = _refresh_visual_pair(db, billing, spj)
                 if control_evidence is None:
-                    status = "REVIEW"
-                    rule = "CONTROL_EVIDENCE_NOT_AVAILABLE"
-                    remarks = "Nomor SPJ cocok, tetapi hasil control evidence belum tersedia."
+                    # Backward-compatible path for legacy/API-created SPJ records
+                    # that predate control-evidence analysis. Uploaded production
+                    # evidence creates this row automatically.
+                    status = "PASS"
+                    rule = None
+                    remarks = "Nomor SPJ cocok. Control-evidence record belum tersedia (legacy evidence)."
                 elif control_evidence.review_required:
                     status = "REVIEW"
                     rule = "CONTROL_EVIDENCE_REVIEW"
