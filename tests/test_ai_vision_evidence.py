@@ -66,7 +66,6 @@ def test_partial_payment_summary_sums_structured_vision_rows():
 
 
 def test_spj_vision_enriches_paired_billing_without_double_counting(monkeypatch, tmp_path):
-    monkeypatch.setattr(vouching.settings, "use_supabase_storage", False)
     monkeypatch.setattr(vouching, "extract_text", lambda path: ("", "REVIEW_REQUIRED"))
     monkeypatch.setattr(vouching, "vision_available", lambda: True)
     monkeypatch.setattr(
@@ -158,7 +157,7 @@ def test_visual_control_evidence_reads_signatures_stamp_and_receiver(monkeypatch
         receiver_detection = db.scalar(
             select(ControlEvidenceDetection).where(
                 ControlEvidenceDetection.document_id == doc.id,
-                ControlEvidenceDetection.detection_type == "receiver_name",
+                ControlEvidenceDetection.detection_type == "receiver_signature",
             )
         )
 
@@ -173,4 +172,4 @@ def test_visual_control_evidence_reads_signatures_stamp_and_receiver(monkeypatch
         assert row.stamp_customer_match_status == "MATCH"
         assert row.review_required is False
         assert receiver_detection is not None
-        assert receiver_detection.reference_json["text"] == "Joyo Arjuno"
+        assert receiver_detection.reference_json["receiver_name"] == "Joyo Arjuno"
