@@ -314,19 +314,79 @@ async function validateSap(id,button){
   }catch(error){log('VALIDASI SAP GAGAL: '+error.message);}
   finally{button.disabled=false;}
 }
+async function refreshVisualEvidenceForBatch(id){
+  const response=await fetch('/reconciliation/'+id+'/visual-refresh-candidates',{headers:headers()});
+  const payload=await body(response);
+  const items=payload.items||[];
+  if(!items.length){
+    log('VISUAL EVIDENCE: semua evidence sudah memakai engine visual terbaru.');
+    return {total:0,success:0,failed:0};
+  }
+
+  log('VISUAL EVIDENCE: memproses '+items.length+' dokumen scan/foto secara terpisah agar reconciliation tidak timeout.');
+  let success=0,failed=0;
+  // Process two documents at a time. Each document has its own HTTP request so
+  // one heavy scan cannot make the entire reconciliation request exceed the
+  // serverless timeout.
+  for(let start=0;start<items.length;start+=2){
+    const chunk=items.slice(start,start+2);
+    const results=await Promise.all(chunk.map(async item=>{
+      try{
+        log('VISUAL '+(start+1)+'/'+items.length+': '+item.file_name);
+        const r=await fetch('/control-evidence/'+item.document_id+'/reanalyze-visual',{method:'POST',headers:headers()});
+        const p=await body(r);
+        return {ok:true,payload:p};
+      }catch(error){
+        return {ok:false,error:error.message,item:item};
+      }
+    }));
+    results.forEach(result=>{
+      if(result.ok){success+=1;}
+      else{failed+=1;log('VISUAL EVIDENCE GAGAL: '+result.item.file_name+' · '+result.error);}
+    });
+  }
+  log('VISUAL EVIDENCE SELESAI: '+success+' berhasil, '+failed+' gagal.');
+  return {total:items.length,success:success,failed:failed};
+}
 async function runReconciliation(id,button){
   button.disabled=true;
+  const originalText=button.textContent;
   try{
+    button.textContent='Recon...';
     log('Menjalankan reconciliation batch #'+id+' ...');
-    const response=await fetch('/reconciliation/'+id+'/run',{method:'POST',headers:headers()});
-    const payload=await body(response);
-    log('RECONCILIATION SELESAI - BATCH #'+id,payload);
+    let response=await fetch('/reconciliation/'+id+'/run',{method:'POST',headers:headers()});
+    let payload=await body(response);
+    log('RECONCILIATION AWAL SELESAI - BATCH #'+id,payload);
+
+    button.textContent='Baca Evidence...';
+    const visual=await refreshVisualEvidenceForBatch(id);
+
+    // Re-run only the lightweight matching step after OCR/visual fields were
+    // persisted. The second run no longer executes image analysis server-side.
+    if(visual.success>0){
+      button.textContent='Finalisasi...';
+      response=await fetch('/reconciliation/'+id+'/run',{method:'POST',headers:headers()});
+      payload=await body(response);
+      log('RECONCILIATION FINAL SELESAI - BATCH #'+id,payload);
+    }
+
+    const branch=selectedBranch();
+    if(branch){
+      try{
+        const vouchResponse=await fetch('/spj/vouch?branch='+encodeURIComponent(branch),{method:'POST',headers:headers()});
+        const vouchPayload=await body(vouchResponse);
+        log('SPJ VOUCHING OTOMATIS SELESAI - '+branch,vouchPayload);
+      }catch(error){
+        log('SPJ VOUCHING OTOMATIS: '+error.message);
+      }
+    }
+
     const summary=await reconciliationSummary(id);
     batchSummaries.set(id,summary);
     render();
     renderReconciliationDetail(id,summary);
   }catch(error){log('RECONCILIATION GAGAL: '+error.message);}
-  finally{button.disabled=false;}
+  finally{button.disabled=false;button.textContent=originalText;}
 }
 async function showDetail(id){
   try{

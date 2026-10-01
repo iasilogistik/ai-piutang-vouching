@@ -11,7 +11,7 @@ from app.audit_service import list_audit_trail, record_audit
 from app.auth import CurrentUser, require_roles
 from app.branch_access import ensure_branch_access, normalize_branch, scoped_branch, write_branch
 from app.database import SessionLocal, engine
-from app.models import BillingReconciliation, Document, DocumentControlEvidence, ImportBatch, PhysicalBilling, SAPBilling, SPJ, VouchingResult
+from app.models import BillingReconciliation, ControlEvidenceDetection, Document, DocumentControlEvidence, ImportBatch, PhysicalBilling, SAPBilling, SPJ, VouchingResult
 from app.services.auth_gateway import login_with_password, refresh_access_token
 from app.services.audit_trail_ui import register_audit_trail_ui_routes
 from app.services.audit_workflow import register_audit_workflow_routes
@@ -616,6 +616,160 @@ def run_reconciliation(batch_id: int, db: Session = Depends(get_db),
         db.commit()
     except ValueError as exc: raise handle_error(exc) from exc
     return {"batch_id": batch_id, "total": len(rows), "results": [_reconciliation_row_payload(r) for r in rows]}
+
+
+@app.get("/reconciliation/{batch_id}/visual-refresh-candidates")
+def reconciliation_visual_refresh_candidates(
+    batch_id: int,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR")),
+):
+    batch = _batch_for_user(db, batch_id, user)
+    branch = normalize_branch(batch.branch)
+    recs = db.scalars(
+        select(BillingReconciliation)
+        .join(BillingReconciliation.sap_billing)
+        .where(SAPBilling.import_batch_id == batch_id)
+        .order_by(BillingReconciliation.id)
+    ).all()
+
+    items = []
+    seen: set[int] = set()
+    for rec in recs:
+        if rec.physical_billing_id is None:
+            continue
+        billing = db.get(PhysicalBilling, rec.physical_billing_id)
+        if billing is None or billing.document is None:
+            continue
+        bill_doc = billing.document
+        spj_query = (
+            select(SPJ)
+            .join(SPJ.document)
+            .where(
+                Document.document_type == "SPJ",
+                Document.file_hash == bill_doc.file_hash,
+                Document.file_name == bill_doc.file_name,
+                Document.archived_at.is_(None),
+            )
+        )
+        spj_query = spj_query.where(
+            Document.branch == branch if branch is not None else Document.branch.is_(None)
+        )
+        paired = list(db.scalars(spj_query).all())
+        if len(paired) != 1:
+            continue
+        spj = paired[0]
+        if spj.document_id in seen:
+            continue
+        seen.add(spj.document_id)
+
+        current_v2 = db.scalar(
+            select(ControlEvidenceDetection.id).where(
+                ControlEvidenceDetection.document_id == spj.document_id,
+                ControlEvidenceDetection.extraction_engine.contains("LOCAL_TESSERACT_VISUAL_V2"),
+            ).limit(1)
+        )
+        if current_v2 is not None:
+            continue
+
+        control = db.scalar(
+            select(DocumentControlEvidence).where(
+                DocumentControlEvidence.document_id == spj.document_id
+            )
+        )
+        items.append(
+            {
+                "document_id": spj.document_id,
+                "file_name": spj.document.file_name,
+                "spj_id": spj.id,
+                "billing_id": billing.id,
+                "reconciliation_id": rec.id,
+                "current_review_required": bool(control.review_required) if control else True,
+            }
+        )
+    return {"batch_id": batch_id, "branch": batch.branch, "total": len(items), "items": items}
+
+
+@app.post("/control-evidence/{document_id}/reanalyze-visual")
+def reanalyze_control_evidence_visual(
+    document_id: int,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR")),
+):
+    doc = db.get(Document, document_id)
+    if doc is None or doc.document_type != "SPJ" or doc.archived_at is not None:
+        raise HTTPException(status_code=404, detail="SPJ evidence tidak ditemukan.")
+    ensure_branch_access(user, doc.branch)
+
+    paired_query = (
+        select(PhysicalBilling)
+        .join(PhysicalBilling.document)
+        .where(
+            Document.document_type == "BILLING",
+            Document.file_hash == doc.file_hash,
+            Document.file_name == doc.file_name,
+            Document.archived_at.is_(None),
+        )
+    )
+    branch = normalize_branch(doc.branch)
+    paired_query = paired_query.where(
+        Document.branch == branch if branch is not None else Document.branch.is_(None)
+    )
+    billings = list(db.scalars(paired_query).all())
+    billing = billings[0] if len(billings) == 1 else None
+
+    sap = None
+    if billing is not None:
+        rec = db.scalar(
+            select(BillingReconciliation)
+            .where(BillingReconciliation.physical_billing_id == billing.id)
+            .order_by(BillingReconciliation.id.desc())
+        )
+        if rec is not None:
+            sap = db.get(SAPBilling, rec.sap_billing_id)
+
+    expected_customer = (
+        (sap.customer_account_name or sap.customer)
+        if sap is not None
+        else None
+    )
+    analysis = ocr_document(
+        db,
+        document_id,
+        expected_customer=expected_customer,
+        expected_billing_document=sap.billing_document if sap else (billing.billing_document if billing else None),
+        expected_nominal=sap.nominal if sap else None,
+    )
+    payload = analyze_and_persist_control_evidence(
+        db,
+        document_id,
+        expected_customer=expected_customer,
+        vision_result=analysis.get("vision"),
+        ocr_text=analysis.get("ocr_text"),
+        ocr_engine=analysis.get("engine"),
+    )
+    record_audit(
+        db,
+        entity_type="DOCUMENT",
+        entity_id=document_id,
+        action="VISUAL_EVIDENCE_REANALYZE",
+        actor=user.user_id,
+        status_to=payload.get("review_status") or ("REVIEW" if payload.get("review_required") else "PASS"),
+        metadata={
+            "file_name": doc.file_name,
+            "engine": payload.get("engine"),
+            "vision_used": payload.get("vision_used"),
+            "expected_customer": expected_customer,
+        },
+        branch=doc.branch,
+    )
+    db.commit()
+    return {
+        "document_id": document_id,
+        "file_name": doc.file_name,
+        "ocr": analysis,
+        "control_evidence": payload,
+    }
 
 
 @app.post("/reconciliation/results/{reconciliation_id}/confirm-manual")
