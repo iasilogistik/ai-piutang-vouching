@@ -11,6 +11,21 @@ app.get('/health', (c) =>
   }),
 );
 
+app.get('/vision-ai-health', async (c) => {
+  try {
+    const result = await generateText({
+      model: 'openai/gpt-5.4-mini-fast',
+      prompt: 'Reply with exactly OK',
+      maxRetries: 1,
+    });
+    return c.json({ status: 'ok', ai: result.text.trim() });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('VISION_AI_HEALTH_ERROR', message);
+    return c.json({ status: 'error', detail: message }, 502);
+  }
+});
+
 app.post('/analyze', async (c) => {
   try {
     const body = await c.req.json();
