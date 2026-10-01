@@ -511,8 +511,13 @@ def ocr_document(
                     paired.nominal = vision["grand_total"]
                 vision_partial, vision_partial_raw = partial_payment_summary(vision)
                 if vision_partial is not None:
+                    # The AI reads the same combined file for Billing and SPJ.
+                    # Store an extracted payment once on Billing to avoid
+                    # subtracting the same partial payment twice in reconciliation.
                     paired.partial_payment = vision_partial
                     paired.partial_payment_raw = vision_partial_raw
+                    row.partial_payment = None
+                    row.partial_payment_raw = None
                 paired.ocr_confidence = confidence
 
     db.commit()
