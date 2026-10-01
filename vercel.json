@@ -37,6 +37,12 @@
       }
     },
     {
+      "source": "/vision-local-selftest",
+      "destination": {
+        "service": "vision"
+      }
+    },
+    {
       "source": "/(.*)",
       "destination": {
         "service": "backend"
