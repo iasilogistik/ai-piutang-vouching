@@ -328,3 +328,59 @@ def test_reconciliation_persists_visual_signatures_and_stamp(monkeypatch):
         assert evidence.receiver_stamp_status == "PRESENT"
         assert evidence.stamp_customer_match_status == "MATCH"
         assert evidence.review_required is False
+
+
+
+def test_reconciliation_does_not_run_expensive_ocr_inline(monkeypatch):
+    import app.services.vouching as service
+
+    def _unexpected_ocr(*args, **kwargs):
+        raise AssertionError("reconciliation must not run image OCR inline")
+
+    monkeypatch.setattr(service, "ocr_document", _unexpected_ocr)
+
+    with Session(_engine()) as db:
+        batch = ImportBatch(file_name="sap.xlsx", branch="KEDIRI", total_records=1, status="IMPORTED")
+        db.add(batch)
+        db.flush()
+        sap = SAPBilling(
+            import_batch_id=batch.id,
+            customer_account_name="SANTOSO",
+            billing_document="8501735930",
+            doc_date=date(2026, 8, 1),
+            nominal=Decimal("3000000.00"),
+        )
+        db.add(sap)
+        db.flush()
+        billing_doc = Document(
+            file_name="SANTOSO 8501735930.pdf",
+            file_type="PDF",
+            document_type="BILLING",
+            file_hash="timeout-safe",
+            storage_path="billing.pdf",
+            branch="KEDIRI",
+        )
+        spj_doc = Document(
+            file_name="SANTOSO 8501735930.pdf",
+            file_type="PDF",
+            document_type="SPJ",
+            file_hash="timeout-safe",
+            storage_path="spj.pdf",
+            branch="KEDIRI",
+        )
+        db.add_all([billing_doc, spj_doc])
+        db.flush()
+        db.add_all([
+            PhysicalBilling(
+                document_id=billing_doc.id,
+                billing_document="8501735930",
+                ocr_confidence=Decimal("0.0000"),
+            ),
+            SPJ(document_id=spj_doc.id, ocr_confidence=Decimal("0.0000")),
+        ])
+        db.commit()
+
+        rows = reconcile_batch(db, batch.id, branch="KEDIRI")
+        rec = next(row for row in rows if row.sap_billing_id == sap.id)
+
+        assert rec.status == "MATCH"
