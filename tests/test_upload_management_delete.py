@@ -127,22 +127,57 @@ def test_automatic_reconciliation_and_vouching_do_not_lock_wrong_upload_delete()
         assert db.get(Document, spj_doc_id) is not None
 
 
-def test_manual_vouching_review_locks_evidence_delete():
+def test_manual_match_or_review_can_be_deleted_as_correction_and_resets_results():
     with Session(_engine()) as db:
-        billing_doc_id, _, _, vouching_id = _automatic_case(db)
+        billing_doc_id, spj_doc_id, reconciliation_id, vouching_id = _automatic_case(db)
         vouching = db.get(VouchingResult, vouching_id)
-        vouching.manual_review_status = "REVIEW"
+        vouching.status = "PASS"
+        vouching.manual_review_status = "PASS"
         vouching.reviewer_id = "reviewer-1"
         db.commit()
 
         policy = _document_delete_policies(db, [db.get(Document, billing_doc_id)])[billing_doc_id]
-        assert policy["delete_allowed"] is False
-        assert "direview" in policy["delete_reason"].lower()
+        assert policy["delete_allowed"] is True
+        assert policy["delete_requires_reset"] is True
+        assert "di-reset" in policy["delete_reset_note"]
 
-        with pytest.raises(HTTPException) as exc:
-            delete_evidence_upload(billing_doc_id, db=db, user=_user())
-        assert exc.value.status_code == 409
-        assert "manual/final" in exc.value.detail
+        result = delete_evidence_upload(billing_doc_id, db=db, user=_user())
+
+        assert result["deleted"] is True
+        assert result["automatic_reconciliation_rows_reset"] == 1
+        assert result["automatic_vouching_rows_reset"] == 1
+        assert result["manual_review_rows_reset"] == 1
+        assert db.get(Document, billing_doc_id) is None
+        assert db.get(Document, spj_doc_id) is not None
+        assert db.get(BillingReconciliation, reconciliation_id) is None
+        assert db.get(VouchingResult, vouching_id) is None
+
+
+def test_delete_spj_after_manual_match_resets_linked_reconciliation_too():
+    with Session(_engine()) as db:
+        billing_doc_id, spj_doc_id, reconciliation_id, vouching_id = _automatic_case(db)
+        reconciliation = db.get(BillingReconciliation, reconciliation_id)
+        reconciliation.status = "MATCH"
+        reconciliation.remarks = "[MANUAL_CONFIRMED] Billing/SPJ sesuai."
+        vouching = db.get(VouchingResult, vouching_id)
+        vouching.status = "PASS"
+        vouching.manual_review_status = "PASS"
+        vouching.reviewer_id = "reviewer-1"
+        db.commit()
+
+        policy = _document_delete_policies(db, [db.get(Document, spj_doc_id)])[spj_doc_id]
+        assert policy["delete_allowed"] is True
+        assert policy["delete_requires_reset"] is True
+
+        result = delete_evidence_upload(spj_doc_id, db=db, user=_user())
+
+        assert result["deleted"] is True
+        assert result["automatic_reconciliation_rows_reset"] == 1
+        assert result["automatic_vouching_rows_reset"] == 1
+        assert db.get(Document, spj_doc_id) is None
+        assert db.get(Document, billing_doc_id) is not None
+        assert db.get(BillingReconciliation, reconciliation_id) is None
+        assert db.get(VouchingResult, vouching_id) is None
 
 
 def test_working_paper_or_finding_style_resource_link_locks_evidence_delete():
