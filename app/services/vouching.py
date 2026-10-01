@@ -371,7 +371,14 @@ def parse_document_fields(text: str) -> dict[str, Any]:
     }
 
 
-def ocr_document(db: Session, document_id: int) -> dict[str, Any]:
+def ocr_document(
+    db: Session,
+    document_id: int,
+    *,
+    expected_customer: str | None = None,
+    expected_billing_document: str | None = None,
+    expected_nominal: Decimal | None = None,
+) -> dict[str, Any]:
     doc = db.get(Document, document_id)
     if not doc:
         raise ValueError("Document not found")
@@ -401,7 +408,13 @@ def ocr_document(db: Session, document_id: int) -> dict[str, Any]:
             or (doc.document_type == "SPJ" and not fields.get("no_spj"))
         )
         if critical_missing and vision_available():
-            vision = analyze_document_vision(ocr_path, file_name=doc.file_name)
+            vision = analyze_document_vision(
+                ocr_path,
+                file_name=doc.file_name,
+                expected_customer=expected_customer,
+                expected_billing_document=expected_billing_document,
+                expected_nominal=expected_nominal,
+            )
             if vision:
                 engine = f"{engine}+AI_VISION" if engine != "REVIEW_REQUIRED" else "AI_VISION"
                 if not fields.get("billing_document") and vision.get("billing_document"):
@@ -613,7 +626,13 @@ def reconcile_batch(db: Session, batch_id: int, *, branch: str | None = None) ->
             ):
                 paired_spj = _paired_spj_candidates(db, physical)
                 if len(paired_spj) == 1:
-                    vision_analysis = ocr_document(db, paired_spj[0].document_id)
+                    vision_analysis = ocr_document(
+                        db,
+                        paired_spj[0].document_id,
+                        expected_customer=sap.customer_account_name or sap.customer,
+                        expected_billing_document=sap.billing_document,
+                        expected_nominal=sap.nominal,
+                    )
                     if vision_analysis.get("vision"):
                         from app.services.control_evidence_store import analyze_and_persist_control_evidence
 
