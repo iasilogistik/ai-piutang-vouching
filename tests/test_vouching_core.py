@@ -3,6 +3,7 @@ from decimal import Decimal
 
 from app.services.vouching import (
     _billing_document_from_filename,
+    _extract_partial_payments,
     _norm_key,
     _parse_amount,
     _parse_date,
@@ -32,3 +33,14 @@ def test_billing_document_filename_fallback_is_conservative():
     assert _billing_document_from_filename("gemilang 86.pdf") is None
     assert _billing_document_from_filename("scan 8501681154 8501681202.pdf") is None
     assert _billing_document_from_filename("reference 123456789.pdf") is None
+
+
+
+def test_partial_payment_parser_supports_common_scan_labels():
+    amount, raw = _extract_partial_payments(
+        "Payment Received: Rp 1.000.000\nDP: Rp 500.000"
+    )
+
+    assert amount == Decimal("1500000.00")
+    assert "Payment Received" in raw
+    assert "DP" in raw
