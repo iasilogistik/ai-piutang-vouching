@@ -56,4 +56,12 @@ def test_reconciliation_detail_supports_manual_confirmation_after_visual_check()
     assert "Konfirmasi Semua REVIEW yang Sudah Dicek" in html
     assert "/confirm-manual?" in html
     assert "/confirm-manual-review?" in html
-    assert "Billing, tanggal/nominal, SPJ, tanda tangan, dan stempel" in html
+    assert "Billing Document unik sebagai identitas utama" in html
+
+
+
+def test_reconciliation_ui_distinguishes_ocr_info_from_actual_review():
+    html = reconciliation_vouching_html()
+
+    assert "SPJ tersedia · OCR info" in html
+    assert "bukan REVIEW" in html
