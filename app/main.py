@@ -56,7 +56,7 @@ from app.services.upload_center import register_upload_center_routes
 from app.services.reconciliation_vouching_ui import register_reconciliation_vouching_routes
 from app.services.upload_management import router as upload_management_router
 from app.services.user_management import register_user_management_routes
-from app.services.vouching import ocr_document, overall_result, reconcile_batch, review_vouching_result, save_document, validate_sap_batch, vouch_spj
+from app.services.vouching import confirm_reconciliation_manual, ocr_document, overall_result, reconcile_batch, review_vouching_result, save_document, validate_sap_batch, vouch_spj
 
 app = FastAPI(title="AI Piutang Vouching")
 app.include_router(upload_management_router)
@@ -607,6 +607,125 @@ def run_reconciliation(batch_id: int, db: Session = Depends(get_db),
         db.commit()
     except ValueError as exc: raise handle_error(exc) from exc
     return {"batch_id": batch_id, "total": len(rows), "results": [_reconciliation_row_payload(r) for r in rows]}
+
+
+@app.post("/reconciliation/results/{reconciliation_id}/confirm-manual")
+def confirm_reconciliation_result_manual(
+    reconciliation_id: int,
+    confirmed: bool = False,
+    remarks: str | None = None,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER")),
+):
+    if not confirmed:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Konfirmasi manual wajib menyatakan Billing, tanggal/nominal, SPJ, "
+                "tanda tangan, dan stempel telah diperiksa dan sesuai."
+            ),
+        )
+    before = db.get(BillingReconciliation, reconciliation_id)
+    before_status = before.status if before else None
+    try:
+        payload = confirm_reconciliation_manual(
+            db,
+            reconciliation_id,
+            reviewer_id=user.user_id,
+            remarks=remarks,
+            branch=scoped_branch(user),
+        )
+        billing = db.get(PhysicalBilling, payload["physical_billing_id"])
+        record_audit(
+            db,
+            entity_type="BILLING_RECONCILIATION",
+            entity_id=reconciliation_id,
+            action="MANUAL_CONFIRM_MATCH",
+            actor=user.user_id,
+            status_from=before_status,
+            status_to="MATCH",
+            remarks=payload.get("remarks"),
+            metadata={
+                "sap_billing_id": payload.get("sap_billing_id"),
+                "physical_billing_id": payload.get("physical_billing_id"),
+                "spj_id": payload.get("spj_id"),
+                "vouching_result_id": payload.get("vouching_result_id"),
+                "control_evidence_id": payload.get("control_evidence_id"),
+                "manual_confirmed": True,
+            },
+            branch=billing.document.branch if billing and billing.document else scoped_branch(user),
+        )
+        db.commit()
+        return payload
+    except ValueError as exc:
+        db.rollback()
+        raise handle_error(exc) from exc
+
+
+@app.post("/reconciliation/{batch_id}/confirm-manual-review")
+def confirm_reconciliation_batch_manual(
+    batch_id: int,
+    confirmed: bool = False,
+    remarks: str | None = None,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER")),
+):
+    if not confirmed:
+        raise HTTPException(
+            status_code=400,
+            detail="Konfirmasi batch wajib mencentang pernyataan pemeriksaan manual.",
+        )
+    batch = _batch_for_user(db, batch_id, user)
+    rows = db.scalars(
+        select(BillingReconciliation)
+        .join(BillingReconciliation.sap_billing)
+        .where(
+            BillingReconciliation.sap_billing.has(import_batch_id=batch_id),
+            BillingReconciliation.status == "REVIEW",
+            BillingReconciliation.physical_billing_id.is_not(None),
+        )
+        .order_by(BillingReconciliation.id)
+    ).all()
+    confirmed_rows = []
+    skipped = []
+    for row in rows:
+        try:
+            payload = confirm_reconciliation_manual(
+                db,
+                row.id,
+                reviewer_id=user.user_id,
+                remarks=remarks,
+                branch=scoped_branch(user),
+            )
+            confirmed_rows.append(payload)
+        except ValueError as exc:
+            skipped.append({"reconciliation_id": row.id, "reason": str(exc)})
+
+    record_audit(
+        db,
+        entity_type="IMPORT_BATCH",
+        entity_id=batch_id,
+        action="MANUAL_CONFIRM_REVIEW_BATCH",
+        actor=user.user_id,
+        status_from=None,
+        status_to="CONFIRMED",
+        remarks=remarks,
+        metadata={
+            "confirmed_count": len(confirmed_rows),
+            "skipped_count": len(skipped),
+            "confirmed_ids": [row["reconciliation_id"] for row in confirmed_rows],
+            "skipped": skipped,
+        },
+        branch=batch.branch,
+    )
+    db.commit()
+    return {
+        "batch_id": batch_id,
+        "confirmed_count": len(confirmed_rows),
+        "skipped_count": len(skipped),
+        "confirmed": confirmed_rows,
+        "skipped": skipped,
+    }
 
 
 @app.get("/reconciliation/{batch_id}")
