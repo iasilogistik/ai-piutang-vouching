@@ -164,8 +164,10 @@ function roleRegion(
   return {
     x0: Math.max(0, Math.floor(left)),
     x1: Math.min(page.width, Math.ceil(right)),
-    y0: Math.max(0, Math.floor(label.bbox.y0 - page.height * 0.105)),
-    y1: Math.min(page.height, Math.ceil(label.bbox.y1 + page.height * 0.065)),
+    // Most delivery/SPJ forms print the role label at the top of a box and
+    // place the handwritten signature/stamp underneath it.
+    y0: Math.max(0, Math.floor(label.bbox.y0 - page.height * 0.025)),
+    y1: Math.min(page.height, Math.ceil(label.bbox.y1 + page.height * 0.16)),
   };
 }
 
@@ -263,6 +265,42 @@ function lineInside(line: OcrLine, region: BBox): boolean {
   return cx >= region.x0 && cx <= region.x1 && cy >= region.y0 && cy <= region.y1;
 }
 
+async function focusedRegionText(page: PageOcr, region: BBox): Promise<string> {
+  const left = Math.max(0, Math.floor(region.x0));
+  const top = Math.max(0, Math.floor(region.y0));
+  const width = Math.max(1, Math.min(page.width - left, Math.floor(region.x1 - region.x0)));
+  const height = Math.max(1, Math.min(page.height - top, Math.floor(region.y1 - region.y0)));
+  try {
+    const crop = await sharp(page.image)
+      .extract({ left, top, width, height })
+      .resize({ width: Math.min(1600, Math.max(700, width * 2)), withoutEnlargement: false })
+      .grayscale()
+      .normalise()
+      .sharpen()
+      .threshold(205)
+      .png()
+      .toBuffer();
+    const worker = await getWorker();
+    const result = await worker.recognize(crop, { rotateAuto: false }, { text: true });
+    return String(result.data.text || '').trim();
+  } catch (error) {
+    console.warn('FOCUSED_REGION_OCR_FAILED', error instanceof Error ? error.message : String(error));
+    return '';
+  }
+}
+
+function bestCustomerLine(text: string, expectedCustomer?: string | null): string | null {
+  const lines = String(text || '')
+    .split(/\r?\n/)
+    .map((value) => value.trim())
+    .filter((value) => value.length >= 3);
+  return (
+    lines
+      .filter((value) => overlapScore(value, expectedCustomer) >= 0.35)
+      .sort((a, b) => overlapScore(b, expectedCustomer) - overlapScore(a, expectedCustomer))[0] || null
+  );
+}
+
 async function localAnalyze(images: string[], expectedCustomer?: string | null) {
   const pages: PageOcr[] = [];
   for (const image of images.slice(0, 3)) {
@@ -301,18 +339,29 @@ async function localAnalyze(images: string[], expectedCustomer?: string | null) 
           receiverName = candidates.find((text) => /[A-Za-z]{3}/.test(text)) || null;
         }
 
-        const stampTextCandidate = regionLines
-          .map((line) => line.text.trim())
-          .filter((text) => overlapScore(text, expectedCustomer) >= 0.5)
-          .sort((a, b) => overlapScore(b, expectedCustomer) - overlapScore(a, expectedCustomer))[0];
+        let stampTextCandidate =
+          regionLines
+            .map((line) => line.text.trim())
+            .filter((text) => overlapScore(text, expectedCustomer) >= 0.35)
+            .sort((a, b) => overlapScore(b, expectedCustomer) - overlapScore(a, expectedCustomer))[0] || null;
 
-        const stampPresentByColor = stats.colorCount >= 75 && stats.colorRatio >= 0.0012;
-        const stampPresentByInk = stats.darkCount >= 500 && stats.darkRatio >= 0.008;
+        const stampPresentByColor = stats.colorCount >= 55 && stats.colorRatio >= 0.0008;
+        const stampPresentByInk = stats.darkCount >= 360 && stats.darkRatio >= 0.0055;
+
+        // Low-contrast blue/green stamps are often visible to a person but are
+        // missed by full-page OCR. Once visual ink says a stamp exists, run a
+        // focused high-contrast OCR pass over the receiver box to recover the
+        // customer/stamp wording and avoid unnecessary reviewer work.
+        if ((stampPresentByColor || stampPresentByInk) && !stampTextCandidate) {
+          const focused = await focusedRegionText(page, region);
+          stampTextCandidate = bestCustomerLine(focused, expectedCustomer);
+        }
+
         if ((stampPresentByColor || stampPresentByInk) && stamp.confidence < 0.8) {
           stamp = {
             status: 'PRESENT',
             text: stampTextCandidate || null,
-            confidence: stampPresentByColor ? 0.88 : 0.66,
+            confidence: stampTextCandidate ? 0.92 : (stampPresentByColor ? 0.86 : 0.65),
             page_number: pageIndex + 1,
           };
         }
@@ -331,7 +380,7 @@ async function localAnalyze(images: string[], expectedCustomer?: string | null) 
   const ocrText = pages.map((page, index) => `--- PAGE ${index + 1} ---\n${page.text}`).join('\n\n');
 
   return {
-    engine: 'LOCAL_TESSERACT_VISUAL',
+    engine: 'LOCAL_TESSERACT_VISUAL_V2',
     billing_document: null,
     invoice_date: null,
     grand_total: null,
@@ -353,7 +402,7 @@ app.get('/health', (c) =>
   c.json({
     status: 'ok',
     service: 'vision',
-    engine: 'LOCAL_TESSERACT_VISUAL',
+    engine: 'LOCAL_TESSERACT_VISUAL_V2',
   }),
 );
 
@@ -361,7 +410,7 @@ app.get('/vision-ai-health', async (c) => {
   // Preview-only diagnostic route used while this branch is under test.
   return c.json({
     status: 'ok',
-    engine: 'LOCAL_TESSERACT_VISUAL',
+    engine: 'LOCAL_TESSERACT_VISUAL_V2',
     paid_gateway_required: false,
   });
 });
