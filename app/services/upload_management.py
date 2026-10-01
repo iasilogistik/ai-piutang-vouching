@@ -114,12 +114,19 @@ def _document_delete_policies(
 
     doc_ids = [document.id for document in documents]
     reasons: dict[int, list[str]] = {document.id: [] for document in documents}
+    correction_notes: dict[int, list[str]] = {document.id: [] for document in documents}
 
     def add_reason(document_id: int | None, reason: str) -> None:
         if document_id is None or document_id not in reasons:
             return
         if reason not in reasons[document_id]:
             reasons[document_id].append(reason)
+
+    def add_correction_note(document_id: int | None, note: str) -> None:
+        if document_id is None or document_id not in correction_notes:
+            return
+        if note not in correction_notes[document_id]:
+            correction_notes[document_id].append(note)
 
     for document in documents:
         if document.archived_at is not None:
@@ -160,7 +167,10 @@ def _document_delete_policies(
 
     for control in control_rows:
         if control.review_status is not None or control.reviewer_id is not None or control.reviewed_at is not None:
-            add_reason(control.document_id, "Control Evidence sudah direview auditor/reviewer.")
+            add_correction_note(
+                control.document_id,
+                "Control Evidence sudah direview; keputusan review akan di-reset bila evidence dihapus.",
+            )
 
     for document_id, resource_type in db.execute(
         select(EvidenceResourceLink.document_id, EvidenceResourceLink.resource_type).where(
@@ -211,7 +221,10 @@ def _document_delete_policies(
                 or row.reviewed_at is not None
             ):
                 for document_id in targets:
-                    add_reason(document_id, "Hasil vouching sudah direview auditor/reviewer.")
+                    add_correction_note(
+                        document_id,
+                        "Hasil vouching/reconciliation sudah direview; keputusan MATCH/PASS manual akan di-reset bila evidence dihapus.",
+                    )
 
     vouch_ids = list(vouch_targets)
     workflow_clauses = []
@@ -253,6 +266,8 @@ def _document_delete_policies(
         document.id: {
             "delete_allowed": not reasons[document.id],
             "delete_reason": " ".join(reasons[document.id][:3]) or None,
+            "delete_requires_reset": bool(correction_notes[document.id]),
+            "delete_reset_note": " ".join(correction_notes[document.id][:3]) or None,
         }
         for document in documents
     }
@@ -267,16 +282,6 @@ def _automatic_document_dependencies(db: Session, document_id: int) -> dict[str,
         select(DocumentControlEvidence.id).where(DocumentControlEvidence.document_id == document_id)
     )
 
-    reconciliation_ids: list[int] = []
-    if physical_id is not None:
-        reconciliation_ids = list(
-            db.scalars(
-                select(BillingReconciliation.id).where(
-                    BillingReconciliation.physical_billing_id == physical_id
-                )
-            ).all()
-        )
-
     vouch_clauses = []
     if physical_id is not None:
         vouch_clauses.append(VouchingResult.billing_id == physical_id)
@@ -284,9 +289,34 @@ def _automatic_document_dependencies(db: Session, document_id: int) -> dict[str,
         vouch_clauses.append(VouchingResult.spj_id == spj_id)
     if control_id is not None:
         vouch_clauses.append(VouchingResult.control_evidence_id == control_id)
-    vouching_ids = (
-        list(db.scalars(select(VouchingResult.id).where(or_(*vouch_clauses))).all())
+
+    vouch_rows = (
+        list(db.scalars(select(VouchingResult).where(or_(*vouch_clauses))).all())
         if vouch_clauses
+        else []
+    )
+    vouching_ids = [row.id for row in vouch_rows]
+
+    # Deleting an SPJ can invalidate a MATCH reconciliation that was manually
+    # confirmed through the linked billing. Reset those reconciliation rows too,
+    # otherwise the remaining billing would incorrectly stay MATCH after its SPJ
+    # evidence was deleted.
+    impacted_billing_ids: set[int] = set()
+    if physical_id is not None:
+        impacted_billing_ids.add(physical_id)
+    impacted_billing_ids.update(
+        row.billing_id for row in vouch_rows if row.billing_id is not None
+    )
+
+    reconciliation_ids = (
+        list(
+            db.scalars(
+                select(BillingReconciliation.id).where(
+                    BillingReconciliation.physical_billing_id.in_(impacted_billing_ids)
+                )
+            ).all()
+        )
+        if impacted_billing_ids
         else []
     )
 
@@ -299,6 +329,21 @@ def _automatic_document_dependencies(db: Session, document_id: int) -> dict[str,
         or 0
     )
 
+    manual_review_reset_count = sum(
+        1
+        for row in vouch_rows
+        if row.manual_review_status is not None
+        or row.reviewer_id is not None
+        or row.reviewed_at is not None
+    )
+    control_row = db.get(DocumentControlEvidence, control_id) if control_id is not None else None
+    if control_row is not None and (
+        control_row.review_status is not None
+        or control_row.reviewer_id is not None
+        or control_row.reviewed_at is not None
+    ):
+        manual_review_reset_count += 1
+
     return {
         "physical_id": physical_id,
         "spj_id": spj_id,
@@ -306,6 +351,7 @@ def _automatic_document_dependencies(db: Session, document_id: int) -> dict[str,
         "reconciliation_ids": reconciliation_ids,
         "vouching_ids": vouching_ids,
         "detection_count": detection_count,
+        "manual_review_reset_count": manual_review_reset_count,
     }
 
 
@@ -338,7 +384,12 @@ def _recent_items(db: Session, user: CurrentUser, limit: int) -> list[dict[str, 
     for document in documents:
         policy = delete_policies.get(
             document.id,
-            {"delete_allowed": True, "delete_reason": None},
+            {
+                "delete_allowed": True,
+                "delete_reason": None,
+                "delete_requires_reset": False,
+                "delete_reset_note": None,
+            },
         )
         items.append(
             {
@@ -354,6 +405,8 @@ def _recent_items(db: Session, user: CurrentUser, limit: int) -> list[dict[str, 
                 "description": document.description,
                 "delete_allowed": policy["delete_allowed"],
                 "delete_reason": policy["delete_reason"],
+                "delete_requires_reset": policy["delete_requires_reset"],
+                "delete_reset_note": policy["delete_reset_note"],
             }
         )
     items.sort(key=lambda row: row["uploaded_at"], reverse=True)
@@ -531,7 +584,7 @@ def delete_evidence_upload(
         raise HTTPException(
             status_code=409,
             detail=(
-                "Evidence dikunci karena sudah dipakai pada proses audit manual/final. "
+                "Evidence dikunci karena sudah dipakai pada proses audit final/terhubung. "
                 + str(policy["delete_reason"] or "")
             ).strip(),
         )
@@ -547,6 +600,7 @@ def delete_evidence_upload(
         "automatic_reconciliation_rows_reset": len(reconciliation_ids),
         "automatic_vouching_rows_reset": len(vouching_ids),
         "control_detections_deleted": dependencies["detection_count"],
+        "manual_review_rows_reset": dependencies["manual_review_reset_count"],
     }
     try:
         if vouching_ids:
@@ -607,9 +661,11 @@ def delete_evidence_upload(
         "id": document_id,
         "automatic_reconciliation_rows_reset": len(reconciliation_ids),
         "automatic_vouching_rows_reset": len(vouching_ids),
+        "manual_review_rows_reset": dependencies["manual_review_reset_count"],
         "message": (
-            "Evidence berhasil dihapus dari proses aplikasi. Hasil rekonsiliasi/vouching otomatis "
-            "yang terkait sudah di-reset dan perlu dijalankan ulang. Raw storage dipertahankan "
+            "Evidence berhasil dihapus sebagai correction. Status MATCH/PASS, hasil review, "
+            "reconciliation/vouching, dan control evidence yang terkait sudah di-reset dan perlu "
+            "dijalankan ulang setelah evidence yang benar di-upload. Raw storage dipertahankan "
             "untuk audit recovery."
         ),
     }
