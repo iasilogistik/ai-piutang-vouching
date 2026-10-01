@@ -204,7 +204,14 @@ def _ingest_physical_document(db: Session, upload, *, document_type: str, upload
     analysis = ocr_document(db, doc.id)
     control_evidence = None
     if document_type == "SPJ":
-        control_evidence = analyze_and_persist_control_evidence(db, doc.id)
+        if analysis.get("vision"):
+            control_evidence = analyze_and_persist_control_evidence(
+                db,
+                doc.id,
+                vision_result=analysis.get("vision"),
+            )
+        else:
+            control_evidence = analyze_and_persist_control_evidence(db, doc.id)
     record_audit(db, entity_type="DOCUMENT", entity_id=doc.id, action="AUTO_EXTRACT",
                  actor=uploaded_by, status_to="EXTRACTED",
                  metadata={"engine": analysis.get("engine"), "confidence": analysis.get("confidence"),
@@ -588,6 +595,8 @@ def _reconciliation_row_payload(row: BillingReconciliation) -> dict:
         "date_match": row.date_match,
         "nominal_match": row.nominal_match,
         "nominal_difference": str(row.nominal_difference),
+        "billing_partial_payment": str(physical.partial_payment) if physical and physical.partial_payment is not None else None,
+        "billing_partial_payment_raw": physical.partial_payment_raw if physical else None,
         "status": row.status,
         "exception_code": row.exception_code,
         "remarks": row.remarks,
