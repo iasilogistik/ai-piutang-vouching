@@ -15,6 +15,7 @@ from app.branch_access import branch_for_actor, normalize_branch
 from app.config import settings
 from app.models import BillingReconciliation, Document, DocumentControlEvidence, ImportBatch, PhysicalBilling, SAPBilling, SPJ, VouchingResult
 from app.services.storage import materialize, upload_bytes
+from app.services.vision_evidence import analyze_document_vision, partial_payment_summary, vision_available
 
 STORAGE_ROOT = Path("storage/uploads")
 ALLOWED_DOC_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png"}
@@ -376,22 +377,68 @@ def ocr_document(db: Session, document_id: int) -> dict[str, Any]:
         raise ValueError("Document not found")
     ocr_path = doc.storage_path
     temporary_path: str | None = None
+    vision: dict[str, Any] | None = None
     if settings.use_supabase_storage:
         temporary_path = materialize(doc.storage_path, Path(doc.file_name).suffix.lower())
         ocr_path = temporary_path
     try:
         text, engine = extract_text(ocr_path)
+        fields = parse_document_fields(text)
+
+        # Scanned PDFs on serverless often have no text layer and Tesseract may
+        # be unavailable. Use multimodal vision only as a fallback when the
+        # classic OCR result is materially incomplete.
+        critical_missing = (
+            not text
+            or (
+                doc.document_type == "BILLING"
+                and (
+                    not fields.get("billing_document")
+                    or fields.get("doc_date") is None
+                    or fields.get("nominal") is None
+                )
+            )
+            or (doc.document_type == "SPJ" and not fields.get("no_spj"))
+        )
+        if critical_missing and vision_available():
+            vision = analyze_document_vision(ocr_path, file_name=doc.file_name)
+            if vision:
+                engine = f"{engine}+AI_VISION" if engine != "REVIEW_REQUIRED" else "AI_VISION"
+                if not fields.get("billing_document") and vision.get("billing_document"):
+                    fields["billing_document_raw"] = vision["billing_document"]
+                    fields["billing_document"] = _norm_key(vision["billing_document"])
+                if not fields.get("no_spj") and vision.get("spj_number"):
+                    fields["no_spj_raw"] = vision["spj_number"]
+                    fields["no_spj"] = _norm_key(vision["spj_number"])
+                if fields.get("doc_date") is None and vision.get("invoice_date") is not None:
+                    fields["doc_date"] = vision["invoice_date"]
+                if fields.get("nominal") is None and vision.get("grand_total") is not None:
+                    fields["nominal"] = vision["grand_total"]
+                vision_partial, vision_partial_raw = partial_payment_summary(vision)
+                if fields.get("partial_payment") is None and vision_partial is not None:
+                    fields["partial_payment"] = vision_partial
+                    fields["partial_payment_raw"] = vision_partial_raw
     finally:
         if temporary_path:
             Path(temporary_path).unlink(missing_ok=True)
-    fields = parse_document_fields(text)
+
     filename_fallback = None
     if doc.document_type == "BILLING" and not fields.get("billing_document"):
         filename_fallback = _billing_document_from_filename(doc.file_name)
         if filename_fallback:
             fields["billing_document_raw"] = filename_fallback
             fields["billing_document"] = _norm_key(filename_fallback)
-    confidence = Decimal("0.5000") if engine.startswith("TESSERACT") else (Decimal("0.9000") if text else Decimal("0.0000"))
+
+    confidence = (
+        Decimal("0.8500")
+        if vision
+        else (
+            Decimal("0.5000")
+            if engine.startswith("TESSERACT")
+            else (Decimal("0.9000") if text else Decimal("0.0000"))
+        )
+    )
+
     if doc.document_type == "BILLING":
         row = db.scalar(select(PhysicalBilling).where(PhysicalBilling.document_id == doc.id))
         if not row:
@@ -411,12 +458,60 @@ def ocr_document(db: Session, document_id: int) -> dict[str, Any]:
         row.partial_payment_raw = fields.get("partial_payment_raw")
         row.partial_payment = fields.get("partial_payment")
         row.ocr_confidence = confidence
-        result_fields = {"no_spj_raw": fields.get("no_spj_raw"), "no_spj": fields.get("no_spj"),
-                         "partial_payment_raw": fields.get("partial_payment_raw"), "partial_payment": fields.get("partial_payment")}
+        result_fields = {
+            "no_spj_raw": fields.get("no_spj_raw"),
+            "no_spj": fields.get("no_spj"),
+            "partial_payment_raw": fields.get("partial_payment_raw"),
+            "partial_payment": fields.get("partial_payment"),
+        }
+
+        # Combined evidence creates a BILLING and SPJ document row with the same
+        # file hash/name/branch. Vision from the SPJ pass can therefore enrich
+        # the paired Billing fields without a second AI request.
+        if vision:
+            paired_query = (
+                select(PhysicalBilling)
+                .join(PhysicalBilling.document)
+                .where(
+                    Document.document_type == "BILLING",
+                    Document.file_hash == doc.file_hash,
+                    Document.file_name == doc.file_name,
+                    Document.archived_at.is_(None),
+                )
+            )
+            branch_key = normalize_branch(doc.branch)
+            paired_query = paired_query.where(
+                Document.branch == branch_key if branch_key is not None else Document.branch.is_(None)
+            )
+            paired_billings = list(db.scalars(paired_query).all())
+            if len(paired_billings) == 1:
+                paired = paired_billings[0]
+                if vision.get("billing_document"):
+                    paired.billing_document_raw = vision["billing_document"]
+                    paired.billing_document = _norm_key(vision["billing_document"])
+                if vision.get("spj_number"):
+                    paired.no_spj_raw = vision["spj_number"]
+                    paired.no_spj = _norm_key(vision["spj_number"])
+                if vision.get("invoice_date") is not None:
+                    paired.doc_date = vision["invoice_date"]
+                if vision.get("grand_total") is not None:
+                    paired.nominal = vision["grand_total"]
+                vision_partial, vision_partial_raw = partial_payment_summary(vision)
+                if vision_partial is not None:
+                    paired.partial_payment = vision_partial
+                    paired.partial_payment_raw = vision_partial_raw
+                paired.ocr_confidence = confidence
+
     db.commit()
-    return {"document_id": doc.id, "document_type": doc.document_type, "engine": engine,
-            "fields": result_fields, "confidence": str(confidence),
-            "filename_fallback_used": bool(filename_fallback)}
+    return {
+        "document_id": doc.id,
+        "document_type": doc.document_type,
+        "engine": engine,
+        "fields": result_fields,
+        "confidence": str(confidence),
+        "filename_fallback_used": bool(filename_fallback),
+        "vision": vision,
+    }
 
 
 def reconcile_batch(db: Session, batch_id: int, *, branch: str | None = None) -> list[BillingReconciliation]:
