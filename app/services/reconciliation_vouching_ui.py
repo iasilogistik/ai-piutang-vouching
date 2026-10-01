@@ -38,7 +38,7 @@ th,td{padding:10px 10px;text-align:left;border-bottom:1px solid #edf2f7;font-siz
 .badge{display:inline-flex;padding:5px 7px;border-radius:999px;background:#eff6ff;color:#1d4ed8;font-size:10px;font-weight:850}.badge.ok{background:#ecfdf5;color:#047857}.badge.warn{background:#fff7ed;color:#9a4b08}.badge.bad{background:#fef2f2;color:#b91c1c}
 .evidence-note{min-width:190px;padding:9px 10px;border-radius:10px;border:1px solid #bbf7d0;background:#f0fdf4;color:#166534;font-size:11px;line-height:1.45}.evidence-note strong{display:block;font-size:11px;margin-bottom:2px}.evidence-note.warn{border-color:#fcd34d;background:#fffbeb;color:#854d0e}.evidence-note.bad{border-color:#fecaca;background:#fff7f7;color:#991b1b}
 .status-pill{display:inline-flex;align-items:center;border-radius:999px;padding:5px 8px;font-size:10px;font-weight:900;letter-spacing:.1px}.status-pill.match,.status-pill.pass{background:#dcfce7;color:#166534}.status-pill.review{background:#fef3c7;color:#92400e}.status-pill.exception,.status-pill.not-found{background:#fee2e2;color:#991b1b}
-.detail-panel{margin-top:14px;border:1px solid #cbd5e1;border-radius:14px;background:#fff;padding:14px;box-shadow:0 6px 18px rgba(15,23,42,.04)}.detail-panel[hidden]{display:none}.detail-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:10px}.detail-head h3{margin:0;font-size:15px}.detail-head p{margin:4px 0 0;color:#64748b;font-size:11px}.detail-summary{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}.detail-chip{padding:7px 9px;border-radius:9px;background:#f8fafc;border:1px solid #e2e8f0;font-size:11px;font-weight:800;color:#334155}.detail-chip.warn{background:#fffbeb;border-color:#fcd34d;color:#854d0e}.detail-chip.bad{background:#fff1f2;border-color:#fecdd3;color:#9f1239}.detail-table-wrap{max-height:430px;overflow:auto;border:1px solid #e2e8f0;border-radius:10px}.detail-table{min-width:980px;border:0;border-radius:0}.detail-table th{position:sticky;top:0;z-index:1}.detail-table td{font-size:11px;line-height:1.45}.detail-table tr.missing td{background:#fffdf2}.detail-table tr.problem td{background:#fff8f8}.detail-message{max-width:470px;white-space:normal;color:#334155;font-weight:650}.log{margin-top:14px;min-height:82px;max-height:220px;overflow:auto;padding:13px;border-radius:12px;background:#0f172a;color:#e2e8f0;white-space:pre-wrap;font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace}
+.detail-panel{margin-top:14px;border:1px solid #cbd5e1;border-radius:14px;background:#fff;padding:14px;box-shadow:0 6px 18px rgba(15,23,42,.04)}.detail-panel[hidden]{display:none}.detail-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:10px}.detail-head h3{margin:0;font-size:15px}.detail-head p{margin:4px 0 0;color:#64748b;font-size:11px}.detail-summary{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}.detail-chip{padding:7px 9px;border-radius:9px;background:#f8fafc;border:1px solid #e2e8f0;font-size:11px;font-weight:800;color:#334155}.detail-chip.warn{background:#fffbeb;border-color:#fcd34d;color:#854d0e}.detail-chip.bad{background:#fff1f2;border-color:#fecdd3;color:#9f1239}.detail-table-wrap{max-height:430px;overflow:auto;border:1px solid #e2e8f0;border-radius:10px}.detail-table{min-width:980px;border:0;border-radius:0}.detail-table th{position:sticky;top:0;z-index:1}.detail-table td{font-size:11px;line-height:1.45}.detail-table tr.missing td{background:#fffdf2}.detail-table tr.problem td{background:#fff8f8}.detail-message{max-width:470px;white-space:normal;color:#334155;font-weight:650}.mini-confirm{min-height:34px;padding:7px 9px;border:0;border-radius:8px;background:#047857;color:#fff;font-size:10px;font-weight:900;cursor:pointer;white-space:nowrap}.mini-confirm.bulk{min-height:38px;font-size:11px;padding:9px 12px}.log{margin-top:14px;min-height:82px;max-height:220px;overflow:auto;padding:13px;border-radius:12px;background:#0f172a;color:#e2e8f0;white-space:pre-wrap;font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace}
 .next{margin-top:14px;display:flex;gap:8px;flex-wrap:wrap}
 @media(max-width:1100px){.metrics{grid-template-columns:repeat(3,1fr)}.workflow{grid-template-columns:repeat(3,1fr)}}
 @media(max-width:760px){main{padding:16px}.scope{grid-template-columns:1fr}.metrics{grid-template-columns:repeat(2,1fr)}.workflow{grid-template-columns:1fr 1fr}}
@@ -150,6 +150,10 @@ function renderReconciliationDetail(batchId,payload){
   const body=rows.length?rows.map(r=>{
     const state=r.evidence_state||'LENGKAP';
     const rowClass=state==='LENGKAP'?'':(state==='SPJ_PERLU_REVIEW'?'problem':'missing');
+    const canConfirm=String(r.status||'').toUpperCase()==='REVIEW'&&r.physical_billing_id;
+    const action=canConfirm
+      ? '<button class="mini-confirm" type="button" onclick="confirmManualRow('+Number(batchId)+','+Number(r.id)+')">Konfirmasi Sesuai</button>'
+      : '-';
     return '<tr class="'+rowClass+'">'+
       '<td>'+esc(r.billing_document||'-')+'</td>'+
       '<td>'+esc(r.customer||'-')+'</td>'+
@@ -158,10 +162,14 @@ function renderReconciliationDetail(batchId,payload){
       '<td><strong>'+esc(evidenceLabel(state))+'</strong></td>'+
       '<td class="detail-message">'+esc(r.remarks||'Tidak ada catatan khusus.')+'</td>'+
       '<td>'+esc(r.nominal_difference||'0')+'</td>'+
+      '<td>'+action+'</td>'+
     '</tr>';
-  }).join(''):'<tr><td colspan="7">Belum ada hasil reconciliation. Klik Run Reconciliation.</td></tr>';
+  }).join(''):'<tr><td colspan="8">Belum ada hasil reconciliation. Klik Run Reconciliation.</td></tr>';
+  const bulkAction=Number(counts.REVIEW||0)>0
+    ? '<button class="mini-confirm bulk" type="button" onclick="confirmManualBatch('+Number(batchId)+')">Konfirmasi Semua REVIEW yang Sudah Dicek</button>'
+    : '';
   detailEl.innerHTML=
-    '<div class="detail-head"><div><h3>Detail Reconciliation Batch #'+esc(batchId)+'</h3><p>Evidence yang belum lengkap tidak menghentikan proses. Item tetap diteruskan dan ditandai untuk review.</p></div></div>'+
+    '<div class="detail-head"><div><h3>Detail Reconciliation Batch #'+esc(batchId)+'</h3><p>Status REVIEW berarti OCR belum mampu memastikan seluruh field. Setelah pemeriksaan visual/manual Billing, tanggal/nominal, SPJ, tanda tangan dan stempel selesai, gunakan Konfirmasi Sesuai agar hasil tercatat sebagai keputusan manual dengan audit trail.</p></div>'+bulkAction+'</div>'+
     '<div class="detail-summary">'+
       '<div class="detail-chip">Match: '+esc(counts.MATCH||0)+'</div>'+
       '<div class="detail-chip warn">Review: '+esc(counts.REVIEW||0)+'</div>'+
@@ -172,10 +180,47 @@ function renderReconciliationDetail(batchId,payload){
       (spjOcr?'<div class="detail-chip warn">SPJ tersedia · OCR review: '+spjOcr+'</div>':'')+
       (spjReview?'<div class="detail-chip warn">SPJ perlu review: '+spjReview+'</div>':'')+
     '</div>'+
-    '<div class="detail-table-wrap"><table class="detail-table"><thead><tr><th>Billing SAP</th><th>Customer</th><th>No. SPJ</th><th>Status</th><th>Evidence</th><th>Keterangan</th><th>Selisih Nominal</th></tr></thead><tbody>'+body+'</tbody></table></div>';
+    '<div class="detail-table-wrap"><table class="detail-table"><thead><tr><th>Billing SAP</th><th>Customer</th><th>No. SPJ</th><th>Status</th><th>Evidence</th><th>Keterangan</th><th>Selisih Nominal</th><th>Aksi Manual</th></tr></thead><tbody>'+body+'</tbody></table></div>';
   detailEl.hidden=false;
   detailEl.scrollIntoView({behavior:'smooth',block:'nearest'});
 }
+async function refreshBatchDetail(batchId){
+  const summary=await reconciliationSummary(batchId);
+  batchSummaries.set(Number(batchId),summary);
+  render();
+  renderReconciliationDetail(batchId,summary);
+}
+async function confirmManualRow(batchId,reconciliationId){
+  const statement='Konfirmasi hanya jika Anda sudah memeriksa Billing Document, tanggal/nominal, SPJ, tanda tangan, dan stempel pada dokumen asli/scan dan semuanya sesuai. Lanjutkan?';
+  if(!window.confirm(statement))return;
+  const defaultNote='Sudah diperiksa manual: Billing, tanggal/nominal, SPJ, tanda tangan dan stempel sesuai.';
+  const note=window.prompt('Catatan pemeriksaan manual:',defaultNote);
+  if(note===null)return;
+  try{
+    const p=new URLSearchParams({confirmed:'true',remarks:(note.trim()||defaultNote)});
+    const response=await fetch('/reconciliation/results/'+encodeURIComponent(reconciliationId)+'/confirm-manual?'+p.toString(),{method:'POST',headers:headers()});
+    const payload=await body(response);
+    log('KONFIRMASI MANUAL BERHASIL - RECONCILIATION #'+reconciliationId,payload);
+    await refreshBatchDetail(batchId);
+  }catch(error){log('KONFIRMASI MANUAL GAGAL: '+error.message);}
+}
+async function confirmManualBatch(batchId){
+  const statement='Konfirmasi SEMUA baris REVIEW pada batch ini hanya jika seluruh sampel sudah diperiksa manual: Billing, tanggal/nominal, SPJ, tanda tangan, dan stempel semuanya sesuai. Proses ini dicatat pada audit trail. Lanjutkan?';
+  if(!window.confirm(statement))return;
+  const defaultNote='Seluruh sampel REVIEW pada batch telah diperiksa manual dan dinyatakan sesuai.';
+  const note=window.prompt('Catatan pemeriksaan batch:',defaultNote);
+  if(note===null)return;
+  try{
+    const p=new URLSearchParams({confirmed:'true',remarks:(note.trim()||defaultNote)});
+    const response=await fetch('/reconciliation/'+encodeURIComponent(batchId)+'/confirm-manual-review?'+p.toString(),{method:'POST',headers:headers()});
+    const payload=await body(response);
+    log('KONFIRMASI MANUAL BATCH #'+batchId+' SELESAI',payload);
+    await refreshBatchDetail(batchId);
+  }catch(error){log('KONFIRMASI MANUAL BATCH GAGAL: '+error.message);}
+}
+window.confirmManualRow=confirmManualRow;
+window.confirmManualBatch=confirmManualBatch;
+
 function renderSpjDetail(branch,payload){
   const rows=(payload&&payload.results)||[];
   const missing=rows.filter(r=>r.evidence_state==='SPJ_BELUM_LENGKAP').length;
