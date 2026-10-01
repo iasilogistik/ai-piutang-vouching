@@ -582,6 +582,7 @@ def ocr_document(
         "confidence": str(confidence),
         "filename_fallback_used": bool(filename_fallback),
         "vision": vision,
+        "ocr_text": text,
     }
 
 
@@ -676,7 +677,7 @@ def reconcile_batch(db: Session, batch_id: int, *, branch: str | None = None) ->
             # Re-analyze legacy scanned evidence on demand. This upgrades older
             # samples (uploaded before AI vision was available) without requiring
             # the auditor to upload the documents again.
-            if vision_available() and (
+            if (
                 physical.doc_date is None
                 or physical.nominal is None
                 or not physical.no_spj
@@ -684,23 +685,16 @@ def reconcile_batch(db: Session, batch_id: int, *, branch: str | None = None) ->
             ):
                 paired_spj = _paired_spj_candidates(db, physical)
                 if len(paired_spj) == 1:
-                    vision_analysis = ocr_document(
+                    # Always use the local OCR fallback. AI Vision is optional,
+                    # not a prerequisite for automated reconciliation.
+                    ocr_document(
                         db,
                         paired_spj[0].document_id,
                         expected_customer=sap.customer_account_name or sap.customer,
                         expected_billing_document=sap.billing_document,
                         expected_nominal=sap.nominal,
                     )
-                    if vision_analysis.get("vision"):
-                        from app.services.control_evidence_store import analyze_and_persist_control_evidence
-
-                        analyze_and_persist_control_evidence(
-                            db,
-                            paired_spj[0].document_id,
-                            expected_customer=sap.customer_account_name or sap.customer,
-                            vision_result=vision_analysis.get("vision"),
-                        )
-                        db.refresh(physical)
+                    db.refresh(physical)
 
             billing_match = _norm_key(physical.billing_document) == _norm_key(sap.billing_document)
             date_match = physical.doc_date == sap.doc_date if physical.doc_date else False
@@ -870,7 +864,7 @@ def _refresh_visual_pair(
     ):
         needs_refresh = True
 
-    if not needs_refresh or not vision_available():
+    if not needs_refresh:
         return control
 
     analysis = ocr_document(
@@ -880,18 +874,18 @@ def _refresh_visual_pair(
         expected_billing_document=sap.billing_document if sap else billing.billing_document,
         expected_nominal=sap.nominal if sap else None,
     )
-    vision = analysis.get("vision")
-    if vision:
-        from app.services.control_evidence_store import analyze_and_persist_control_evidence
+    from app.services.control_evidence_store import analyze_and_persist_control_evidence
 
-        analyze_and_persist_control_evidence(
-            db,
-            spj.document_id,
-            expected_customer=expected_customer,
-            vision_result=vision,
-        )
-        db.refresh(billing)
-        db.refresh(spj)
+    analyze_and_persist_control_evidence(
+        db,
+        spj.document_id,
+        expected_customer=expected_customer,
+        vision_result=analysis.get("vision"),
+        ocr_text=analysis.get("ocr_text"),
+        ocr_engine=analysis.get("engine"),
+    )
+    db.refresh(billing)
+    db.refresh(spj)
     return _control_evidence_for_spj(db, spj)
 
 
