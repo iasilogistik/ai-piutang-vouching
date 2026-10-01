@@ -174,3 +174,64 @@ def test_explicit_missing_signature_or_unclear_stamp_still_blocks_pass():
 
     assert _control_evidence_complete(missing_signature) is False
     assert _control_evidence_complete(unclear_stamp) is False
+
+
+
+def test_reconciliation_rerun_updates_same_unique_row_in_place(monkeypatch):
+    import app.services.vouching as service
+
+    monkeypatch.setattr(service, "ocr_document", lambda *args, **kwargs: {"vision": None, "ocr_text": ""})
+
+    with Session(_engine()) as db:
+        batch = ImportBatch(file_name="sap.xlsx", branch="KEDIRI", total_records=1, status="IMPORTED")
+        db.add(batch)
+        db.flush()
+        sap = SAPBilling(
+            import_batch_id=batch.id,
+            customer="C-1",
+            customer_account_name="SANTOSO",
+            billing_document="8501735930",
+            doc_date=date(2026, 8, 1),
+            nominal=Decimal("3000000.00"),
+        )
+        db.add(sap)
+        db.flush()
+
+        billing_doc = Document(
+            file_name="SANTOSO 8501735930.pdf",
+            file_type="PDF",
+            document_type="BILLING",
+            file_hash="same-hash",
+            storage_path="billing.pdf",
+            branch="KEDIRI",
+        )
+        spj_doc = Document(
+            file_name="SANTOSO 8501735930.pdf",
+            file_type="PDF",
+            document_type="SPJ",
+            file_hash="same-hash",
+            storage_path="spj.pdf",
+            branch="KEDIRI",
+        )
+        db.add_all([billing_doc, spj_doc])
+        db.flush()
+        billing = PhysicalBilling(
+            document_id=billing_doc.id,
+            billing_document="8501735930",
+            ocr_confidence=Decimal("0.0000"),
+        )
+        db.add_all([billing, SPJ(document_id=spj_doc.id, ocr_confidence=Decimal("0.0000"))])
+        db.commit()
+
+        first = reconcile_batch(db, batch.id, branch="KEDIRI")
+        first_row = next(row for row in first if row.sap_billing_id == sap.id)
+        first_id = first_row.id
+
+        second = reconcile_batch(db, batch.id, branch="KEDIRI")
+        second_row = next(row for row in second if row.sap_billing_id == sap.id)
+
+        assert second_row.id == first_id
+        assert second_row.status == "MATCH"
+        assert db.query(BillingReconciliation).filter(
+            BillingReconciliation.sap_billing_id == sap.id
+        ).count() == 1
