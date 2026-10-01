@@ -29,7 +29,6 @@
       "framework": "hono",
       "functions": {
         "src/index.ts": {
-          "includeFiles": "src/tesseract-core/**/*",
           "maxDuration": 120
         }
       }
