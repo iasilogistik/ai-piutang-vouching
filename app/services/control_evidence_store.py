@@ -7,8 +7,8 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import ControlEvidenceDetection, Document, DocumentControlEvidence
-from app.services.control_evidence import analyze_spj_control_evidence
+from app.models import ControlEvidenceDetection, Document, DocumentControlEvidence, SAPBilling
+from app.services.control_evidence import analyze_spj_control_evidence, compare_stamp_to_customer
 
 DETECTOR_NAME = "spj_control_evidence"
 DETECTOR_VERSION = "1.0"
@@ -20,6 +20,7 @@ _DETECTION_TYPES = (
     "checker_signature",
     "receiver_stamp",
     "stamp_customer_match",
+    "receiver_name",
 )
 
 
@@ -50,6 +51,18 @@ def _join_reasons(reasons: list[str] | None) -> str | None:
 def _detection_values(evidence: dict[str, Any], detection_type: str) -> dict[str, Any]:
     if detection_type == "stamp_customer_match":
         return dict(evidence.get("receiver_stamp", {}).get("customer_match", {}) or {})
+    if detection_type == "receiver_name":
+        value = evidence.get("receiver_name")
+        if isinstance(value, dict):
+            return dict(value)
+        if value:
+            return {
+                "status": "PRESENT",
+                "confidence": 0.8,
+                "remarks": None,
+                "reference": {"text": str(value)},
+            }
+        return {"status": "UNKNOWN", "confidence": 0.0, "remarks": "Nama penerima tidak terbaca."}
     return dict(evidence.get(detection_type, {}) or {})
 
 
@@ -113,8 +126,21 @@ def evidence_payload(row: DocumentControlEvidence | None) -> dict[str, Any] | No
             "remarks": getattr(row, f"{prefix}_remarks"),
         }
 
+    receiver_name_detection = next(
+        (
+            detection
+            for detection in getattr(row.document, "control_evidence_detections", [])
+            if detection.detection_type == "receiver_name"
+        ),
+        None,
+    )
+    receiver_name = None
+    if receiver_name_detection and isinstance(receiver_name_detection.reference_json, dict):
+        receiver_name = receiver_name_detection.reference_json.get("text")
+
     return {
         "control_evidence_id": row.id,
+        "receiver_name": receiver_name,
         "document_id": row.document_id,
         "receiver_signature": signature_payload("receiver_signature"),
         "driver_signature": signature_payload("driver_signature"),
@@ -195,13 +221,143 @@ def persist_control_evidence(db: Session, document_id: int, evidence: dict[str, 
     return row
 
 
-def analyze_and_persist_control_evidence(db: Session, document_id: int, *, expected_customer: str | None = None) -> dict[str, Any]:
-    """Run control-evidence analysis and persist the structured result.
+def _customer_from_vision(db: Session, vision: dict[str, Any] | None) -> str | None:
+    if not vision or not vision.get("billing_document"):
+        return None
+    rows = db.scalars(
+        select(SAPBilling).where(SAPBilling.billing_document == str(vision["billing_document"]))
+    ).all()
+    customers = {
+        (row.customer_account_name or row.customer or "").strip()
+        for row in rows
+        if (row.customer_account_name or row.customer or "").strip()
+    }
+    return next(iter(customers)) if len(customers) == 1 else None
 
-    The function is intentionally conservative: it is only valid for SPJ
-    documents and stores UNKNOWN/REVIEW states rather than guessing when OCR or
-    visual evidence is insufficient.
-    """
+
+def _vision_evidence(vision: dict[str, Any], *, expected_customer: str | None) -> dict[str, Any]:
+    role_map = {
+        "receiver": "receiver_signature",
+        "driver": "driver_signature",
+        "security": "security_signature",
+        "bm": "bm_signature",
+        "checker": "checker_signature",
+    }
+    result: dict[str, Any] = {}
+    signatures = vision.get("signatures") if isinstance(vision.get("signatures"), dict) else {}
+    for source, target in role_map.items():
+        value = signatures.get(source) if isinstance(signatures.get(source), dict) else {}
+        raw_status = str(value.get("status") or "UNCLEAR").upper()
+        status = "UNKNOWN" if raw_status == "UNCLEAR" else raw_status
+        result[target] = {
+            "status": status if status in {"PRESENT", "MISSING", "UNKNOWN"} else "UNKNOWN",
+            "confidence": value.get("confidence") or 0.0,
+            "remarks": (
+                f"AI vision mendeteksi tanda tangan {source}."
+                if status == "PRESENT"
+                else (
+                    f"AI vision mengindikasikan tanda tangan {source} tidak ada."
+                    if status == "MISSING"
+                    else f"AI vision belum dapat memastikan tanda tangan {source}."
+                )
+            ),
+            "page_number": value.get("page_number"),
+            "reference": {"source": "AI_VISION"},
+        }
+
+    stamp_value = vision.get("stamp") if isinstance(vision.get("stamp"), dict) else {}
+    raw_stamp_status = str(stamp_value.get("status") or "UNCLEAR").upper()
+    stamp_status = "UNKNOWN" if raw_stamp_status == "UNCLEAR" else raw_stamp_status
+    stamp_text = stamp_value.get("text")
+    result["receiver_stamp"] = {
+        "status": stamp_status if stamp_status in {"PRESENT", "MISSING", "UNKNOWN"} else "UNKNOWN",
+        "confidence": stamp_value.get("confidence") or 0.0,
+        "stamp_text_raw": stamp_text,
+        "stamp_text_normalized": stamp_text.upper().strip() if isinstance(stamp_text, str) and stamp_text.strip() else None,
+        "customer_match": compare_stamp_to_customer(stamp_text, expected_customer),
+        "remarks": (
+            None
+            if stamp_status == "PRESENT" and stamp_text
+            else (
+                "Stempel terlihat, tetapi tulisan stempel belum terbaca jelas."
+                if stamp_status == "PRESENT"
+                else (
+                    "AI vision mengindikasikan stempel tidak ada."
+                    if stamp_status == "MISSING"
+                    else "AI vision belum dapat memastikan keberadaan stempel."
+                )
+            )
+        ),
+        "page_number": stamp_value.get("page_number"),
+        "reference": {"source": "AI_VISION"},
+    }
+
+    receiver_name = vision.get("receiver_name")
+    result["receiver_name"] = {
+        "status": "PRESENT" if receiver_name else "UNKNOWN",
+        "confidence": 0.8 if receiver_name else 0.0,
+        "remarks": None if receiver_name else "Nama penerima tidak terbaca.",
+        "reference": {"text": receiver_name, "source": "AI_VISION"},
+    }
+
+    review_reasons: list[str] = []
+    informational_reasons: list[str] = []
+    stamp = result["receiver_stamp"]
+    if stamp["status"] != "PRESENT":
+        review_reasons.append(stamp.get("remarks") or "Stempel penerima belum dapat dipastikan.")
+    stamp_match = stamp.get("customer_match", {})
+    if stamp_match.get("status") == "REVIEW":
+        review_reasons.append(stamp_match.get("remarks") or "Nama stempel perlu dicek reviewer.")
+
+    for key in role_map.values():
+        value = result[key]
+        if value["status"] == "MISSING":
+            review_reasons.append(value.get("remarks") or f"{key} terindikasi tidak ada; perlu review.")
+        elif value["status"] == "UNKNOWN":
+            informational_reasons.append(value.get("remarks") or f"{key} tidak dapat dipastikan.")
+
+    result["review_required"] = bool(review_reasons)
+    result["review_reasons"] = review_reasons
+    result["informational_reasons"] = informational_reasons
+    result["review_focus"] = (
+        "STAMP"
+        if any("stempel" in reason.lower() for reason in review_reasons)
+        else ("SIGNATURE_MISSING" if review_reasons else "NONE")
+    )
+    return result
+
+
+def _merge_visual_over_ocr(ocr: dict[str, Any], visual: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(ocr)
+    for key in (
+        "receiver_signature",
+        "driver_signature",
+        "security_signature",
+        "bm_signature",
+        "checker_signature",
+        "receiver_stamp",
+        "receiver_name",
+    ):
+        value = visual.get(key)
+        if value:
+            merged[key] = value
+    merged["review_required"] = visual.get("review_required", ocr.get("review_required", False))
+    merged["review_reasons"] = visual.get("review_reasons", ocr.get("review_reasons", []))
+    merged["informational_reasons"] = visual.get(
+        "informational_reasons", ocr.get("informational_reasons", [])
+    )
+    merged["review_focus"] = visual.get("review_focus", ocr.get("review_focus", "NONE"))
+    return merged
+
+
+def analyze_and_persist_control_evidence(
+    db: Session,
+    document_id: int,
+    *,
+    expected_customer: str | None = None,
+    vision_result: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Analyze SPJ visual evidence with OCR first and multimodal vision fallback."""
 
     document = db.get(Document, document_id)
     if document is None:
@@ -212,6 +368,7 @@ def analyze_and_persist_control_evidence(db: Session, document_id: int, *, expec
     from app.services.vouching import extract_text
     from app.config import settings
     from app.services.storage import materialize
+    from app.services.vision_evidence import analyze_document_vision, vision_available
     from pathlib import Path
 
     ocr_path = document.storage_path
@@ -221,12 +378,29 @@ def analyze_and_persist_control_evidence(db: Session, document_id: int, *, expec
         ocr_path = temporary_path
     try:
         text, engine = extract_text(ocr_path)
+        if vision_result is None and vision_available() and not text:
+            vision_result = analyze_document_vision(
+                ocr_path,
+                file_name=document.file_name,
+                expected_customer=expected_customer,
+            )
     finally:
         if temporary_path:
             Path(temporary_path).unlink(missing_ok=True)
 
+    if not expected_customer:
+        expected_customer = _customer_from_vision(db, vision_result)
+
     evidence = analyze_spj_control_evidence(text, expected_customer=expected_customer)
+    if vision_result:
+        visual = _vision_evidence(vision_result, expected_customer=expected_customer)
+        evidence = _merge_visual_over_ocr(evidence, visual)
+        engine = f"{engine}+AI_VISION" if engine != "REVIEW_REQUIRED" else "AI_VISION"
+
     row = persist_control_evidence(db, document_id, evidence, extraction_engine=engine)
     payload = evidence_payload(row) or {}
     payload["engine"] = engine
+    payload["vision_used"] = bool(vision_result)
+    payload["partial_payments"] = vision_result.get("partial_payments", []) if vision_result else []
+    payload["delivery_order_number"] = vision_result.get("delivery_order_number") if vision_result else None
     return payload
