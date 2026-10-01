@@ -26,7 +26,11 @@
     },
     "vision": {
       "root": "vision/",
-      "framework": "hono"
+      "framework": "hono",
+      "includeFiles": [
+        "node_modules/tesseract.js-core/**/*"
+      ],
+      "maxDuration": 120
     }
   },
   "rewrites": [
