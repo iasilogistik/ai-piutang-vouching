@@ -118,10 +118,10 @@ def control_evidence_dashboard_html() -> str:
     <table>
       <thead>
         <tr>
-          <th>Cabang</th><th>Document</th><th>No SPJ</th><th>Overall</th><th>Review</th><th>TTD Penerima</th><th>TTD Driver</th><th>TTD Satpam</th><th>TTD BM</th><th>TTD Checker</th><th>Stempel</th><th>Nama Stempel</th><th>Match</th><th>Alasan Review</th><th>Aksi</th>
+          <th>Cabang</th><th>Document</th><th>No SPJ</th><th>Nama Penerima</th><th>Partial Billing</th><th>Partial SPJ</th><th>Overall</th><th>Review</th><th>TTD Penerima</th><th>TTD Driver</th><th>TTD Satpam</th><th>TTD BM</th><th>TTD Checker</th><th>Stempel</th><th>Nama Stempel</th><th>Match</th><th>Alasan Review</th><th>Aksi</th>
         </tr>
       </thead>
-      <tbody id="rows"><tr><td colspan="15">Belum ada data.</td></tr></tbody>
+      <tbody id="rows"><tr><td colspan="18">Belum ada data.</td></tr></tbody>
     </table>
   </section>
 </main>
@@ -179,6 +179,7 @@ function escapeHtml(value) {
 function rowSearchBlob(row) {
   return [
     row.branch, row.file_name, row.document_id, row.no_spj, row.no_spj_raw, row.billing_id,
+    row.receiver_name, row.billing_partial_payment, row.spj_partial_payment,
     row.stamp_text_raw, row.stamp_text_normalized, row.stamp_customer_match_status,
     row.overall_control_status, row.review_status, row.reviewer_remarks,
     ...(row.review_reasons || [])
@@ -217,7 +218,7 @@ function renderRows() {
   const list = filteredRows(dashboardData);
   renderSummary(dashboardData, list.length);
   if (!list.length) {
-    rows.innerHTML = '<tr><td colspan="14">Tidak ada data sesuai filter/search.</td></tr>';
+    rows.innerHTML = '<tr><td colspan="18">Tidak ada data sesuai filter/search.</td></tr>';
     return;
   }
   rows.innerHTML = list.map(row => {
@@ -227,6 +228,9 @@ function renderRows() {
       <td>${escapeHtml(row.branch || '-')}</td>
       <td><strong>${escapeHtml(row.file_name || row.document_id)}</strong><br><a href="${escapeHtml(row.document_url)}" target="_blank" rel="noopener">Buka dokumen</a></td>
       <td>${escapeHtml(row.no_spj || row.no_spj_raw || '-')}</td>
+      <td>${escapeHtml(row.receiver_name || '-')}</td>
+      <td>${escapeHtml(row.billing_partial_payment || '-')}</td>
+      <td>${escapeHtml(row.spj_partial_payment || '-')}</td>
       <td>${badge(row.overall_control_status)}</td>
       <td>${badge(row.review_status || (row.review_required ? 'REVIEW' : 'PASS'))}<br><small>${escapeHtml(row.reviewer_remarks || '')}</small></td>
       <td>${badge(row.receiver_signature_status)}</td>
