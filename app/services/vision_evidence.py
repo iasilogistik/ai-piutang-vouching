@@ -16,7 +16,7 @@ import httpx
 
 
 AI_GATEWAY_URL = "https://ai-gateway.vercel.sh/v1/chat/completions"
-DEFAULT_VISION_MODEL = "openai/gpt-5.6-sol"
+DEFAULT_VISION_MODEL = "openai/gpt-5.4-mini-fast"
 MAX_PAGES = 3
 logger = logging.getLogger(__name__)
 
@@ -25,10 +25,16 @@ def _gateway_token() -> str | None:
     return (os.getenv("AI_GATEWAY_API_KEY") or os.getenv("VERCEL_OIDC_TOKEN") or "").strip() or None
 
 
+def _internal_vision_url() -> str | None:
+    return (os.getenv("VISION_INTERNAL_URL") or "").strip().rstrip("/") or None
+
+
 def vision_available() -> bool:
-    available = _gateway_token() is not None
+    available = bool(_internal_vision_url() or _gateway_token())
     if not available:
-        logger.warning("AI vision unavailable: AI_GATEWAY_API_KEY/VERCEL_OIDC_TOKEN not present")
+        logger.warning(
+            "AI vision unavailable: no VISION_INTERNAL_URL and no direct AI Gateway credential"
+        )
     return available
 
 
@@ -45,11 +51,11 @@ def _image_data_urls(path: str, *, max_pages: int = MAX_PAGES) -> list[str]:
             for page in list(pdf)[:max_pages]:
                 pix = page.get_pixmap(matrix=fitz.Matrix(1.8, 1.8), alpha=False)
                 image = Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB")
-                if image.width > 1800:
-                    ratio = 1800 / image.width
-                    image = image.resize((1800, max(1, int(image.height * ratio))))
+                if image.width > 1400:
+                    ratio = 1400 / image.width
+                    image = image.resize((1400, max(1, int(image.height * ratio))))
                 output = io.BytesIO()
-                image.save(output, format="JPEG", quality=78, optimize=True)
+                image.save(output, format="JPEG", quality=72, optimize=True)
                 images.append(output.getvalue())
         finally:
             pdf.close()
@@ -57,11 +63,11 @@ def _image_data_urls(path: str, *, max_pages: int = MAX_PAGES) -> list[str]:
         from PIL import Image
 
         image = Image.open(path).convert("RGB")
-        if image.width > 1800:
-            ratio = 1800 / image.width
-            image = image.resize((1800, max(1, int(image.height * ratio))))
+        if image.width > 1400:
+            ratio = 1400 / image.width
+            image = image.resize((1400, max(1, int(image.height * ratio))))
         output = io.BytesIO()
-        image.save(output, format="JPEG", quality=82, optimize=True)
+        image.save(output, format="JPEG", quality=75, optimize=True)
         images.append(output.getvalue())
 
     return ["data:image/jpeg;base64," + base64.b64encode(raw).decode("ascii") for raw in images]
@@ -142,8 +148,9 @@ def analyze_document_vision(
     expected_billing_document: str | None = None,
     expected_nominal: Decimal | None = None,
 ) -> dict[str, Any] | None:
+    internal_url = _internal_vision_url()
     token = _gateway_token()
-    if not token:
+    if not internal_url and not token:
         return None
 
     image_urls = _image_data_urls(path)
@@ -196,31 +203,61 @@ Aturan:
 - Gunakan angka IDR tanpa separator ribuan, contoh 5644800.
 """.strip()
 
-    content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
-    content.extend(
-        {"type": "image_url", "image_url": {"url": image_url, "detail": "high"}}
-        for image_url in image_urls
-    )
-
-    payload = {
-        "model": os.getenv("AI_VISION_MODEL", DEFAULT_VISION_MODEL),
-        "messages": [{"role": "user", "content": content}],
-        "stream": False,
-    }
-
-    data = None
+    model = os.getenv("AI_VISION_MODEL", DEFAULT_VISION_MODEL)
+    text: str | None = None
+    parsed: dict[str, Any] = {}
     last_error: Exception | None = None
+
     for attempt in range(1, 3):
         try:
-            with httpx.Client(timeout=90.0) as client:
-                response = client.post(
-                    AI_GATEWAY_URL,
-                    headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-                    json=payload,
-                )
-                response.raise_for_status()
-                data = response.json()
-                break
+            with httpx.Client(timeout=120.0) as client:
+                if internal_url:
+                    response = client.post(
+                        f"{internal_url}/analyze",
+                        headers={"Content-Type": "application/json"},
+                        json={
+                            "model": model,
+                            "prompt": prompt,
+                            "images": image_urls,
+                            "expected_customer": expected_customer,
+                            "expected_billing_document": expected_billing_document,
+                            "expected_nominal": (
+                                str(expected_nominal) if expected_nominal is not None else None
+                            ),
+                        },
+                    )
+                    response.raise_for_status()
+                    data = response.json()
+                    result = data.get("result")
+                    if isinstance(result, dict):
+                        parsed = result
+                    else:
+                        text = str(data.get("text") or "").strip() or None
+                else:
+                    content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+                    content.extend(
+                        {"type": "image_url", "image_url": {"url": image_url, "detail": "high"}}
+                        for image_url in image_urls
+                    )
+                    payload = {
+                        "model": model,
+                        "messages": [{"role": "user", "content": content}],
+                        "stream": False,
+                    }
+                    response = client.post(
+                        AI_GATEWAY_URL,
+                        headers={
+                            "Authorization": f"Bearer {token}",
+                            "Content-Type": "application/json",
+                        },
+                        json=payload,
+                    )
+                    response.raise_for_status()
+                    data = response.json()
+                    text = str(data["choices"][0]["message"]["content"]).strip() or None
+
+                if parsed or text:
+                    break
         except Exception as exc:
             last_error = exc
             logger.warning(
@@ -231,21 +268,15 @@ Aturan:
             )
             if attempt < 2:
                 time.sleep(0.4)
-    if data is None:
+
+    if not parsed and text:
+        parsed = _extract_json(text)
+    if not parsed:
         logger.error(
-            "AI vision failed for %s after retries: %s",
+            "AI vision/local vision failed for %s after retries: %s",
             file_name or Path(path).name,
             last_error,
         )
-        return None
-
-    try:
-        text = data["choices"][0]["message"]["content"]
-    except Exception:
-        return None
-    parsed = _extract_json(text)
-    if not parsed:
-        logger.warning("AI vision returned no parseable JSON for %s", file_name or Path(path).name)
         return None
 
     partials: list[dict[str, Any]] = []
@@ -284,8 +315,8 @@ Aturan:
         stamp_confidence = 0.0
 
     return {
-        "engine": "AI_VISION",
-        "model": payload["model"],
+        "engine": str(parsed.get("engine") or "AI_VISION"),
+        "model": model,
         "billing_document": str(parsed.get("billing_document") or "").strip() or None,
         "invoice_date": _normalize_date(parsed.get("invoice_date")),
         "grand_total": _normalize_amount(parsed.get("grand_total")),
@@ -301,6 +332,7 @@ Aturan:
             "page_number": stamp.get("page_number") if isinstance(stamp.get("page_number"), int) else None,
         },
         "notes": [str(item) for item in (parsed.get("notes") or []) if str(item).strip()],
+        "ocr_text": str(parsed.get("ocr_text") or "").strip() or None,
     }
 
 

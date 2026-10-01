@@ -9,5 +9,50 @@
       "dev/*": false,
       "perf/*": false
     }
-  }
+  },
+  "services": {
+    "backend": {
+      "root": ".",
+      "framework": "fastapi",
+      "entrypoint": "app.main:app",
+      "bindings": [
+        {
+          "type": "service",
+          "service": "vision",
+          "format": "url",
+          "env": "VISION_INTERNAL_URL"
+        }
+      ]
+    },
+    "vision": {
+      "root": "vision/",
+      "framework": "hono",
+      "functions": {
+        "src/index.ts": {
+          "includeFiles": "worker.cjs",
+          "maxDuration": 120
+        }
+      }
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/vision-ai-health",
+      "destination": {
+        "service": "vision"
+      }
+    },
+    {
+      "source": "/vision-local-selftest",
+      "destination": {
+        "service": "vision"
+      }
+    },
+    {
+      "source": "/(.*)",
+      "destination": {
+        "service": "backend"
+      }
+    }
+  ]
 }

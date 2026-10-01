@@ -469,7 +469,29 @@ def ocr_document(
                 expected_nominal=expected_nominal,
             )
             if vision:
-                engine = f"{engine}+AI_VISION" if engine != "REVIEW_REQUIRED" else "AI_VISION"
+                vision_engine = str(vision.get("engine") or "AI_VISION")
+                engine = (
+                    f"{engine}+{vision_engine}"
+                    if engine != "REVIEW_REQUIRED"
+                    else vision_engine
+                )
+
+                local_ocr_text = str(vision.get("ocr_text") or "").strip()
+                if local_ocr_text:
+                    local_fields = parse_document_fields(local_ocr_text)
+                    if not text:
+                        text = local_ocr_text
+                    for raw_key, norm_key in (
+                        ("billing_document_raw", "billing_document"),
+                        ("no_spj_raw", "no_spj"),
+                    ):
+                        if not fields.get(norm_key) and local_fields.get(norm_key):
+                            fields[raw_key] = local_fields.get(raw_key)
+                            fields[norm_key] = local_fields.get(norm_key)
+                    for key in ("doc_date", "nominal", "partial_payment_raw", "partial_payment"):
+                        if fields.get(key) is None and local_fields.get(key) is not None:
+                            fields[key] = local_fields.get(key)
+
                 if not fields.get("billing_document") and vision.get("billing_document"):
                     fields["billing_document_raw"] = vision["billing_document"]
                     fields["billing_document"] = _norm_key(vision["billing_document"])
@@ -496,7 +518,11 @@ def ocr_document(
             fields["billing_document"] = _norm_key(filename_fallback)
 
     confidence = (
-        Decimal("0.8500")
+        (
+            Decimal("0.7600")
+            if vision and str(vision.get("engine") or "").startswith("LOCAL_")
+            else Decimal("0.8500")
+        )
         if vision
         else (
             Decimal("0.5000")
