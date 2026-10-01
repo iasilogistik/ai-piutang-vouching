@@ -870,51 +870,12 @@ def _refresh_visual_pair(
     billing: PhysicalBilling,
     spj: SPJ,
 ) -> DocumentControlEvidence | None:
-    """Upgrade legacy OCR-zero evidence without overwriting valid current controls.
+    """Return persisted visual controls without running expensive OCR inline.
 
-    Existing control-evidence decisions are authoritative unless the document is
-    one of the legacy scan rows whose OCR confidence was explicitly 0.0000.
-    This avoids turning a valid PASS into REVIEW merely because a re-read is
-    unavailable in the current runtime.
+    Visual analysis is performed through the per-document refresh endpoint. SPJ
+    vouching must remain a fast deterministic calculation so a branch with
+    multiple scanned documents cannot exceed the serverless HTTP timeout.
     """
-    control = _control_evidence_for_spj(db, spj)
-    if _control_evidence_complete(control):
-        return control
-
-    zero = Decimal("0.0000")
-    legacy_ocr_zero = (
-        billing.ocr_confidence == zero
-        or spj.ocr_confidence == zero
-    )
-    if not legacy_ocr_zero:
-        return control
-
-    sap = _sap_for_billing(db, billing.id)
-    expected_customer = (
-        (sap.customer_account_name or sap.customer)
-        if sap is not None
-        else _expected_customer_for_billing(db, billing.id)
-    )
-
-    analysis = ocr_document(
-        db,
-        spj.document_id,
-        expected_customer=expected_customer,
-        expected_billing_document=sap.billing_document if sap else billing.billing_document,
-        expected_nominal=sap.nominal if sap else None,
-    )
-    from app.services.control_evidence_store import analyze_and_persist_control_evidence
-
-    analyze_and_persist_control_evidence(
-        db,
-        spj.document_id,
-        expected_customer=expected_customer,
-        vision_result=analysis.get("vision"),
-        ocr_text=analysis.get("ocr_text"),
-        ocr_engine=analysis.get("engine"),
-    )
-    db.refresh(billing)
-    db.refresh(spj)
     return _control_evidence_for_spj(db, spj)
 
 
