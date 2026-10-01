@@ -31,6 +31,12 @@
   },
   "rewrites": [
     {
+      "source": "/vision-ai-health",
+      "destination": {
+        "service": "vision"
+      }
+    },
+    {
       "source": "/(.*)",
       "destination": {
         "service": "backend"
