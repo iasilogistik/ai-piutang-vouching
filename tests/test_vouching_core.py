@@ -133,3 +133,10 @@ def test_billing_date_parser_ignores_generic_document_date_without_invoice_label
     )
 
     assert fields["doc_date"] is None
+
+
+
+def test_invalid_spj_fragment_is_not_used_for_matching():
+    assert _normalize_spj_number("SPJ-ABC-1234") is None
+    assert _normalize_spj_number("SPJ/S41C/202608/2501787882") == "2501787882"
+    assert _normalize_spj_number("2501787882") == "2501787882"
