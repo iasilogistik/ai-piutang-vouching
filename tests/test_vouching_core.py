@@ -21,7 +21,7 @@ def test_normalization_is_conservative():
 
 
 def test_document_field_parser_keeps_raw_and_normalized_values():
-    result = parse_document_fields("Billing Document: 900001\nNo SPJ: SPJ-77\nDoc. Date: 01/09/2026\nNominal: Rp 1.500.000")
+    result = parse_document_fields("Billing Document: 900001\nNo SPJ: SPJ-77\nTanggal Faktur: 01/09/2026\nNominal: Rp 1.500.000")
     assert result["billing_document_raw"] == "900001"
     assert result["billing_document"] == "900001"
     assert result["no_spj_raw"] == "SPJ-77"
@@ -121,3 +121,15 @@ def test_billing_date_parser_never_uses_due_date_or_jatuh_tempo():
         "Grand Total: 2.350.000"
     )
     assert due_only["doc_date"] is None
+
+
+
+def test_billing_date_parser_ignores_generic_document_date_without_invoice_label():
+    fields = parse_document_fields(
+        "Billing Document: 8501735930\n"
+        "Document Date: 17/08/2026\n"
+        "Due Date: 10/09/2026\n"
+        "Grand Total: 2.350.000"
+    )
+
+    assert fields["doc_date"] is None
