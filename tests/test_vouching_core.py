@@ -103,3 +103,21 @@ def test_billing_date_parser_prioritizes_invoice_date_over_other_dates():
     )
 
     assert fields["doc_date"] == date(2026, 9, 25)
+
+
+
+def test_billing_date_parser_never_uses_due_date_or_jatuh_tempo():
+    fields = parse_document_fields(
+        "Billing Document: 8501735930\n"
+        "Tanggal Faktur: 24/08/2026\n"
+        "Jatuh Tempo: 23/09/2026\n"
+        "Grand Total: 2.350.000"
+    )
+    assert fields["doc_date"] == date(2026, 8, 24)
+
+    due_only = parse_document_fields(
+        "Billing Document: 8501735930\n"
+        "Due Date: 23/09/2026\n"
+        "Grand Total: 2.350.000"
+    )
+    assert due_only["doc_date"] is None

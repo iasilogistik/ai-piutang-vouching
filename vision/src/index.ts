@@ -504,12 +504,20 @@ function parseInvoiceDateValue(rawValue: string): string | null {
 
 function invoiceDateCandidates(text: string): string[] {
   const values = new Set<string>();
-  const numeric = text.match(/\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b/g) || [];
-  const dmyText = text.match(/\b\d{1,2}\s+[A-Za-z]{3,12}\s+\d{4}\b/g) || [];
-  const mdyText = text.match(/\b[A-Za-z]{3,12}\s+\d{1,2},?\s+\d{4}\b/g) || [];
-  for (const raw of [...numeric, ...dmyText, ...mdyText]) {
-    const normalized = parseInvoiceDateValue(raw);
-    if (normalized) values.add(normalized);
+  const duePattern = /\b(DUE\s+DATE|PAYMENT\s+DUE|NET\s+DUE|JATUH\s+TEMPO|TANGGAL\s+JATUH\s+TEMPO|TGL\.?\s+JATUH\s+TEMPO|BATAS\s+PEMBAYARAN)\b/i;
+  const lines = String(text || '').split(/\r?\n/);
+
+  for (const line of lines) {
+    // Never use maturity/due-date values as physical Billing Doc. Date.
+    if (duePattern.test(line)) continue;
+
+    const numeric = line.match(/\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b/g) || [];
+    const dmyText = line.match(/\b\d{1,2}\s+[A-Za-z]{3,12}\s+\d{4}\b/g) || [];
+    const mdyText = line.match(/\b[A-Za-z]{3,12}\s+\d{1,2},?\s+\d{4}\b/g) || [];
+    for (const raw of [...numeric, ...dmyText, ...mdyText]) {
+      const normalized = parseInvoiceDateValue(raw);
+      if (normalized) values.add(normalized);
+    }
   }
   return [...values];
 }
@@ -522,33 +530,30 @@ function daysBetweenIso(left: string, right: string): number {
 }
 
 function parseInvoiceDate(text: string, expectedDocDate?: string | null): string | null {
-  const labels = [
-    'INVOICE\\s+DATE',
-    'BILLING\\s+DATE',
-    'DOCUMENT\\s+DATE',
-    'DOC\\.?\\s*DATE',
-    'TANGGAL\\s+FAKTUR(?:\\s+PAJAK)?',
-    'TGL\\.?\\s+FAKTUR(?:\\s+PAJAK)?',
-    'TANGGAL\\s+INVOICE',
-    'TGL\\.?\\s+INVOICE',
-    'FAKTUR\\s+DATE',
-    'DATE\\s+OF\\s+INVOICE',
-  ].join('|');
-  const patterns = [
-    new RegExp('(?:' + labels + ')\\s*[:#=-]?\\s*([0-9]{1,2}[./-][0-9]{1,2}[./-][0-9]{2,4})', 'i'),
-    new RegExp('(?:' + labels + ')\\s*[:#=-]?\\s*([0-9]{1,2}\\s+[A-Za-z]+\\s+[0-9]{4})', 'i'),
-    new RegExp('(?:' + labels + ')\\s*[:#=-]?\\s*([A-Za-z]+\\s+[0-9]{1,2},?\\s+[0-9]{4})', 'i'),
-  ];
-  for (const pattern of patterns) {
-    const match = pattern.exec(text);
-    if (!match) continue;
-    const normalized = parseInvoiceDateValue(match[1]);
-    if (normalized) return normalized;
+  const invoiceLabel = /\b(INVOICE\s+DATE|BILLING\s+DATE|DOCUMENT\s+DATE|DOC\.?\s*DATE|TANGGAL\s+FAKTUR(?:\s+PAJAK)?|TGL\.?\s+FAKTUR(?:\s+PAJAK)?|TANGGAL\s+INVOICE|TGL\.?\s+INVOICE|FAKTUR\s+DATE|DATE\s+OF\s+INVOICE|TANGGAL\s+DOKUMEN)\b/i;
+  const dueLabel = /\b(DUE\s+DATE|PAYMENT\s+DUE|NET\s+DUE|JATUH\s+TEMPO|TANGGAL\s+JATUH\s+TEMPO|TGL\.?\s+JATUH\s+TEMPO|BATAS\s+PEMBAYARAN)\b/i;
+  const datePattern = /(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{1,2}\s+[A-Za-z]{3,12}\s+\d{4}|[A-Za-z]{3,12}\s+\d{1,2},?\s+\d{4})/i;
+  const lines = String(text || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+
+  // First choice: a date explicitly attached to an invoice/faktur issue-date
+  // label. The date may be on the same line or the next one/two OCR lines.
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!invoiceLabel.test(line) || dueLabel.test(line)) continue;
+
+    for (let offset = 0; offset <= 2 && i + offset < lines.length; offset++) {
+      const candidateLine = lines[i + offset];
+      if (offset > 0 && (invoiceLabel.test(candidateLine) || dueLabel.test(candidateLine))) break;
+      if (dueLabel.test(candidateLine)) continue;
+      const match = datePattern.exec(candidateLine);
+      if (!match) continue;
+      const normalized = parseInvoiceDateValue(match[1]);
+      if (normalized) return normalized;
+    }
   }
 
-  // OCR often loses the words "Tanggal Faktur" while still reading the date.
-  // On the selected Billing page only, use a printed date candidate; SAP date is
-  // used only to choose among printed candidates, never as a substitute value.
+  // Fallback only among printed non-due dates on the selected Billing page.
+  // SAP date is used only to rank printed candidates, never as a substitute.
   const candidates = invoiceDateCandidates(text);
   if (candidates.length === 1) return candidates[0];
   if (expectedDocDate && candidates.length > 1) {
@@ -805,7 +810,7 @@ async function localAnalyze(
   }
 
   return {
-    engine: 'LOCAL_TESSERACT_VISUAL_V9',
+    engine: 'LOCAL_TESSERACT_VISUAL_V10',
     billing_document: billingDocument,
     invoice_date: invoiceDate,
     grand_total: paymentResult.grossTotal,
@@ -832,7 +837,7 @@ app.get('/health', (c) =>
   c.json({
     status: 'ok',
     service: 'vision',
-    engine: 'LOCAL_TESSERACT_VISUAL_V9',
+    engine: 'LOCAL_TESSERACT_VISUAL_V10',
   }),
 );
 
@@ -840,7 +845,7 @@ app.get('/vision-ai-health', async (c) => {
   // Preview-only diagnostic route used while this branch is under test.
   return c.json({
     status: 'ok',
-    engine: 'LOCAL_TESSERACT_VISUAL_V9',
+    engine: 'LOCAL_TESSERACT_VISUAL_V10',
     paid_gateway_required: false,
   });
 });

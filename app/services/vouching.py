@@ -471,8 +471,7 @@ def parse_document_fields(text: str) -> dict[str, Any]:
     no_spj = _normalize_spj_number(no_spj_raw)
 
     date_raw = grab([
-        r"(?:Invoice\s*Date|Billing\s*Date|Document\s*Date|Doc\.?\s*Date|Tanggal\s+Faktur|Tgl\.?\s+Faktur|Tanggal\s+Invoice)\s*[:#-]?\s*([0-9A-Za-z./-]+(?:\s+[A-Za-z]+\s+\d{4})?)",
-        r"(?:Tanggal)\s*[:#-]?\s*([0-9A-Za-z./-]+(?:\s+[A-Za-z]+\s+\d{4})?)",
+        r"(?:Invoice\s*Date|Billing\s*Date|Document\s*Date|Doc\.?\s*Date|Tanggal\s+Faktur(?:\s+Pajak)?|Tgl\.?\s+Faktur(?:\s+Pajak)?|Tanggal\s+Invoice|Tgl\.?\s+Invoice|Tanggal\s+Dokumen|Date\s+of\s+Invoice)\s*[:#-]?\s*([0-9A-Za-z./-]+(?:\s+[A-Za-z]+\s+\d{4})?)",
     ])
 
     nominal_raw = grab([
