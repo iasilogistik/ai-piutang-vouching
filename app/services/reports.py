@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from decimal import Decimal
 from pathlib import Path
 
 from openpyxl import Workbook
@@ -174,6 +175,50 @@ def _working_paper_note(
     return " | ".join(note for note in notes if note)
 
 
+
+def _working_paper_net_physical(
+    sap_nominal: Decimal,
+    physical: PhysicalBilling | None,
+    spj: SPJ | None,
+) -> Decimal | None:
+    """Return a defensible net physical amount for the working paper.
+
+    Corrects obvious OCR scale loss such as 2.35 vs 2,350,000 only when a
+    thousand/million rescale lands very close to SAP + explicit partial payment.
+    Otherwise suspicious OCR amounts are left blank rather than reported as fact.
+    """
+    if physical is None or physical.nominal is None:
+        return None
+
+    gross = Decimal(str(physical.nominal))
+    billing_partial = Decimal(str(physical.partial_payment or 0))
+    spj_partial = Decimal(str(spj.partial_payment or 0)) if spj is not None else Decimal("0")
+    partial_total = billing_partial + spj_partial
+    target_gross = Decimal(str(sap_nominal)) + partial_total
+
+    if gross <= 0:
+        return None
+
+    if target_gross > 0 and gross < (target_gross / Decimal("100")):
+        candidates = [gross * Decimal("1000"), gross * Decimal("1000000")]
+        best = min(candidates, key=lambda value: abs(value - target_gross))
+        relative_error = abs(best - target_gross) / target_gross
+        if relative_error <= Decimal("0.05"):
+            gross = best
+        else:
+            return None
+
+    net = gross - partial_total
+    if net < 0:
+        return None
+
+    if sap_nominal and sap_nominal > 0:
+        ratio = net / Decimal(str(sap_nominal)) if net > 0 else Decimal("0")
+        if ratio > Decimal("20"):
+            return None
+
+    return net.quantize(Decimal("0.01"))
+
 def build_working_paper_report(
     db: Session,
     batch_id: int,
@@ -232,12 +277,10 @@ def build_working_paper_report(
     ws["H2"] = "Nominal"
 
     header_fill = PatternFill("solid", fgColor="E7E6E6")
-    total_fill = PatternFill("solid", fgColor="D9D9D9")
     thin = Side(style="thin", color="7F7F7F")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
     header_font = Font(name="Arial", size=10, bold=True)
     body_font = Font(name="Arial", size=10)
-    total_font = Font(name="Arial", size=10, bold=True)
 
     for row in ws.iter_rows(min_row=1, max_row=2, min_col=1, max_col=11):
         for cell in row:
@@ -271,59 +314,12 @@ def build_working_paper_report(
     for column, width in widths.items():
         ws.column_dimensions[column].width = width
 
-    current_group: tuple[str, str] | None = None
-    group_start_row: int | None = None
-    group_sap_total = 0.0
-    group_physical_total = 0.0
-    group_has_physical = False
-
-    def append_group_total(end_row: int) -> None:
-        nonlocal group_start_row, group_sap_total, group_physical_total, group_has_physical
-        if current_group is None or group_start_row is None or end_row < group_start_row:
-            return
-        total_row = ws.max_row + 1
-        customer_name = current_group[1]
-        ws.cell(total_row, 2, f"{customer_name} Total")
-        ws.cell(total_row, 5, group_sap_total)
-        if group_has_physical:
-            ws.cell(total_row, 8, group_physical_total)
-            ws.cell(total_row, 9, group_sap_total - group_physical_total)
-        for col in range(1, 12):
-            cell = ws.cell(total_row, col)
-            cell.fill = total_fill
-            cell.font = total_font
-            cell.border = border
-            cell.alignment = Alignment(vertical="center", wrap_text=True)
-        for col in (5, 8, 9):
-            ws.cell(total_row, col).number_format = "#,##0.00"
-        group_start_row = None
-        group_sap_total = 0.0
-        group_physical_total = 0.0
-        group_has_physical = False
 
     for sap, rec, physical, vouch in sorted_rows:
         customer_code = sap.customer or ""
         customer_name = sap.customer_account_name or sap.customer or ""
-        group = (customer_code, customer_name)
-
-        if current_group is not None and group != current_group:
-            append_group_total(ws.max_row)
-        if group != current_group:
-            current_group = group
-            group_start_row = ws.max_row + 1
-
         spj = _working_paper_spj(db, physical, vouch)
-        billing_partial = (
-            physical.partial_payment
-            if physical is not None and physical.partial_payment is not None
-            else 0
-        )
-        spj_partial = spj.partial_payment if spj is not None and spj.partial_payment is not None else 0
-        net_physical = (
-            _net_document_amount(physical.nominal, billing_partial, spj_partial)
-            if physical is not None
-            else None
-        )
+        net_physical = _working_paper_net_physical(sap.nominal, physical, spj)
 
         row_number = ws.max_row + 1
         values = [
@@ -349,11 +345,6 @@ def build_working_paper_report(
         ]
         ws.append(values)
 
-        group_sap_total += float(sap.nominal)
-        if net_physical is not None:
-            group_physical_total += float(net_physical)
-            group_has_physical = True
-
         for col in range(1, 12):
             cell = ws.cell(row_number, col)
             cell.font = body_font
@@ -365,9 +356,6 @@ def build_working_paper_report(
             ws.cell(row_number, col).number_format = "#,##0.00"
         if ws.cell(row_number, 9).value == 0:
             ws.cell(row_number, 9).value = "-"
-
-    if sorted_rows:
-        append_group_total(ws.max_row)
 
     # Do not add an auto-filter across merged top headers; preserve the classic
     # audit working-paper layout instead.
