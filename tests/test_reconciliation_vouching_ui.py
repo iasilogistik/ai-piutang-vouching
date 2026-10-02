@@ -84,3 +84,12 @@ def test_reconciliation_ui_formats_money_in_indonesian_notation():
     assert "new Intl.NumberFormat('id-ID'" in html
     assert "formatMoneyId(r.billing_partial_payment)" in html
     assert "formatMoneyId(r.nominal_difference)" in html
+
+
+
+def test_reconciliation_ui_can_backfill_customer_code_from_original_sap():
+    html = reconciliation_vouching_html()
+
+    assert "Isi Kode Customer" in html
+    assert "/sap/backfill-customer/" in html
+    assert "backfillCustomerCodes" in html
