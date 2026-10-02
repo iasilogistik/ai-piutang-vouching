@@ -344,6 +344,13 @@ def _ocr_pdf_scan(path: str) -> tuple[str, str]:
 
 
 def extract_text(path: str) -> tuple[str, str]:
+    """Extract embedded text cheaply; delegate scanned images to visual service.
+
+    Production has an internal visual OCR service. Running Python Tesseract /
+    RapidOCR before that service duplicated rasterization/OCR work and made the
+    reconciliation flow slower. For scans, return REVIEW_REQUIRED immediately so
+    ocr_document performs one visual pass only.
+    """
     suffix = Path(path).suffix.lower()
     if suffix == ".pdf":
         try:
@@ -355,7 +362,12 @@ def extract_text(path: str) -> tuple[str, str]:
                 return text, "PDF_TEXT"
         except Exception:
             pass
+        if vision_available():
+            return "", "VISUAL_REQUIRED"
         return _ocr_pdf_scan(path)
+
+    if vision_available():
+        return "", "VISUAL_REQUIRED"
 
     try:
         from PIL import Image

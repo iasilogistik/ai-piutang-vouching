@@ -162,7 +162,7 @@ def test_visual_control_evidence_reads_signatures_stamp_and_receiver(monkeypatch
         )
 
         assert payload["vision_used"] is True
-        assert payload["receiver_name"] == "Joyo Arjuno"
+        assert payload["receiver_name"] is None
         assert row.receiver_signature_status == "PRESENT"
         assert row.driver_signature_status == "PRESENT"
         assert row.security_signature_status == "PRESENT"
@@ -172,4 +172,50 @@ def test_visual_control_evidence_reads_signatures_stamp_and_receiver(monkeypatch
         assert row.stamp_customer_match_status == "MATCH"
         assert row.review_required is False
         assert receiver_detection is not None
-        assert receiver_detection.reference_json["receiver_name"] == "Joyo Arjuno"
+        assert receiver_detection.reference_json == {"source": "AI_VISION"}
+
+
+
+def test_visual_control_evidence_accepts_not_applicable_template_role(monkeypatch, tmp_path):
+    import app.services.vouching as vouching_module
+
+    monkeypatch.setattr(vouching_module, "extract_text", lambda path: ("", "REVIEW_REQUIRED"))
+    vision = _vision_payload()
+    vision["receiver_name"] = None
+    vision["signatures"]["bm"] = {
+        "status": "NOT_APPLICABLE",
+        "confidence": 0.9,
+        "page_number": None,
+    }
+
+    fake_pdf = tmp_path / "template-without-bm.pdf"
+    fake_pdf.write_bytes(b"%PDF-test")
+
+    with Session(_engine()) as db:
+        doc = Document(
+            file_name=fake_pdf.name,
+            file_type="PDF",
+            document_type="SPJ",
+            file_hash="vision-na-hash",
+            storage_path=str(fake_pdf),
+            branch="KEDIRI",
+        )
+        db.add(doc)
+        db.flush()
+        db.add(SPJ(document_id=doc.id, no_spj="2540165212"))
+        db.commit()
+
+        payload = analyze_and_persist_control_evidence(
+            db,
+            doc.id,
+            expected_customer="TB JOYO ARJUNO PRIGEN",
+            vision_result=vision,
+        )
+        db.commit()
+
+        row = db.scalar(
+            select(DocumentControlEvidence).where(DocumentControlEvidence.document_id == doc.id)
+        )
+        assert row.bm_signature_status == "NOT_APPLICABLE"
+        assert row.review_required is False
+        assert payload["receiver_name"] is None

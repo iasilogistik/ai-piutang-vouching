@@ -137,7 +137,7 @@ def _normalize_date(value: Any) -> date | None:
 
 def _status(value: Any) -> str:
     normalized = str(value or "UNCLEAR").upper().strip()
-    return normalized if normalized in {"PRESENT", "MISSING", "UNCLEAR"} else "UNCLEAR"
+    return normalized if normalized in {"PRESENT", "MISSING", "UNCLEAR", "NOT_APPLICABLE"} else "UNCLEAR"
 
 
 def analyze_document_vision(
@@ -322,7 +322,7 @@ Aturan:
         "grand_total": _normalize_amount(parsed.get("grand_total")),
         "spj_number": str(parsed.get("spj_number") or "").strip() or None,
         "delivery_order_number": str(parsed.get("delivery_order_number") or "").strip() or None,
-        "receiver_name": str(parsed.get("receiver_name") or "").strip() or None,
+        "receiver_name": None,
         "partial_payments": partials,
         "signatures": normalized_signatures,
         "stamp": {

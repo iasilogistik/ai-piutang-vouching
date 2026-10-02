@@ -98,13 +98,43 @@ function customerTokens(value: string | null | undefined): Set<string> {
   );
 }
 
+function editDistance(a: string, b: string): number {
+  const x = norm(a).replace(/ /g, '');
+  const y = norm(b).replace(/ /g, '');
+  if (!x) return y.length;
+  if (!y) return x.length;
+  const prev = Array.from({ length: y.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= x.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= y.length; j++) {
+      cur[j] = Math.min(cur[j - 1] + 1, prev[j] + 1, prev[j - 1] + (x[i - 1] === y[j - 1] ? 0 : 1));
+    }
+    for (let j = 0; j <= y.length; j++) prev[j] = cur[j];
+  }
+  return prev[y.length];
+}
+
+function tokenSimilar(a: string, b: string): boolean {
+  if (a === b) return true;
+  const maxLen = Math.max(a.length, b.length);
+  if (maxLen < 4) return false;
+  return editDistance(a, b) <= (maxLen >= 8 ? 2 : 1);
+}
+
 function overlapScore(text: string, expected: string | null | undefined): number {
-  const a = customerTokens(text);
-  const b = customerTokens(expected || '');
-  if (!a.size || !b.size) return 0;
+  const a = [...customerTokens(text)];
+  const b = [...customerTokens(expected || '')];
+  if (!a.length || !b.length) return 0;
   let hit = 0;
-  for (const token of a) if (b.has(token)) hit += 1;
-  return hit / Math.max(b.size, 1);
+  const used = new Set<number>();
+  for (const expectedToken of b) {
+    const index = a.findIndex((value, i) => !used.has(i) && tokenSimilar(value, expectedToken));
+    if (index >= 0) {
+      used.add(index);
+      hit += 1;
+    }
+  }
+  return hit / Math.max(b.length, 1);
 }
 
 const ROLE_PATTERNS: Record<string, RegExp[]> = {
@@ -250,13 +280,14 @@ async function residualInkStats(page: PageOcr, region: BBox) {
 }
 
 function signatureFromStats(stats: { darkRatio: number; colorRatio: number; darkCount: number; colorCount: number }) {
-  if (stats.colorCount >= 35 && stats.colorRatio >= 0.0007) {
-    return { status: 'PRESENT', confidence: 0.9 };
+  // Presence-only detection. Authenticity/identity is intentionally not analysed.
+  if (stats.colorCount >= 28 && stats.colorRatio >= 0.00045) {
+    return { status: 'PRESENT', confidence: 0.92 };
   }
-  if (stats.darkCount >= 180 && stats.darkRatio >= 0.0035) {
-    return { status: 'PRESENT', confidence: 0.68 };
+  if (stats.darkCount >= 135 && stats.darkRatio >= 0.0024) {
+    return { status: 'PRESENT', confidence: 0.76 };
   }
-  return { status: 'UNCLEAR', confidence: 0.25 };
+  return { status: 'MISSING', confidence: 0.72 };
 }
 
 function lineInside(line: OcrLine, region: BBox): boolean {
@@ -265,134 +296,145 @@ function lineInside(line: OcrLine, region: BBox): boolean {
   return cx >= region.x0 && cx <= region.x1 && cy >= region.y0 && cy <= region.y1;
 }
 
-async function focusedRegionText(page: PageOcr, region: BBox): Promise<string> {
+async function recognizeBufferText(buffer: Buffer): Promise<string> {
+  const worker = await getWorker();
+  const result = await worker.recognize(buffer, { rotateAuto: false }, { text: true });
+  return String(result.data.text || '').trim();
+}
+
+async function stampRegionVariants(page: PageOcr, region: BBox): Promise<string[]> {
   const left = Math.max(0, Math.floor(region.x0));
   const top = Math.max(0, Math.floor(region.y0));
   const width = Math.max(1, Math.min(page.width - left, Math.floor(region.x1 - region.x0)));
   const height = Math.max(1, Math.min(page.height - top, Math.floor(region.y1 - region.y0)));
   try {
-    const crop = await sharp(page.image)
-      .extract({ left, top, width, height })
-      .resize({ width: Math.min(1600, Math.max(700, width * 2)), withoutEnlargement: false })
-      .grayscale()
-      .normalise()
-      .sharpen()
-      .threshold(205)
-      .png()
-      .toBuffer();
-    const worker = await getWorker();
-    const result = await worker.recognize(crop, { rotateAuto: false }, { text: true });
-    return String(result.data.text || '').trim();
+    const crop = sharp(page.image).extract({ left, top, width, height });
+    const targetWidth = Math.min(1800, Math.max(800, width * 2));
+    const grayscale = await crop.clone().resize({ width: targetWidth, withoutEnlargement: false }).grayscale().normalise().sharpen().threshold(212).png().toBuffer();
+
+    const rawResult = await crop.clone().resize({ width: targetWidth, withoutEnlargement: false }).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+    const data = rawResult.data;
+    const info = rawResult.info;
+    const mask = Buffer.alloc(info.width * info.height);
+    for (let i = 0; i < info.width * info.height; i++) {
+      const offset = i * info.channels;
+      const r = data[offset] ?? 255;
+      const g = data[offset + 1] ?? r;
+      const b = data[offset + 2] ?? r;
+      const max = Math.max(r, g, b);
+      const min = Math.min(r, g, b);
+      const brightness = (r + g + b) / 3;
+      const chroma = max - min;
+      mask[i] = chroma >= 25 && brightness < 245 ? 0 : 255;
+    }
+    const colored = await sharp(mask, { raw: { width: info.width, height: info.height, channels: 1 } }).png().toBuffer();
+
+    const outputs: string[] = [];
+    const grayText = await recognizeBufferText(grayscale);
+    if (grayText) outputs.push(grayText);
+    const colorText = await recognizeBufferText(colored);
+    if (colorText) outputs.push(colorText);
+    return outputs;
   } catch (error) {
-    console.warn('FOCUSED_REGION_OCR_FAILED', error instanceof Error ? error.message : String(error));
-    return '';
+    console.warn('STAMP_REGION_OCR_FAILED', error instanceof Error ? error.message : String(error));
+    return [];
   }
 }
 
 function bestCustomerLine(text: string, expectedCustomer?: string | null): string | null {
-  const lines = String(text || '')
-    .split(/\r?\n/)
-    .map((value) => value.trim())
-    .filter((value) => value.length >= 3);
-  return (
-    lines
-      .filter((value) => overlapScore(value, expectedCustomer) >= 0.35)
-      .sort((a, b) => overlapScore(b, expectedCustomer) - overlapScore(a, expectedCustomer))[0] || null
-  );
+  const lines = String(text || '').split(/\r?\n/).map((value) => value.trim()).filter((value) => value.length >= 3);
+  return lines.filter((value) => overlapScore(value, expectedCustomer) >= 0.22).sort((a, b) => overlapScore(b, expectedCustomer) - overlapScore(a, expectedCustomer))[0] || null;
 }
 
-async function localAnalyze(images: string[], expectedCustomer?: string | null) {
-  const pages: PageOcr[] = [];
-  for (const image of images.slice(0, 3)) {
-    pages.push(await recognizePage(String(image)));
+function parsePartialPayments(text: string) {
+  const rows: Array<{ amount: number; date: string | null; reference: string | null }> = [];
+  const pattern = /(?:PARTIAL\s+PAYMENT|PAYMENT\s+RECEIVED|PEMBAYARAN\s+(?:PARTIAL|PARSIAL|DITERIMA)|TELAH\s+DIBAYAR|SUDAH\s+DIBAYAR|DOWN\s+PAYMENT|\bDP\b|UANG\s+MUKA)\s*[:#-]?\s*(?:RP\.?\s*)?([0-9][0-9.,]*)/gi;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(text)) !== null) {
+    const raw = match[1].replace(/\s+/g, '');
+    let normalized = raw;
+    if (raw.includes(',') && raw.includes('.')) {
+      normalized = raw.lastIndexOf(',') > raw.lastIndexOf('.') ? raw.replace(/\./g, '').replace(',', '.') : raw.replace(/,/g, '');
+    } else if ((raw.match(/\./g) || []).length >= 1 && raw.split('.').slice(1).every((p) => p.length === 3)) {
+      normalized = raw.replace(/\./g, '');
+    } else if ((raw.match(/,/g) || []).length >= 1 && raw.split(',').slice(1).every((p) => p.length === 3)) {
+      normalized = raw.replace(/,/g, '');
+    } else {
+      normalized = raw.replace(',', '.');
+    }
+    const amount = Number(normalized);
+    if (Number.isFinite(amount) && amount > 0) rows.push({ amount, date: null, reference: match[0].slice(0, 80) });
   }
+  return rows;
+}
+
+async function localAnalyze(images: string[], expectedCustomer?: string | null, expectedBillingDocument?: string | null) {
+  const pages: PageOcr[] = [];
+  for (const image of images.slice(0, 3)) pages.push(await recognizePage(String(image)));
 
   const signatures: Record<string, { status: string; confidence: number; page_number: number | null }> = {};
   const roleBest: Record<string, { status: string; confidence: number; page_number: number | null }> = {};
   let stamp = { status: 'UNCLEAR', text: null as string | null, confidence: 0.2, page_number: null as number | null };
-  let receiverName: string | null = null;
+  let bestStampRegion: { page: PageOcr; region: BBox; pageNumber: number; score: number } | null = null;
 
   for (let pageIndex = 0; pageIndex < pages.length; pageIndex++) {
     const page = pages[pageIndex];
     const labels = findRoleLabels(page);
-
     for (const label of labels) {
       const region = roleRegion(page, label, labels);
       const stats = await residualInkStats(page, region);
       const detected = signatureFromStats(stats);
       const previous = roleBest[label.role];
-      if (!previous || detected.confidence > previous.confidence) {
-        roleBest[label.role] = {
-          ...detected,
-          page_number: pageIndex + 1,
-        };
-      }
+      if (!previous || detected.confidence > previous.confidence) roleBest[label.role] = { ...detected, page_number: pageIndex + 1 };
 
       if (label.role === 'receiver') {
         const regionLines = page.lines.filter((line) => lineInside(line, region));
-        if (!receiverName) {
-          const candidates = regionLines
-            .map((line) => line.text.trim())
-            .filter((text) => text.length >= 3)
-            .filter((text) => !ROLE_PATTERNS.receiver.some((pattern) => pattern.test(text)))
-            .filter((text) => overlapScore(text, expectedCustomer) < 0.8);
-          receiverName = candidates.find((text) => /[A-Za-z]{3}/.test(text)) || null;
-        }
+        const stampTextCandidate = regionLines.map((line) => line.text.trim()).filter((text) => overlapScore(text, expectedCustomer) >= 0.22).sort((a, b) => overlapScore(b, expectedCustomer) - overlapScore(a, expectedCustomer))[0] || null;
+        const stampPresentByColor = stats.colorCount >= 45 && stats.colorRatio >= 0.0006;
+        const stampPresentByInk = stats.darkCount >= 300 && stats.darkRatio >= 0.0045;
+        const visualStamp = stampPresentByColor || stampPresentByInk;
+        const score = stats.colorRatio * 8 + stats.darkRatio;
+        if (visualStamp && (!bestStampRegion || score > bestStampRegion.score)) bestStampRegion = { page, region, pageNumber: pageIndex + 1, score };
 
-        let stampTextCandidate =
-          regionLines
-            .map((line) => line.text.trim())
-            .filter((text) => overlapScore(text, expectedCustomer) >= 0.35)
-            .sort((a, b) => overlapScore(b, expectedCustomer) - overlapScore(a, expectedCustomer))[0] || null;
-
-        const stampPresentByColor = stats.colorCount >= 55 && stats.colorRatio >= 0.0008;
-        const stampPresentByInk = stats.darkCount >= 360 && stats.darkRatio >= 0.0055;
-
-        // Low-contrast blue/green stamps are often visible to a person but are
-        // missed by full-page OCR. Once visual ink says a stamp exists, run a
-        // focused high-contrast OCR pass over the receiver box to recover the
-        // customer/stamp wording and avoid unnecessary reviewer work.
-        if ((stampPresentByColor || stampPresentByInk) && !stampTextCandidate) {
-          const focused = await focusedRegionText(page, region);
-          stampTextCandidate = bestCustomerLine(focused, expectedCustomer);
-        }
-
-        if ((stampPresentByColor || stampPresentByInk) && stamp.confidence < 0.8) {
-          stamp = {
-            status: 'PRESENT',
-            text: stampTextCandidate || null,
-            confidence: stampTextCandidate ? 0.92 : (stampPresentByColor ? 0.86 : 0.65),
-            page_number: pageIndex + 1,
-          };
+        if (visualStamp && stampTextCandidate && stamp.confidence < 0.93) {
+          stamp = { status: 'PRESENT', text: stampTextCandidate, confidence: 0.93, page_number: pageIndex + 1 };
+        } else if (visualStamp && stamp.status !== 'PRESENT') {
+          stamp = { status: 'PRESENT', text: null, confidence: stampPresentByColor ? 0.88 : 0.68, page_number: pageIndex + 1 };
         }
       }
     }
   }
 
-  for (const role of ['receiver', 'driver', 'security', 'bm', 'checker']) {
-    signatures[role] = roleBest[role] || {
-      status: 'UNCLEAR',
-      confidence: 0.15,
-      page_number: null,
-    };
+  if (stamp.status === 'PRESENT' && !stamp.text && bestStampRegion) {
+    const variants = await stampRegionVariants(bestStampRegion.page, bestStampRegion.region);
+    const candidates = variants.map((value) => bestCustomerLine(value, expectedCustomer)).filter((value): value is string => Boolean(value)).sort((a, b) => overlapScore(b, expectedCustomer) - overlapScore(a, expectedCustomer));
+    if (candidates[0]) stamp = { status: 'PRESENT', text: candidates[0], confidence: 0.94, page_number: bestStampRegion.pageNumber };
   }
 
-  const ocrText = pages.map((page, index) => `--- PAGE ${index + 1} ---\n${page.text}`).join('\n\n');
+  for (const role of ['receiver', 'driver', 'security', 'bm', 'checker']) {
+    signatures[role] = roleBest[role] || { status: 'NOT_APPLICABLE', confidence: 0.9, page_number: null };
+  }
+
+  const ocrText = pages.map((page, index) => '--- PAGE ' + (index + 1) + ' ---\n' + page.text).join('\n\n');
+  const normalizedOcr = norm(ocrText).replace(/ /g, '');
+  const expectedBillingNorm = norm(expectedBillingDocument || '').replace(/ /g, '');
+  const billingDocument = expectedBillingNorm && normalizedOcr.includes(expectedBillingNorm) ? (expectedBillingDocument || null) : null;
 
   return {
-    engine: 'LOCAL_TESSERACT_VISUAL_V2',
-    billing_document: null,
+    engine: 'LOCAL_TESSERACT_VISUAL_V3',
+    billing_document: billingDocument,
     invoice_date: null,
     grand_total: null,
     spj_number: null,
     delivery_order_number: null,
-    receiver_name: receiverName,
-    partial_payments: [],
+    receiver_name: null,
+    partial_payments: parsePartialPayments(ocrText),
     signatures,
     stamp,
     notes: [
-      'OCR teks dan deteksi visual dijalankan lokal tanpa AI Gateway berbayar.',
-      'PRESENT tanda tangan/stempel berarti terdapat mark/ink visual pada area role; bukan autentikasi identitas.',
+      'TTD hanya dinilai dari ada/tidaknya coretan visual; keaslian dan identitas tidak dianalisis.',
+      'Role yang tidak tercetak pada template ditandai NOT_APPLICABLE, bukan UNKNOWN.',
+      'Nama penerima tidak diekstrak karena tidak diperlukan untuk vouching.'
     ],
     ocr_text: ocrText,
   };
@@ -402,7 +444,7 @@ app.get('/health', (c) =>
   c.json({
     status: 'ok',
     service: 'vision',
-    engine: 'LOCAL_TESSERACT_VISUAL_V2',
+    engine: 'LOCAL_TESSERACT_VISUAL_V3',
   }),
 );
 
@@ -410,7 +452,7 @@ app.get('/vision-ai-health', async (c) => {
   // Preview-only diagnostic route used while this branch is under test.
   return c.json({
     status: 'ok',
-    engine: 'LOCAL_TESSERACT_VISUAL_V2',
+    engine: 'LOCAL_TESSERACT_VISUAL_V3',
     paid_gateway_required: false,
   });
 });
@@ -464,7 +506,8 @@ app.post('/analyze', async (c) => {
       return c.json({ detail: 'at least one image is required' }, 400);
     }
 
-    const result = await localAnalyze(images.map(String), expectedCustomer);
+    const expectedBillingDocument = typeof body?.expected_billing_document === 'string' ? body.expected_billing_document : null;
+    const result = await localAnalyze(images.map(String), expectedCustomer, expectedBillingDocument);
     return c.json({ result });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

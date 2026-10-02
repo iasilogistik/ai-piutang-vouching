@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from difflib import SequenceMatcher
 from typing import Any
 
 STATUS_PRESENT = "PRESENT"
@@ -104,15 +105,30 @@ def compare_stamp_to_customer(stamp_text: str | None, expected_customer: str | N
     if not stamp_norm or not customer_norm:
         return {"status": STATUS_REVIEW, "confidence": 0.0, "remarks": "Nama stempel/pelanggan tidak cukup untuk dibandingkan."}
 
-    stamp_tokens = set(stamp_norm.split())
-    customer_tokens = set(customer_norm.split())
-    overlap = len(stamp_tokens & customer_tokens) / max(len(stamp_tokens | customer_tokens), 1)
-    if overlap >= 0.6 or stamp_norm in customer_norm or customer_norm in stamp_norm:
-        return {"status": STATUS_MATCH, "confidence": round(max(overlap, 0.8), 4), "remarks": None}
+    stamp_tokens = stamp_norm.split()
+    customer_tokens = customer_norm.split()
+
+    def token_match(left: str, right: str) -> bool:
+        if left == right:
+            return True
+        if min(len(left), len(right)) < 4:
+            return False
+        return SequenceMatcher(None, left, right).ratio() >= 0.78
+
+    matched_customer = sum(
+        1 for expected_token in customer_tokens
+        if any(token_match(stamp_token, expected_token) for stamp_token in stamp_tokens)
+    )
+    token_score = matched_customer / max(len(customer_tokens), 1)
+    phrase_score = SequenceMatcher(None, stamp_norm, customer_norm).ratio()
+    confidence = max(token_score, phrase_score)
+
+    if token_score >= 0.5 or phrase_score >= 0.72 or stamp_norm in customer_norm or customer_norm in stamp_norm:
+        return {"status": STATUS_MATCH, "confidence": round(max(confidence, 0.8), 4), "remarks": None}
     return {
         "status": STATUS_REVIEW,
-        "confidence": round(overlap, 4),
-        "remarks": f"Nama stempel '{stamp_text}' tidak cukup cocok dengan pelanggan SAP '{expected_customer}'; cek manual.",
+        "confidence": round(confidence, 4),
+        "remarks": f"Nama stempel '{stamp_text}' belum cukup cocok dengan pelanggan SAP '{expected_customer}'; cek manual/reviewer.",
     }
 
 
