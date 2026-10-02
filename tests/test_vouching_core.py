@@ -9,7 +9,6 @@ from app.services.vouching import (
     _norm_key,
     _parse_amount,
     _parse_date,
-    parse_document_fields,
 )
 
 
