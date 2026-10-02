@@ -45,6 +45,7 @@ def control_evidence_dashboard_html() -> str:
     .badge { display: inline-block; border-radius: 999px; padding: 3px 8px; font-size: 12px; font-weight: 700; background: #e2e8f0; color: #334155; }
     .PASS, .PRESENT, .MATCH { background: #e6f4ea; color: var(--green); }
     .REVIEW, .UNKNOWN, .NOT_EVALUATED { background: #fff7e6; color: var(--yellow); }
+    .NOT_APPLICABLE { background: #eef2f7; color: #64748b; }
     .EXCEPTION, .MISSING, .NOT_MATCH { background: #fce8e6; color: var(--red); }
     .reasons { max-width: 260px; color: #475569; }
     .actions { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -60,7 +61,7 @@ def control_evidence_dashboard_html() -> str:
 <body>
 <header>
   <h1>Dashboard Control Evidence SPJ</h1>
-  <p>Monitoring TTD penerima, driver, satpam, BM, checker, stempel, dan manual review.</p>
+  <p>Monitoring keberadaan TTD/ink pada area role, stempel, partial payment, dan review. Sistem tidak menilai keaslian tanda tangan.</p>
 </header>
 <main>
   <section class="toolbar" aria-label="Filter dashboard">
@@ -118,10 +119,10 @@ def control_evidence_dashboard_html() -> str:
     <table>
       <thead>
         <tr>
-          <th>Cabang</th><th>Document</th><th>No SPJ</th><th>Nama Penerima</th><th>Partial Billing</th><th>Partial SPJ</th><th>Overall</th><th>Review</th><th>TTD Penerima</th><th>TTD Driver</th><th>TTD Satpam</th><th>TTD BM</th><th>TTD Checker</th><th>Stempel</th><th>Nama Stempel</th><th>Match</th><th>Alasan Review</th><th>Aksi</th>
+          <th>Cabang</th><th>Document</th><th>No SPJ</th><th>Partial Billing</th><th>Partial SPJ</th><th>Overall</th><th>Review</th><th>TTD Penerima</th><th>TTD Driver</th><th>TTD Satpam</th><th>TTD BM</th><th>TTD Checker</th><th>Stempel</th><th>Nama Stempel</th><th>Match</th><th>Alasan Review</th><th>Aksi</th>
         </tr>
       </thead>
-      <tbody id="rows"><tr><td colspan="18">Belum ada data.</td></tr></tbody>
+      <tbody id="rows"><tr><td colspan="17">Belum ada data.</td></tr></tbody>
     </table>
   </section>
 </main>
@@ -179,7 +180,7 @@ function escapeHtml(value) {
 function rowSearchBlob(row) {
   return [
     row.branch, row.file_name, row.document_id, row.no_spj, row.no_spj_raw, row.billing_id,
-    row.receiver_name, row.billing_partial_payment, row.spj_partial_payment,
+    row.billing_partial_payment, row.spj_partial_payment,
     row.stamp_text_raw, row.stamp_text_normalized, row.stamp_customer_match_status,
     row.overall_control_status, row.review_status, row.reviewer_remarks,
     ...(row.review_reasons || [])
@@ -218,7 +219,7 @@ function renderRows() {
   const list = filteredRows(dashboardData);
   renderSummary(dashboardData, list.length);
   if (!list.length) {
-    rows.innerHTML = '<tr><td colspan="18">Tidak ada data sesuai filter/search.</td></tr>';
+    rows.innerHTML = '<tr><td colspan="17">Tidak ada data sesuai filter/search.</td></tr>';
     return;
   }
   rows.innerHTML = list.map(row => {
@@ -228,7 +229,6 @@ function renderRows() {
       <td>${escapeHtml(row.branch || '-')}</td>
       <td><strong>${escapeHtml(row.file_name || row.document_id)}</strong><br><a href="${escapeHtml(row.document_url)}" target="_blank" rel="noopener">Buka dokumen</a></td>
       <td>${escapeHtml(row.no_spj || row.no_spj_raw || '-')}</td>
-      <td>${escapeHtml(row.receiver_name || '-')}</td>
       <td>${escapeHtml(row.billing_partial_payment || '-')}</td>
       <td>${escapeHtml(row.spj_partial_payment || '-')}</td>
       <td>${badge(row.overall_control_status)}</td>
