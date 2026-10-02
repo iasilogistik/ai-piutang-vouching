@@ -49,7 +49,7 @@ from app.services.login_ui import login_html
 from app.services.navigation import register_navigation_routes
 from app.services.notifications import register_notification_routes
 from app.services.release_readiness import register_release_readiness_routes
-from app.services.sap_import import import_sap_upload
+from app.services.sap_import import backfill_customer_codes_from_excel, import_sap_upload
 from app.services.storage import download_bytes
 from app.services.uat_pasuruan_ui import uat_pasuruan_html
 from app.services.upload_center import register_upload_center_routes
@@ -372,6 +372,39 @@ def sap_import(file: UploadFile = File(...), period: date | None = None, branch:
             "total_records": batch.total_records, "status": batch.status, "branch": batch.branch}
 
 
+@app.post("/sap/backfill-customer/{batch_id}")
+def sap_backfill_customer(
+    batch_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR")),
+):
+    batch = _batch_for_user(db, batch_id, user)
+    content = file.file.read()
+    try:
+        payload = backfill_customer_codes_from_excel(
+            db,
+            batch_id=batch_id,
+            filename=file.filename or "sap_source.xlsx",
+            content=content,
+        )
+        record_audit(
+            db,
+            entity_type="IMPORT_BATCH",
+            entity_id=batch_id,
+            action="SAP_CUSTOMER_CODE_BACKFILL",
+            actor=user.user_id,
+            status_to="UPDATED",
+            metadata=payload,
+            branch=batch.branch,
+        )
+        db.commit()
+        return payload
+    except ValueError as exc:
+        db.rollback()
+        raise handle_error(exc) from exc
+
+
 @app.get("/sap/validate/{batch_id}")
 def sap_validate(batch_id: int, db: Session = Depends(get_db), user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER", "VIEWER"))):
     try: return validate_sap_batch(db, batch_id, branch=scoped_branch(user))
@@ -663,13 +696,13 @@ def reconciliation_visual_refresh_candidates(
             continue
         seen.add(spj.document_id)
 
-        current_v7 = db.scalar(
+        current_v8 = db.scalar(
             select(ControlEvidenceDetection.id).where(
                 ControlEvidenceDetection.document_id == spj.document_id,
-                ControlEvidenceDetection.extraction_engine.contains("LOCAL_TESSERACT_VISUAL_V7"),
+                ControlEvidenceDetection.extraction_engine.contains("LOCAL_TESSERACT_VISUAL_V8"),
             ).limit(1)
         )
-        if current_v7 is not None:
+        if current_v8 is not None:
             continue
 
         control = db.scalar(
@@ -739,6 +772,7 @@ def reanalyze_control_evidence_visual(
         expected_customer=expected_customer,
         expected_billing_document=sap.billing_document if sap else (billing.billing_document if billing else None),
         expected_nominal=sap.nominal if sap else None,
+        force_vision=True,
     )
     payload = analyze_and_persist_control_evidence(
         db,
