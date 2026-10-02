@@ -199,6 +199,7 @@ Aturan:
 - PRESENT tanda tangan = ada coretan/tanda tangan visual pada kotak/area role tersebut. Jangan menilai siapa penandatangan atau autentik/tidak.
 - PRESENT stempel = ada cap/stempel visual. Jika cap terlihat tetapi tulisannya tidak terbaca, status tetap PRESENT dan text=null.
 - receiver_name hanya isi jika nama penerima tertulis/terbaca pada area penerima/diterima customer.
+- invoice_date WAJIB berarti tanggal penerbitan Faktur/Billing/Invoice yang tercetak pada dokumen fisik. JANGAN pernah memakai Due Date, Payment Due, Net Due, Jatuh Tempo, Tanggal Jatuh Tempo, atau Batas Pembayaran sebagai invoice_date. Jika hanya tanggal jatuh tempo yang terbaca dan tanggal faktur tidak dapat dipastikan, kembalikan invoice_date=null.
 - partial_payments hanya untuk pembayaran sebagian/pelunasan sebagian/payment history yang eksplisit, termasuk istilah DP, payment received, telah dibayar, pembayaran terdahulu, atau nilai yang jelas mengurangi grand total menjadi outstanding/net amount. Jangan masukkan grand_total sebagai partial payment.
 - Nilai SAP di atas hanya referensi rekonsiliasi. Jangan mengubah hasil pembacaan gambar agar cocok dengan SAP. Jika ada partial payment yang eksplisit dan grand_total - partial payment = nominal SAP, tetap laporkan nilai yang benar-benar terlihat pada dokumen.
 - Jika nilai tidak yakin, gunakan null/UNCLEAR dan confidence rendah. Jangan mengarang.
