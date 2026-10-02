@@ -27,3 +27,15 @@ def test_control_evidence_ui_has_search_and_status_filters():
     assert "signatureFilter" in response.text
     assert "stampFilter" in response.text
     assert "Rows Setelah Filter" in response.text
+
+
+
+def test_control_evidence_ui_formats_spj_and_partial_payment_for_readability():
+    response = client.get("/ui/control-evidence")
+
+    assert response.status_code == 200
+    assert "function formatMoneyId(value)" in response.text
+    assert "new Intl.NumberFormat('id-ID'" in response.text
+    assert "row.no_spj || '-'" in response.text
+    assert "formatMoneyId(row.billing_partial_payment)" in response.text
+    assert "formatMoneyId(row.spj_partial_payment)" in response.text

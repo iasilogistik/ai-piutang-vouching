@@ -205,7 +205,7 @@ function intersects(a: BBox, b: BBox): boolean {
   return a.x0 < b.x1 && a.x1 > b.x0 && a.y0 < b.y1 && a.y1 > b.y0;
 }
 
-async function residualInkStats(page: PageOcr, region: BBox) {
+async function residualInkStats(page: PageOcr, region: BBox, excludeOcrWords = true) {
   const left = Math.max(0, Math.floor(region.x0));
   const top = Math.max(0, Math.floor(region.y0));
   const width = Math.max(1, Math.min(page.width - left, Math.floor(region.x1 - region.x0)));
@@ -219,15 +219,17 @@ async function residualInkStats(page: PageOcr, region: BBox) {
   const pixels = info.width * info.height;
   const excluded = new Uint8Array(pixels);
 
-  for (const word of page.words) {
-    if (!intersects(word.bbox, region)) continue;
-    const x0 = Math.max(0, Math.floor(word.bbox.x0 - left - 3));
-    const y0 = Math.max(0, Math.floor(word.bbox.y0 - top - 3));
-    const x1 = Math.min(info.width, Math.ceil(word.bbox.x1 - left + 3));
-    const y1 = Math.min(info.height, Math.ceil(word.bbox.y1 - top + 3));
-    for (let y = y0; y < y1; y++) {
-      const row = y * info.width;
-      for (let x = x0; x < x1; x++) excluded[row + x] = 1;
+  if (excludeOcrWords) {
+    for (const word of page.words) {
+      if (!intersects(word.bbox, region)) continue;
+      const x0 = Math.max(0, Math.floor(word.bbox.x0 - left - 3));
+      const y0 = Math.max(0, Math.floor(word.bbox.y0 - top - 3));
+      const x1 = Math.min(info.width, Math.ceil(word.bbox.x1 - left + 3));
+      const y1 = Math.min(info.height, Math.ceil(word.bbox.y1 - top + 3));
+      for (let y = y0; y < y1; y++) {
+        const row = y * info.width;
+        for (let x = x0; x < x1; x++) excluded[row + x] = 1;
+      }
     }
   }
 
@@ -288,6 +290,21 @@ function signatureFromStats(stats: { darkRatio: number; colorRatio: number; dark
     return { status: 'PRESENT', confidence: 0.76 };
   }
   return { status: 'MISSING', confidence: 0.72 };
+}
+
+function signatureFromOfficialTemplateStats(
+  stats: { darkRatio: number; colorRatio: number; darkCount: number; colorCount: number },
+) {
+  // The official SID SPJ boxes are tightly cropped to the handwriting band, so
+  // a lower threshold is appropriate. This also avoids a false MISSING when
+  // Tesseract interprets a real handwritten signature as OCR text.
+  if (stats.colorCount >= 12 && stats.colorRatio >= 0.00018) {
+    return { status: 'PRESENT', confidence: 0.9 };
+  }
+  if (stats.darkCount >= 60 && stats.darkRatio >= 0.0010) {
+    return { status: 'PRESENT', confidence: 0.8 };
+  }
+  return { status: 'MISSING', confidence: 0.7 };
 }
 
 function lineInside(line: OcrLine, region: BBox): boolean {
@@ -372,20 +389,22 @@ function extractOfficialSpjNumber(text: string): string | null {
 function officialTemplateRegion(page: PageOcr, role: string): BBox | null {
   // Standard PT Semen Indonesia Distributor SPJ layout:
   // Penerima | Driver | Checker | Satpam | Branch Manager.
+  // Only crop the handwriting band above the printed name/baseline. This is
+  // more reliable for long slanted BM signatures like the SANTOSO sample.
   const x: Record<string, [number, number]> = {
-    receiver: [0.035, 0.245],
-    driver: [0.245, 0.405],
-    checker: [0.405, 0.585],
-    security: [0.585, 0.765],
-    bm: [0.765, 0.975],
+    receiver: [0.025, 0.245],
+    driver: [0.235, 0.415],
+    checker: [0.395, 0.595],
+    security: [0.575, 0.775],
+    bm: [0.72, 0.995],
   };
   const span = x[role];
   if (!span) return null;
   return {
     x0: Math.floor(page.width * span[0]),
     x1: Math.ceil(page.width * span[1]),
-    y0: Math.floor(page.height * 0.555),
-    y1: Math.ceil(page.height * 0.775),
+    y0: Math.floor(page.height * 0.575),
+    y1: Math.ceil(page.height * 0.69),
   };
 }
 
@@ -534,19 +553,21 @@ async function localAnalyze(
 
     for (const role of ['receiver', 'driver', 'checker', 'security', 'bm']) {
       const label = labelByRole.get(role);
-      const regions: BBox[] = [];
-      if (label) regions.push(roleRegion(page, label, labels));
+      const regions: Array<{ region: BBox; official: boolean }> = [];
+      if (label) regions.push({ region: roleRegion(page, label, labels), official: false });
       if (pageIndex === officialPageIndex) {
         const template = officialTemplateRegion(page, role);
-        if (template) regions.push(template);
+        if (template) regions.push({ region: template, official: true });
       }
       if (!regions.length) continue;
 
       let best: { status: string; confidence: number; page_number: number | null; stats: any; region: BBox } | null = null;
-      for (const region of regions) {
-        const stats = await residualInkStats(page, region);
-        const detected = signatureFromStats(stats);
-        const candidate = { ...detected, page_number: pageIndex + 1, stats, region };
+      for (const item of regions) {
+        const stats = await residualInkStats(page, item.region, !item.official);
+        const detected = item.official
+          ? signatureFromOfficialTemplateStats(stats)
+          : signatureFromStats(stats);
+        const candidate = { ...detected, page_number: pageIndex + 1, stats, region: item.region };
         if (!best || candidate.confidence > best.confidence || (candidate.status === 'PRESENT' && best.status !== 'PRESENT')) {
           best = candidate;
         }
@@ -636,7 +657,7 @@ async function localAnalyze(
   }
 
   return {
-    engine: 'LOCAL_TESSERACT_VISUAL_V5',
+    engine: 'LOCAL_TESSERACT_VISUAL_V6',
     billing_document: billingDocument,
     invoice_date: null,
     grand_total: paymentResult.grossTotal,
@@ -662,7 +683,7 @@ app.get('/health', (c) =>
   c.json({
     status: 'ok',
     service: 'vision',
-    engine: 'LOCAL_TESSERACT_VISUAL_V5',
+    engine: 'LOCAL_TESSERACT_VISUAL_V6',
   }),
 );
 
@@ -670,7 +691,7 @@ app.get('/vision-ai-health', async (c) => {
   // Preview-only diagnostic route used while this branch is under test.
   return c.json({
     status: 'ok',
-    engine: 'LOCAL_TESSERACT_VISUAL_V5',
+    engine: 'LOCAL_TESSERACT_VISUAL_V6',
     paid_gateway_required: false,
   });
 });
