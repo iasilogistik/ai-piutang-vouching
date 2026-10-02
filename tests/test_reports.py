@@ -3,10 +3,10 @@ from decimal import Decimal
 from pathlib import Path
 
 from openpyxl import load_workbook
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session
 
-from app.models import BillingReconciliation, Document, ImportBatch, PhysicalBilling, SAPBilling
+from app.models import BillingReconciliation, Document, ImportBatch, PhysicalBilling, SAPBilling, SPJ
 from app.services.reports import build_report, build_working_paper_report
 
 
@@ -231,3 +231,88 @@ def test_working_paper_repairs_obvious_ocr_scale_loss_without_subtotal(tmp_path,
         assert ws["H3"].value == 2350000
         assert ws["I3"].value == "-"
         assert ws.max_row == 3
+
+
+
+def test_working_paper_preloads_spj_without_n_plus_one_queries(tmp_path, monkeypatch):
+    engine = create_engine("sqlite:///:memory:")
+    from app.database import Base
+    Base.metadata.create_all(engine)
+    import app.services.reports as reports
+    monkeypatch.setattr(reports, "REPORT_ROOT", tmp_path)
+
+    with Session(engine) as db:
+        batch = ImportBatch(file_name="sap.xlsx", branch="KEDIRI", total_records=20, status="IMPORTED")
+        db.add(batch)
+        db.flush()
+
+        spj_doc = Document(
+            file_name="shared-spj.pdf",
+            file_type="PDF",
+            document_type="SPJ",
+            file_hash="shared-spj",
+            storage_path="shared-spj.pdf",
+            branch="KEDIRI",
+        )
+        db.add(spj_doc)
+        db.flush()
+        db.add(SPJ(document_id=spj_doc.id, no_spj="2501000001"))
+
+        for index in range(20):
+            sap = SAPBilling(
+                import_batch_id=batch.id,
+                customer=str(2100000 + index),
+                customer_account_name=f"CUSTOMER {index:02d}",
+                billing_document=str(8500000000 + index),
+                doc_date=date(2026, 9, 1),
+                nominal=Decimal("1000000.00"),
+            )
+            db.add(sap)
+            db.flush()
+
+            doc = Document(
+                file_name=f"billing-{index}.pdf",
+                file_type="PDF",
+                document_type="BILLING",
+                file_hash=f"billing-{index}",
+                storage_path=f"billing-{index}.pdf",
+                branch="KEDIRI",
+            )
+            db.add(doc)
+            db.flush()
+            physical = PhysicalBilling(
+                document_id=doc.id,
+                billing_document=str(8500000000 + index),
+                no_spj="2501000001",
+                doc_date=date(2026, 9, 1),
+                nominal=Decimal("1000000.00"),
+            )
+            db.add(physical)
+            db.flush()
+            db.add(BillingReconciliation(
+                sap_billing_id=sap.id,
+                physical_billing_id=physical.id,
+                billing_match=True,
+                date_match=True,
+                nominal_match=True,
+                nominal_difference=Decimal("0.00"),
+                status="MATCH",
+            ))
+        db.commit()
+        batch_id = batch.id
+
+    statements = {"count": 0}
+
+    def before_cursor_execute(*_args, **_kwargs):
+        statements["count"] += 1
+
+    event.listen(engine, "before_cursor_execute", before_cursor_execute)
+    try:
+        with Session(engine) as db:
+            path = build_working_paper_report(db, batch_id, branch="KEDIRI")
+            assert path.exists()
+    finally:
+        event.remove(engine, "before_cursor_execute", before_cursor_execute)
+
+    # One batch lookup + one joined row query + one SPJ preload query.
+    assert statements["count"] <= 5
