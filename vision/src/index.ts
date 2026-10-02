@@ -346,24 +346,134 @@ function bestCustomerLine(text: string, expectedCustomer?: string | null): strin
   return lines.filter((value) => overlapScore(value, expectedCustomer) >= 0.22).sort((a, b) => overlapScore(b, expectedCustomer) - overlapScore(a, expectedCustomer))[0] || null;
 }
 
+function officialSpjScore(page: PageOcr): number {
+  const text = norm(page.text);
+  let score = 0;
+  if (text.includes('SURAT PERINTAH JALAN')) score += 7;
+  if (text.includes('SEMEN INDONESIA DISTRIBUTOR')) score += 5;
+  if (/SPJ\s*\/\s*[A-Z0-9]+\s*\/\s*\d{6}\s*\/\s*\d{8,12}/i.test(page.text)) score += 5;
+  const roles = new Set(findRoleLabels(page).map((item) => item.role));
+  if (roles.size >= 4) score += 2;
+  return score;
+}
+
+function extractOfficialSpjNumber(text: string): string | null {
+  const patterns = [
+    /SPJ\s*\/\s*([A-Z0-9]+)\s*\/\s*(\d{6})\s*\/\s*(\d{8,12})/i,
+    /SPJ[\s:/-]+([A-Z0-9]+)[\s/-]+(\d{6})[\s/-]+(\d{8,12})/i,
+  ];
+  for (const pattern of patterns) {
+    const match = pattern.exec(text);
+    if (match) return 'SPJ/' + match[1].toUpperCase() + '/' + match[2] + '/' + match[3];
+  }
+  return null;
+}
+
+function officialTemplateRegion(page: PageOcr, role: string): BBox | null {
+  // Standard PT Semen Indonesia Distributor SPJ layout:
+  // Penerima | Driver | Checker | Satpam | Branch Manager.
+  const x: Record<string, [number, number]> = {
+    receiver: [0.035, 0.245],
+    driver: [0.245, 0.405],
+    checker: [0.405, 0.585],
+    security: [0.585, 0.765],
+    bm: [0.765, 0.975],
+  };
+  const span = x[role];
+  if (!span) return null;
+  return {
+    x0: Math.floor(page.width * span[0]),
+    x1: Math.ceil(page.width * span[1]),
+    y0: Math.floor(page.height * 0.555),
+    y1: Math.ceil(page.height * 0.775),
+  };
+}
+
+function parseMoneyToken(value: string): number | null {
+  let raw = String(value || '').replace(/\s+/g, '').replace(/:/g, '.').replace(/[^0-9,.-]/g, '');
+  if (!raw) return null;
+  if (raw.includes(',') && raw.includes('.')) {
+    raw = raw.lastIndexOf(',') > raw.lastIndexOf('.')
+      ? raw.replace(/\./g, '').replace(',', '.')
+      : raw.replace(/,/g, '');
+  } else if ((raw.match(/\./g) || []).length >= 1 && raw.split('.').slice(1).every((p) => p.length === 3)) {
+    raw = raw.replace(/\./g, '');
+  } else if ((raw.match(/,/g) || []).length >= 1 && raw.split(',').slice(1).every((p) => p.length === 3)) {
+    raw = raw.replace(/,/g, '');
+  } else {
+    raw = raw.replace(',', '.');
+  }
+  const amount = Number(raw);
+  return Number.isFinite(amount) && amount > 0 ? amount : null;
+}
+
+function findLabeledAmount(text: string, labels: string[]): { amount: number; reference: string } | null {
+  for (const label of labels) {
+    const pattern = new RegExp('(?:' + label + ')\\s*[:#=-]?\\s*(?:RP\\.?\\s*)?([0-9][0-9.,:\\\\s-]*)', 'i');
+    const match = pattern.exec(text);
+    if (!match) continue;
+    const amount = parseMoneyToken(match[1]);
+    if (amount !== null) return { amount, reference: match[0].trim().slice(0, 120) };
+  }
+  return null;
+}
+
 function parsePartialPayments(text: string) {
   const rows: Array<{ amount: number; date: string | null; reference: string | null }> = [];
-  const pattern = /(?:PARTIAL\s+PAYMENT|PAYMENT\s+RECEIVED|PEMBAYARAN\s+(?:PARTIAL|PARSIAL|DITERIMA)|TELAH\s+DIBAYAR|SUDAH\s+DIBAYAR|DOWN\s+PAYMENT|\bDP\b|UANG\s+MUKA)\s*[:#-]?\s*(?:RP\.?\s*)?([0-9][0-9.,]*)/gi;
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(text)) !== null) {
-    const raw = match[1].replace(/\s+/g, '');
-    let normalized = raw;
-    if (raw.includes(',') && raw.includes('.')) {
-      normalized = raw.lastIndexOf(',') > raw.lastIndexOf('.') ? raw.replace(/\./g, '').replace(',', '.') : raw.replace(/,/g, '');
-    } else if ((raw.match(/\./g) || []).length >= 1 && raw.split('.').slice(1).every((p) => p.length === 3)) {
-      normalized = raw.replace(/\./g, '');
-    } else if ((raw.match(/,/g) || []).length >= 1 && raw.split(',').slice(1).every((p) => p.length === 3)) {
-      normalized = raw.replace(/,/g, '');
-    } else {
-      normalized = raw.replace(',', '.');
+  const explicitLabels = [
+    'PARTIAL\\s+PAYMENT',
+    'PAYMENT\\s+RECEIVED',
+    'AMOUNT\\s+PAID',
+    'PAID\\s+AMOUNT',
+    'JUMLAH\\s+DIBAYAR',
+    'PEMBAYARAN\\s+(?:PARTIAL|PARSIAL|DITERIMA|SEBELUMNYA|TERDAHULU)',
+    'TELAH\\s+DIBAYAR',
+    'SUDAH\\s+DIBAYAR',
+    'DOWN\\s+PAYMENT',
+    '\\bDP\\b',
+    'UANG\\s+MUKA',
+  ];
+
+  for (const label of explicitLabels) {
+    const pattern = new RegExp('(?:' + label + ')\\s*[:#=-]?\\s*(?:RP\\.?\\s*)?([0-9][0-9.,:\\\\s-]*)', 'gi');
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(text)) !== null) {
+      const amount = parseMoneyToken(match[1]);
+      if (amount !== null) {
+        const duplicate = rows.some((row) => Math.abs(row.amount - amount) < 0.01 && row.reference === match![0].slice(0, 120));
+        if (!duplicate) rows.push({ amount, date: null, reference: match[0].trim().slice(0, 120) });
+      }
     }
-    const amount = Number(normalized);
-    if (Number.isFinite(amount) && amount > 0) rows.push({ amount, date: null, reference: match[0].slice(0, 80) });
+  }
+
+  // Some billing layouts do not print "partial payment" explicitly. When both
+  // Gross/Grand Total and a labelled Outstanding/Balance Due are present, the
+  // paid amount is an evidence-backed arithmetic fact: total - outstanding.
+  const gross = findLabeledAmount(text, [
+    'GRAND\\s+TOTAL',
+    'TOTAL\\s+TAGIHAN',
+    'TOTAL\\s+INVOICE',
+    'JUMLAH\\s+TAGIHAN',
+  ]);
+  const outstanding = findLabeledAmount(text, [
+    'OUTSTANDING',
+    'BALANCE\\s+DUE',
+    'AMOUNT\\s+DUE',
+    'SISA\\s+TAGIHAN',
+    'SISA\\s+PEMBAYARAN',
+    'SALDO\\s+TERUTANG',
+    'NET\\s+DUE',
+  ]);
+  if (gross && outstanding && gross.amount > outstanding.amount) {
+    const derived = Math.round((gross.amount - outstanding.amount) * 100) / 100;
+    const explicitTotal = rows.reduce((sum, row) => sum + row.amount, 0);
+    if (derived > 0 && Math.abs(explicitTotal - derived) > 0.01) {
+      rows.push({
+        amount: derived,
+        date: null,
+        reference: 'Derived: ' + gross.reference + ' - ' + outstanding.reference,
+      });
+    }
   }
   return rows;
 }
@@ -372,34 +482,79 @@ async function localAnalyze(images: string[], expectedCustomer?: string | null, 
   const pages: PageOcr[] = [];
   for (const image of images.slice(0, 3)) pages.push(await recognizePage(String(image)));
 
+  // When a package contains Delivery Order + Billing + SPJ, only the official
+  // PT SID page headed "SURAT PERINTAH JALAN" is authoritative for SPJ number,
+  // signatures and receiver stamp.
+  let officialPageIndex = -1;
+  let officialScore = 0;
+  pages.forEach((page, index) => {
+    const score = officialSpjScore(page);
+    if (score > officialScore) {
+      officialScore = score;
+      officialPageIndex = index;
+    }
+  });
+  if (officialScore < 7) officialPageIndex = -1;
+
+  const signaturePageIndexes = officialPageIndex >= 0
+    ? [officialPageIndex]
+    : pages.map((_, index) => index);
+
   const signatures: Record<string, { status: string; confidence: number; page_number: number | null }> = {};
   const roleBest: Record<string, { status: string; confidence: number; page_number: number | null }> = {};
   let stamp = { status: 'UNCLEAR', text: null as string | null, confidence: 0.2, page_number: null as number | null };
   let bestStampRegion: { page: PageOcr; region: BBox; pageNumber: number; score: number } | null = null;
 
-  for (let pageIndex = 0; pageIndex < pages.length; pageIndex++) {
+  for (const pageIndex of signaturePageIndexes) {
     const page = pages[pageIndex];
     const labels = findRoleLabels(page);
-    for (const label of labels) {
-      const region = roleRegion(page, label, labels);
-      const stats = await residualInkStats(page, region);
-      const detected = signatureFromStats(stats);
-      const previous = roleBest[label.role];
-      if (!previous || detected.confidence > previous.confidence) roleBest[label.role] = { ...detected, page_number: pageIndex + 1 };
+    const labelByRole = new Map(labels.map((item) => [item.role, item]));
 
-      if (label.role === 'receiver') {
-        const regionLines = page.lines.filter((line) => lineInside(line, region));
-        const stampTextCandidate = regionLines.map((line) => line.text.trim()).filter((text) => overlapScore(text, expectedCustomer) >= 0.22).sort((a, b) => overlapScore(b, expectedCustomer) - overlapScore(a, expectedCustomer))[0] || null;
-        const stampPresentByColor = stats.colorCount >= 45 && stats.colorRatio >= 0.0006;
-        const stampPresentByInk = stats.darkCount >= 300 && stats.darkRatio >= 0.0045;
+    for (const role of ['receiver', 'driver', 'checker', 'security', 'bm']) {
+      const label = labelByRole.get(role);
+      const regions: BBox[] = [];
+      if (label) regions.push(roleRegion(page, label, labels));
+      if (pageIndex === officialPageIndex) {
+        const template = officialTemplateRegion(page, role);
+        if (template) regions.push(template);
+      }
+      if (!regions.length) continue;
+
+      let best: { status: string; confidence: number; page_number: number | null; stats: any; region: BBox } | null = null;
+      for (const region of regions) {
+        const stats = await residualInkStats(page, region);
+        const detected = signatureFromStats(stats);
+        const candidate = { ...detected, page_number: pageIndex + 1, stats, region };
+        if (!best || candidate.confidence > best.confidence || (candidate.status === 'PRESENT' && best.status !== 'PRESENT')) {
+          best = candidate;
+        }
+      }
+      if (!best) continue;
+      const previous = roleBest[role];
+      if (!previous || best.status === 'PRESENT' || best.confidence > previous.confidence) {
+        roleBest[role] = { status: best.status, confidence: best.confidence, page_number: best.page_number };
+      }
+
+      if (role === 'receiver') {
+        const regionLines = page.lines.filter((line) => lineInside(line, best!.region));
+        const stampTextCandidate = regionLines
+          .map((line) => line.text.trim())
+          .filter((value) => overlapScore(value, expectedCustomer) >= 0.22)
+          .sort((a, b) => overlapScore(b, expectedCustomer) - overlapScore(a, expectedCustomer))[0] || null;
+
+        const stats = best.stats;
+        const stampPresentByColor = stats.colorCount >= 38 && stats.colorRatio >= 0.0005;
+        const stampPresentByInk = stats.darkCount >= 260 && stats.darkRatio >= 0.0038;
         const visualStamp = stampPresentByColor || stampPresentByInk;
         const score = stats.colorRatio * 8 + stats.darkRatio;
-        if (visualStamp && (!bestStampRegion || score > bestStampRegion.score)) bestStampRegion = { page, region, pageNumber: pageIndex + 1, score };
 
-        if (visualStamp && stampTextCandidate && stamp.confidence < 0.93) {
-          stamp = { status: 'PRESENT', text: stampTextCandidate, confidence: 0.93, page_number: pageIndex + 1 };
+        if (visualStamp && (!bestStampRegion || score > bestStampRegion.score)) {
+          bestStampRegion = { page, region: best.region, pageNumber: pageIndex + 1, score };
+        }
+        if (visualStamp && stampTextCandidate) {
+          stamp = { status: 'PRESENT', text: stampTextCandidate, confidence: 0.94, page_number: pageIndex + 1 };
         } else if (visualStamp && stamp.status !== 'PRESENT') {
-          stamp = { status: 'PRESENT', text: null, confidence: stampPresentByColor ? 0.88 : 0.68, page_number: pageIndex + 1 };
+          stamp = { status: 'PRESENT', text: null, confidence: stampPresentByColor ? 0.9 : 0.7, page_number: pageIndex + 1 };
         }
       }
     }
@@ -407,34 +562,55 @@ async function localAnalyze(images: string[], expectedCustomer?: string | null, 
 
   if (stamp.status === 'PRESENT' && !stamp.text && bestStampRegion) {
     const variants = await stampRegionVariants(bestStampRegion.page, bestStampRegion.region);
-    const candidates = variants.map((value) => bestCustomerLine(value, expectedCustomer)).filter((value): value is string => Boolean(value)).sort((a, b) => overlapScore(b, expectedCustomer) - overlapScore(a, expectedCustomer));
-    if (candidates[0]) stamp = { status: 'PRESENT', text: candidates[0], confidence: 0.94, page_number: bestStampRegion.pageNumber };
+    const candidates = variants
+      .map((value) => bestCustomerLine(value, expectedCustomer))
+      .filter((value): value is string => Boolean(value))
+      .sort((a, b) => overlapScore(b, expectedCustomer) - overlapScore(a, expectedCustomer));
+    if (candidates[0]) {
+      stamp = { status: 'PRESENT', text: candidates[0], confidence: 0.95, page_number: bestStampRegion.pageNumber };
+    }
   }
 
   for (const role of ['receiver', 'driver', 'security', 'bm', 'checker']) {
-    signatures[role] = roleBest[role] || { status: 'NOT_APPLICABLE', confidence: 0.9, page_number: null };
+    if (roleBest[role]) {
+      signatures[role] = roleBest[role];
+    } else if (officialPageIndex >= 0) {
+      // Standard official SPJ contains all five signature roles. If a role box
+      // cannot be read at all, do not borrow evidence from another page.
+      signatures[role] = { status: 'MISSING', confidence: 0.6, page_number: officialPageIndex + 1 };
+    } else {
+      signatures[role] = { status: 'NOT_APPLICABLE', confidence: 0.9, page_number: null };
+    }
   }
 
+  const officialSpjNumber = officialPageIndex >= 0
+    ? extractOfficialSpjNumber(pages[officialPageIndex].text)
+    : null;
   const ocrText = pages.map((page, index) => '--- PAGE ' + (index + 1) + ' ---\n' + page.text).join('\n\n');
   const normalizedOcr = norm(ocrText).replace(/ /g, '');
   const expectedBillingNorm = norm(expectedBillingDocument || '').replace(/ /g, '');
-  const billingDocument = expectedBillingNorm && normalizedOcr.includes(expectedBillingNorm) ? (expectedBillingDocument || null) : null;
+  const billingDocument = expectedBillingNorm && normalizedOcr.includes(expectedBillingNorm)
+    ? (expectedBillingDocument || null)
+    : null;
 
   return {
-    engine: 'LOCAL_TESSERACT_VISUAL_V3',
+    engine: 'LOCAL_TESSERACT_VISUAL_V4',
     billing_document: billingDocument,
     invoice_date: null,
     grand_total: null,
-    spj_number: null,
+    spj_number: officialSpjNumber,
     delivery_order_number: null,
     receiver_name: null,
     partial_payments: parsePartialPayments(ocrText),
     signatures,
     stamp,
+    official_spj_page: officialPageIndex >= 0 ? officialPageIndex + 1 : null,
     notes: [
+      officialPageIndex >= 0
+        ? 'SPJ resmi dipilih dari halaman PT Semen Indonesia Distributor berjudul SURAT PERINTAH JALAN.'
+        : 'Header SPJ resmi tidak terbaca; sistem memakai fallback dokumen.',
       'TTD hanya dinilai dari ada/tidaknya coretan visual; keaslian dan identitas tidak dianalisis.',
-      'Role yang tidak tercetak pada template ditandai NOT_APPLICABLE, bukan UNKNOWN.',
-      'Nama penerima tidak diekstrak karena tidak diperlukan untuk vouching.'
+      'Partial payment dibaca dari label pembayaran atau dihitung hanya jika Total dan Outstanding/Sisa sama-sama tercetak.'
     ],
     ocr_text: ocrText,
   };
@@ -444,7 +620,7 @@ app.get('/health', (c) =>
   c.json({
     status: 'ok',
     service: 'vision',
-    engine: 'LOCAL_TESSERACT_VISUAL_V3',
+    engine: 'LOCAL_TESSERACT_VISUAL_V4',
   }),
 );
 
@@ -452,7 +628,7 @@ app.get('/vision-ai-health', async (c) => {
   // Preview-only diagnostic route used while this branch is under test.
   return c.json({
     status: 'ok',
-    engine: 'LOCAL_TESSERACT_VISUAL_V3',
+    engine: 'LOCAL_TESSERACT_VISUAL_V4',
     paid_gateway_required: false,
   });
 });
