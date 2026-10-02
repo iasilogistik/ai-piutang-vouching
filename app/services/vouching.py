@@ -471,7 +471,7 @@ def parse_document_fields(text: str) -> dict[str, Any]:
     no_spj = _normalize_spj_number(no_spj_raw)
 
     date_raw = grab([
-        r"(?:Invoice\s*Date|Billing\s*Date|Document\s*Date|Doc\.?\s*Date|Tanggal\s+Faktur(?:\s+Pajak)?|Tgl\.?\s+Faktur(?:\s+Pajak)?|Tanggal\s+Invoice|Tgl\.?\s+Invoice|Tanggal\s+Dokumen|Date\s+of\s+Invoice)\s*[:#-]?\s*([0-9A-Za-z./-]+(?:\s+[A-Za-z]+\s+\d{4})?)",
+        r"(?:Invoice\s*Date|Date\s+of\s+Invoice|Tanggal\s+Faktur(?:\s+Pajak)?|Tgl\.?\s+Faktur(?:\s+Pajak)?|Tanggal\s+Invoice|Tgl\.?\s+Invoice)\s*[:#-]?\s*([0-9A-Za-z./-]+(?:\s+[A-Za-z]+\s+\d{4})?)",
     ])
 
     nominal_raw = grab([
@@ -674,8 +674,10 @@ def ocr_document(
                 if detected_spj:
                     paired.no_spj_raw = detected_spj_raw or detected_spj
                     paired.no_spj = detected_spj
-                if vision.get("invoice_date") is not None:
-                    paired.doc_date = vision["invoice_date"]
+                # Replace any legacy/generic date with the strict
+                # invoice/faktur issue date. If the label is not readable, clear
+                # the stale value rather than showing a due/delivery date.
+                paired.doc_date = vision.get("invoice_date")
                 if vision.get("grand_total") is not None:
                     paired.nominal = _normalize_ocr_amount_scale(
                         vision["grand_total"],
