@@ -7,7 +7,7 @@ from sqlalchemy import text
 
 from app.database import SessionLocal
 from app.models import ImportBatch, SAPBilling
-from app.services.sap_import import backfill_customer_codes_from_excel, import_sap_excel
+from app.services.sap_import import import_sap_excel
 
 
 def excel_bytes(rows: list[dict[str, object]]) -> bytes:
@@ -303,13 +303,16 @@ def test_import_sap_ledger_preserves_customer_code_when_available() -> None:
 
 
 
-def test_backfill_customer_codes_updates_existing_batch_without_reimport() -> None:
+
+
+def test_reupload_same_sap_population_refreshes_customer_column_in_existing_batch() -> None:
     db = SessionLocal()
     batch = None
     try:
+        # Simulate legacy Batch #4 imported before Customer mapping existed.
         batch = ImportBatch(
-            file_name="old_sap.xlsx",
-            branch="TEST-SAP-BACKFILL",
+            file_name="EXPORT piutang.XLSX",
+            branch="KEDIRI",
             total_records=1,
             status="IMPORTED",
         )
@@ -318,37 +321,45 @@ def test_backfill_customer_codes_updates_existing_batch_without_reimport() -> No
         row = SAPBilling(
             import_batch_id=batch.id,
             customer=None,
-            customer_account_name="SANTOSO, TOKO",
-            billing_document="8501735930",
-            doc_date=pd.Timestamp("2026-08-24").date(),
-            nominal=Decimal("2350000.00"),
+            customer_account_name="ASIA JAYA ABADI, UD",
+            billing_document="8501207517",
+            doc_date=pd.Timestamp("2025-04-24").date(),
+            nominal=Decimal("4925000.00"),
         )
         db.add(row)
         db.commit()
+        original_batch_id = batch.id
+        original_nominal = row.nominal
 
         content = excel_bytes([
             {
-                "Customer": "2119709",
-                "Billing Document": "8501735930",
-                "Text": None,
-                "Document Date": "2026-08-24",
-                "Company Code Currency Value": 2350000,
-                "Customer Account: Name 1": "SANTOSO, TOKO",
+                "Document Number": "1000112289",
+                "Posting Date": "24/04/2025",
+                "Profit Center": "S453902",
+                "Profit Center: Long Text": "PROFIT CENTER Pasuruan - NON-SEMEN",
+                "G/L Account": "1141000100",
+                "G/L Account: Long Text": "PIUTANG USAHA PIHAK III",
+                "Customer": "2135835",
+                "Customer Account: Name 1": "ASIA JAYA ABADI, UD",
+                "Billing Document": "8501207517",
+                "Document Date": "24/04/2025",
+                "Company Code Currency Value": 4925000,
             }
         ])
-        result = backfill_customer_codes_from_excel(
+
+        refreshed = import_sap_excel(
             db,
-            batch_id=batch.id,
-            filename="source.xlsx",
+            filename="EXPORT piutang.XLSX",
             content=content,
+            branch="KEDIRI",
         )
-        db.commit()
         db.refresh(row)
 
-        assert result["updated"] == 1
-        assert result["unresolved"] == 0
-        assert row.customer == "2119709"
-        assert row.nominal == Decimal("2350000.00")
+        assert refreshed.id == original_batch_id
+        assert row.customer == "2135835"
+        assert row.customer_account_name == "ASIA JAYA ABADI, UD"
+        assert row.nominal == original_nominal
+        assert db.query(ImportBatch).filter(ImportBatch.file_name == "EXPORT piutang.XLSX", ImportBatch.branch == "KEDIRI").count() == 1
     finally:
         if batch is not None:
             cleanup(db, batch.id)

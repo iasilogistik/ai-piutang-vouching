@@ -208,6 +208,63 @@ def _resolve_import_branch(
     return ensure_branch_catalog(db, resolved)
 
 
+def _refresh_same_sap_batch_from_source(
+    db: Session,
+    *,
+    filename: str,
+    branch: str,
+    period: date | None,
+    rows: list[dict[str, object]],
+) -> ImportBatch | None:
+    """Refresh source fields on an identical previously imported SAP population.
+
+    Re-uploading the same SAP file/branch should not create a duplicate batch just
+    to expose the Customer column. If the Billing Document population is exactly
+    the same, update Customer and Customer Account Name in place while preserving
+    dates, balances, reconciliation links and evidence.
+    """
+    query = (
+        db.query(ImportBatch)
+        .filter(
+            ImportBatch.file_name == filename,
+            ImportBatch.branch == branch,
+        )
+        .order_by(ImportBatch.id.desc())
+    )
+    if period is None:
+        query = query.filter(ImportBatch.period.is_(None))
+    else:
+        query = query.filter(ImportBatch.period == period)
+    batch = query.first()
+    if batch is None:
+        return None
+
+    existing = db.query(SAPBilling).filter(SAPBilling.import_batch_id == batch.id).all()
+    if len(existing) != len(rows):
+        return None
+
+    source_by_billing = {str(row["billing_document"]): row for row in rows}
+    existing_by_billing = {str(row.billing_document): row for row in existing}
+    if set(source_by_billing) != set(existing_by_billing):
+        return None
+
+    for billing_document, target in existing_by_billing.items():
+        source = source_by_billing[billing_document]
+        customer = _clean_identifier(source.get("customer"))
+        customer_name = _clean_text(source.get("customer_account_name"))
+        if customer:
+            target.customer = customer
+        if customer_name:
+            target.customer_account_name = customer_name
+
+    batch.total_records = len(existing)
+    batch.status = "IMPORTED"
+    db.commit()
+    db.refresh(batch)
+    return batch
+
+
+
 def import_sap_excel(
     db: Session,
     *,
@@ -239,6 +296,16 @@ def import_sap_excel(
         branch=branch,
     )
 
+    refreshed = _refresh_same_sap_batch_from_source(
+        db,
+        filename=filename,
+        branch=resolved_branch,
+        period=period,
+        rows=rows,
+    )
+    if refreshed is not None:
+        return refreshed
+
     batch = ImportBatch(
         file_name=filename,
         period=period,
@@ -256,78 +323,6 @@ def import_sap_excel(
     db.commit()
     db.refresh(batch)
     return batch
-
-
-def backfill_customer_codes_from_excel(
-    db: Session,
-    *,
-    batch_id: int,
-    filename: str,
-    content: bytes,
-) -> dict[str, object]:
-    """Backfill Customer code on an existing SAP batch without replacing reconciliation.
-
-    This is intentionally limited to the Customer field. Billing, date, nominal,
-    reconciliation and evidence links are left untouched.
-    """
-    if not filename.lower().endswith((".xlsx", ".xls")):
-        raise ValueError("SAP source file must be Excel (.xlsx or .xls)")
-
-    batch = db.get(ImportBatch, batch_id)
-    if batch is None:
-        raise ValueError("SAP import batch not found")
-
-    try:
-        dataframe = pd.read_excel(BytesIO(content), dtype=object)
-    except Exception as exc:
-        raise ValueError("Unable to read SAP Excel file") from exc
-    dataframe.columns = [str(column).strip() for column in dataframe.columns]
-
-    if all(column in dataframe.columns for column in SAP_LEDGER_COLUMNS):
-        source_rows = _import_sap_ledger(dataframe)
-    else:
-        source_rows = _import_standard(dataframe)
-
-    by_billing = {
-        str(row["billing_document"]): _clean_identifier(row.get("customer"))
-        for row in source_rows
-        if row.get("billing_document") and _clean_identifier(row.get("customer"))
-    }
-    by_name: dict[str, set[str]] = {}
-    for row in source_rows:
-        code = _clean_identifier(row.get("customer"))
-        name = _clean_text(row.get("customer_account_name"))
-        if code and name:
-            by_name.setdefault(name.casefold(), set()).add(code)
-
-    targets = db.query(SAPBilling).filter(SAPBilling.import_batch_id == batch_id).all()
-    updated = 0
-    unchanged = 0
-    unresolved = 0
-    for target in targets:
-        code = by_billing.get(str(target.billing_document))
-        if not code and target.customer_account_name:
-            candidates = by_name.get(target.customer_account_name.casefold()) or set()
-            if len(candidates) == 1:
-                code = next(iter(candidates))
-        if not code:
-            unresolved += 1
-            continue
-        if target.customer == code:
-            unchanged += 1
-            continue
-        target.customer = code
-        updated += 1
-
-    db.flush()
-    return {
-        "batch_id": batch_id,
-        "source_file": filename,
-        "updated": updated,
-        "unchanged": unchanged,
-        "unresolved": unresolved,
-        "total": len(targets),
-    }
 
 
 def import_sap_upload(
