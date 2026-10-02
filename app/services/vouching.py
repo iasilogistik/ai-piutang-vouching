@@ -501,6 +501,7 @@ def ocr_document(
     expected_customer: str | None = None,
     expected_billing_document: str | None = None,
     expected_nominal: Decimal | None = None,
+    force_vision: bool = False,
 ) -> dict[str, Any]:
     doc = db.get(Document, document_id)
     if not doc:
@@ -519,7 +520,8 @@ def ocr_document(
         # be unavailable. Use multimodal vision only as a fallback when the
         # classic OCR result is materially incomplete.
         critical_missing = (
-            not text
+            force_vision
+            or not text
             or (
                 doc.document_type == "BILLING"
                 and (
@@ -571,7 +573,12 @@ def ocr_document(
                     # Delivery Order/other SPJ-like number found earlier.
                     fields["no_spj_raw"] = vision["spj_number"]
                     fields["no_spj"] = _normalize_spj_number(vision["spj_number"])
-                if fields.get("doc_date") is None and vision.get("invoice_date") is not None:
+                if vision.get("invoice_date") is not None and (
+                    doc.document_type == "BILLING" or fields.get("doc_date") is None
+                ):
+                    # For Billing evidence, the invoice/faktur date is
+                    # authoritative. Do not keep a generic "Tanggal" that may
+                    # have come from the SPJ/delivery page in a combined PDF.
                     fields["doc_date"] = vision["invoice_date"]
                 if fields.get("nominal") is None and vision.get("grand_total") is not None:
                     fields["nominal"] = vision["grand_total"]
