@@ -56,7 +56,7 @@ from app.services.upload_center import register_upload_center_routes
 from app.services.reconciliation_vouching_ui import register_reconciliation_vouching_routes
 from app.services.upload_management import router as upload_management_router
 from app.services.user_management import register_user_management_routes
-from app.services.vouching import confirm_reconciliation_manual, ocr_document, overall_result, reconcile_batch, review_vouching_result, save_document, validate_sap_batch, vouch_spj
+from app.services.vouching import _normalize_spj_number, confirm_reconciliation_manual, ocr_document, overall_result, reconcile_batch, review_vouching_result, save_document, validate_sap_batch, vouch_spj
 
 app = FastAPI(title="AI Piutang Vouching")
 app.include_router(upload_management_router)
@@ -669,7 +669,8 @@ def reconciliation_visual_refresh_candidates(
                 ControlEvidenceDetection.extraction_engine.contains("LOCAL_TESSERACT_VISUAL_V11"),
             ).limit(1)
         )
-        if current_v11 is not None:
+        malformed_spj = bool(spj.no_spj and _normalize_spj_number(spj.no_spj) is None)
+        if current_v11 is not None and not malformed_spj:
             continue
 
         control = db.scalar(
