@@ -4,6 +4,7 @@ from datetime import datetime
 from pathlib import Path
 
 from openpyxl import Workbook
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib import colors
@@ -131,6 +132,247 @@ def build_report(db: Session, batch_id: int, fmt: str, *, branch: str | None = N
         doc.build(story)
     return path
 
+
+
+def _working_paper_spj(db: Session, physical: PhysicalBilling | None, vouch: VouchingResult | None) -> SPJ | None:
+    if vouch is not None and vouch.spj_id is not None:
+        return db.get(SPJ, vouch.spj_id)
+    if not physical or not physical.no_spj:
+        return None
+    physical_branch = normalize_branch(physical.document.branch)
+    query = select(SPJ).join(SPJ.document).where(SPJ.no_spj == physical.no_spj)
+    query = query.where(
+        Document.branch == physical_branch
+        if physical_branch is not None
+        else Document.branch.is_(None)
+    )
+    matches = list(db.scalars(query).all())
+    return matches[0] if len(matches) == 1 else None
+
+
+def _working_paper_note(
+    physical: PhysicalBilling | None,
+    spj: SPJ | None,
+    rec: BillingReconciliation | None,
+) -> str:
+    if physical is None:
+        return ""
+
+    notes: list[str] = []
+    if physical.partial_payment is not None:
+        if physical.partial_payment_raw:
+            notes.append(str(physical.partial_payment_raw))
+        else:
+            notes.append(f"Partial Billing {float(physical.partial_payment):,.2f}")
+    if spj is not None and spj.partial_payment is not None:
+        if spj.partial_payment_raw:
+            notes.append(str(spj.partial_payment_raw))
+        else:
+            notes.append(f"Partial SPJ {float(spj.partial_payment):,.2f}")
+    if rec is not None and rec.status not in {"MATCH", None}:
+        notes.append(rec.status)
+    return " | ".join(note for note in notes if note)
+
+
+def build_working_paper_report(
+    db: Session,
+    batch_id: int,
+    *,
+    branch: str | None = None,
+) -> Path:
+    """Build an audit working-paper workbook without changing the existing report.
+
+    SAP is the population/base table. Rows are sorted alphabetically by customer
+    name. If physical evidence is unavailable, the physical-document, difference,
+    day and remarks cells remain blank.
+    """
+
+    batch, rows = _rows(db, batch_id, branch=branch)
+    REPORT_ROOT.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    path = REPORT_ROOT / f"kertas_kerja_batch_{batch_id}_{stamp}.xlsx"
+
+    sorted_rows = sorted(
+        rows,
+        key=lambda item: (
+            (item[0].customer_account_name or item[0].customer or "").casefold(),
+            (item[0].customer or "").casefold(),
+            item[0].doc_date,
+            item[0].billing_document or "",
+            item[0].id,
+        ),
+    )
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Kertas Kerja"
+
+    # Two-level header matching the auditor working-paper layout.
+    ws.merge_cells("A1:A2")
+    ws.merge_cells("B1:B2")
+    ws.merge_cells("C1:E1")
+    ws.merge_cells("F1:H1")
+    ws.merge_cells("I1:I2")
+    ws.merge_cells("J1:J2")
+    ws.merge_cells("K1:K2")
+
+    ws["A1"] = "Customer"
+    ws["B1"] = "Customer Account: Name"
+    ws["C1"] = "Program SAP"
+    ws["F1"] = "Fisik Dokumen"
+    ws["I1"] = "Selisih"
+    ws["J1"] = "Hari"
+    ws["K1"] = "Keterangan"
+
+    ws["C2"] = "Billing Document"
+    ws["D2"] = "Doc. Date"
+    ws["E2"] = "Nominal"
+    ws["F2"] = "Billing Document"
+    ws["G2"] = "Doc. Date"
+    ws["H2"] = "Nominal"
+
+    header_fill = PatternFill("solid", fgColor="E7E6E6")
+    total_fill = PatternFill("solid", fgColor="D9D9D9")
+    thin = Side(style="thin", color="7F7F7F")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    header_font = Font(name="Arial", size=10, bold=True)
+    body_font = Font(name="Arial", size=10)
+    total_font = Font(name="Arial", size=10, bold=True)
+
+    for row in ws.iter_rows(min_row=1, max_row=2, min_col=1, max_col=11):
+        for cell in row:
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.border = border
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    ws.row_dimensions[1].height = 24
+    ws.row_dimensions[2].height = 22
+    ws.freeze_panes = "A3"
+    ws.sheet_view.showGridLines = False
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+
+    widths = {
+        "A": 15,
+        "B": 31,
+        "C": 22,
+        "D": 14,
+        "E": 16,
+        "F": 22,
+        "G": 14,
+        "H": 16,
+        "I": 16,
+        "J": 10,
+        "K": 42,
+    }
+    for column, width in widths.items():
+        ws.column_dimensions[column].width = width
+
+    current_group: tuple[str, str] | None = None
+    group_start_row: int | None = None
+    group_sap_total = 0.0
+    group_physical_total = 0.0
+    group_has_physical = False
+
+    def append_group_total(end_row: int) -> None:
+        nonlocal group_start_row, group_sap_total, group_physical_total, group_has_physical
+        if current_group is None or group_start_row is None or end_row < group_start_row:
+            return
+        total_row = ws.max_row + 1
+        customer_name = current_group[1]
+        ws.cell(total_row, 2, f"{customer_name} Total")
+        ws.cell(total_row, 5, group_sap_total)
+        if group_has_physical:
+            ws.cell(total_row, 8, group_physical_total)
+            ws.cell(total_row, 9, group_sap_total - group_physical_total)
+        for col in range(1, 12):
+            cell = ws.cell(total_row, col)
+            cell.fill = total_fill
+            cell.font = total_font
+            cell.border = border
+            cell.alignment = Alignment(vertical="center", wrap_text=True)
+        for col in (5, 8, 9):
+            ws.cell(total_row, col).number_format = "#,##0"
+        group_start_row = None
+        group_sap_total = 0.0
+        group_physical_total = 0.0
+        group_has_physical = False
+
+    for sap, rec, physical, vouch in sorted_rows:
+        customer_code = sap.customer or ""
+        customer_name = sap.customer_account_name or sap.customer or ""
+        group = (customer_code, customer_name)
+
+        if current_group is not None and group != current_group:
+            append_group_total(ws.max_row)
+        if group != current_group:
+            current_group = group
+            group_start_row = ws.max_row + 1
+
+        spj = _working_paper_spj(db, physical, vouch)
+        billing_partial = (
+            physical.partial_payment
+            if physical is not None and physical.partial_payment is not None
+            else 0
+        )
+        spj_partial = spj.partial_payment if spj is not None and spj.partial_payment is not None else 0
+        net_physical = (
+            _net_document_amount(physical.nominal, billing_partial, spj_partial)
+            if physical is not None
+            else None
+        )
+
+        row_number = ws.max_row + 1
+        values = [
+            customer_code,
+            customer_name,
+            sap.billing_document,
+            sap.doc_date,
+            float(sap.nominal),
+            physical.billing_document if physical is not None else "",
+            physical.doc_date if physical is not None and physical.doc_date else "",
+            float(net_physical) if net_physical is not None else "",
+            (
+                float(sap.nominal - net_physical)
+                if net_physical is not None
+                else ""
+            ),
+            (
+                abs((physical.doc_date - sap.doc_date).days)
+                if physical is not None and physical.doc_date and sap.doc_date
+                else ""
+            ),
+            _working_paper_note(physical, spj, rec),
+        ]
+        ws.append(values)
+
+        group_sap_total += float(sap.nominal)
+        if net_physical is not None:
+            group_physical_total += float(net_physical)
+            group_has_physical = True
+
+        for col in range(1, 12):
+            cell = ws.cell(row_number, col)
+            cell.font = body_font
+            cell.border = border
+            cell.alignment = Alignment(vertical="center", wrap_text=(col in {2, 11}))
+        ws.cell(row_number, 4).number_format = "dd/mm/yyyy"
+        ws.cell(row_number, 7).number_format = "dd/mm/yyyy"
+        for col in (5, 8, 9):
+            ws.cell(row_number, col).number_format = "#,##0"
+        if ws.cell(row_number, 9).value == 0:
+            ws.cell(row_number, 9).value = "-"
+
+    if sorted_rows:
+        append_group_total(ws.max_row)
+
+    # Do not add an auto-filter across merged top headers; preserve the classic
+    # audit working-paper layout instead.
+    wb.save(path)
+    return path
 
 def build_control_evidence_report(
     db: Session, *, review_only: bool = False, limit: int = 500, branch: str | None = None
