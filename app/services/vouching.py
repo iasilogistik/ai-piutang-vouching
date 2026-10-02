@@ -501,6 +501,7 @@ def ocr_document(
     expected_customer: str | None = None,
     expected_billing_document: str | None = None,
     expected_nominal: Decimal | None = None,
+    expected_doc_date: date | None = None,
     force_vision: bool = False,
 ) -> dict[str, Any]:
     doc = db.get(Document, document_id)
@@ -539,6 +540,7 @@ def ocr_document(
                 expected_customer=expected_customer,
                 expected_billing_document=expected_billing_document,
                 expected_nominal=expected_nominal,
+                expected_doc_date=expected_doc_date,
             )
             if vision:
                 vision_engine = str(vision.get("engine") or "AI_VISION")
