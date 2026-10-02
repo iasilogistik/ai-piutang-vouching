@@ -226,6 +226,39 @@ def _extract_partial_payments(text: str) -> tuple[Decimal | None, str | None]:
     return sum(amounts, Decimal("0.00")).quantize(Decimal("0.01")), "; ".join(raw_matches)
 
 
+def _normalize_ocr_amount_scale(
+    amount: Decimal | int | float | None,
+    expected_nominal: Decimal | int | float | None,
+    partial_payment: Decimal | int | float | None = None,
+) -> Decimal | None:
+    """Repair obvious OCR magnitude loss without inventing a new amount.
+
+    Example: OCR may return 2.35 for an invoice whose SAP outstanding is
+    2,350,000. Rescale only when x1,000/x1,000,000 lands within 5% of
+    SAP outstanding plus an explicit partial payment.
+    """
+    if amount is None:
+        return None
+    value = Decimal(str(amount))
+    if expected_nominal is None or value <= 0:
+        return value.quantize(Decimal("0.01"))
+
+    expected = Decimal(str(expected_nominal))
+    partial = Decimal(str(partial_payment or 0))
+    target_gross = expected + partial
+    if target_gross <= 0:
+        return value.quantize(Decimal("0.01"))
+
+    if value >= (target_gross / Decimal("100")):
+        return value.quantize(Decimal("0.01"))
+
+    candidates = [value * Decimal("1000"), value * Decimal("1000000")]
+    best = min(candidates, key=lambda candidate: abs(candidate - target_gross))
+    if abs(best - target_gross) / target_gross <= Decimal("0.05"):
+        return best.quantize(Decimal("0.01"))
+    return value.quantize(Decimal("0.01"))
+
+
 def _net_document_amount(nominal: Decimal | int | float | None, billing_partial: Decimal | int | float | None = None,
                          spj_partial: Decimal | int | float | None = None) -> Decimal | None:
     if nominal is None:
@@ -550,6 +583,13 @@ def ocr_document(
         if temporary_path:
             Path(temporary_path).unlink(missing_ok=True)
 
+    if fields.get("nominal") is not None:
+        fields["nominal"] = _normalize_ocr_amount_scale(
+            fields.get("nominal"),
+            expected_nominal,
+            fields.get("partial_payment"),
+        )
+
     filename_fallback = None
     if doc.document_type == "BILLING" and not fields.get("billing_document"):
         filename_fallback = _billing_document_from_filename(doc.file_name)
@@ -629,7 +669,11 @@ def ocr_document(
                 if vision.get("invoice_date") is not None:
                     paired.doc_date = vision["invoice_date"]
                 if vision.get("grand_total") is not None:
-                    paired.nominal = vision["grand_total"]
+                    paired.nominal = _normalize_ocr_amount_scale(
+                        vision["grand_total"],
+                        expected_nominal,
+                        paired.partial_payment,
+                    )
 
                 # Prefer structured partial-payment rows from visual V5. If the
                 # visual service could not structure them but OCR text did, use
@@ -647,6 +691,12 @@ def ocr_document(
                     paired.partial_payment_raw = paired_partial_raw
                     row.partial_payment = None
                     row.partial_payment_raw = None
+                if paired.nominal is not None:
+                    paired.nominal = _normalize_ocr_amount_scale(
+                        paired.nominal,
+                        expected_nominal,
+                        paired.partial_payment,
+                    )
                 paired.ocr_confidence = confidence
 
     db.commit()
