@@ -94,3 +94,12 @@ def test_reconciliation_ui_does_not_show_separate_customer_backfill_action():
 
     assert "Isi Kode Customer" not in html
     assert "/sap/backfill-customer/" not in html
+
+
+
+def test_working_paper_download_refreshes_physical_billing_date_first():
+    html = reconciliation_vouching_html()
+
+    assert "Baca tanggal fisik..." in html
+    assert "await refreshVisualEvidenceForBatch(id)" in html
+    assert "Doc. Date Fisik berasal dari tanggal faktur Billing" in html
