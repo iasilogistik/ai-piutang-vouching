@@ -49,7 +49,7 @@ from app.services.login_ui import login_html
 from app.services.navigation import register_navigation_routes
 from app.services.notifications import register_notification_routes
 from app.services.release_readiness import register_release_readiness_routes
-from app.services.sap_import import backfill_customer_codes_from_excel, import_sap_upload
+from app.services.sap_import import import_sap_upload
 from app.services.storage import download_bytes
 from app.services.uat_pasuruan_ui import uat_pasuruan_html
 from app.services.upload_center import register_upload_center_routes
@@ -370,39 +370,6 @@ def sap_import(file: UploadFile = File(...), period: date | None = None, branch:
         db.rollback(); raise handle_error(exc) from exc
     return {"batch_id": batch.id, "file_name": batch.file_name, "period": batch.period.isoformat() if batch.period else None,
             "total_records": batch.total_records, "status": batch.status, "branch": batch.branch}
-
-
-@app.post("/sap/backfill-customer/{batch_id}")
-def sap_backfill_customer(
-    batch_id: int,
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-    user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR")),
-):
-    batch = _batch_for_user(db, batch_id, user)
-    content = file.file.read()
-    try:
-        payload = backfill_customer_codes_from_excel(
-            db,
-            batch_id=batch_id,
-            filename=file.filename or "sap_source.xlsx",
-            content=content,
-        )
-        record_audit(
-            db,
-            entity_type="IMPORT_BATCH",
-            entity_id=batch_id,
-            action="SAP_CUSTOMER_CODE_BACKFILL",
-            actor=user.user_id,
-            status_to="UPDATED",
-            metadata=payload,
-            branch=batch.branch,
-        )
-        db.commit()
-        return payload
-    except ValueError as exc:
-        db.rollback()
-        raise handle_error(exc) from exc
 
 
 @app.get("/sap/validate/{batch_id}")
