@@ -74,3 +74,13 @@ def test_reconciliation_ui_offers_separate_working_paper_download():
     assert "Download Kertas Kerja" in html
     assert "/working-paper" in html
     assert "downloadWorkingPaper" in html
+
+
+
+def test_reconciliation_ui_formats_money_in_indonesian_notation():
+    html = reconciliation_vouching_html()
+
+    assert "function formatMoneyId(value)" in html
+    assert "new Intl.NumberFormat('id-ID'" in html
+    assert "formatMoneyId(r.billing_partial_payment)" in html
+    assert "formatMoneyId(r.nominal_difference)" in html
