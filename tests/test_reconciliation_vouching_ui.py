@@ -65,3 +65,12 @@ def test_reconciliation_ui_distinguishes_ocr_info_from_actual_review():
 
     assert "SPJ tersedia · OCR info" in html
     assert "bukan REVIEW" in html
+
+
+
+def test_reconciliation_ui_offers_separate_working_paper_download():
+    html = reconciliation_vouching_html()
+
+    assert "Download Kertas Kerja" in html
+    assert "/working-paper" in html
+    assert "downloadWorkingPaper" in html

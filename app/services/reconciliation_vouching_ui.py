@@ -299,11 +299,48 @@ function render(){
         '<button class="secondary" data-validate="'+item.id+'" type="button">Validate SAP</button>'+
         '<button data-run="'+item.id+'" type="button">Run Reconciliation</button>'+
         '<button class="secondary" data-detail="'+item.id+'" type="button">Detail</button>'+
+        '<button class="secondary" data-working-paper="'+item.id+'" type="button">Download Kertas Kerja</button>'+
       '</div></td></tr>';
   }).join('');
   rowsEl.querySelectorAll('[data-validate]').forEach(btn=>btn.addEventListener('click',()=>validateSap(Number(btn.dataset.validate),btn)));
   rowsEl.querySelectorAll('[data-run]').forEach(btn=>btn.addEventListener('click',()=>runReconciliation(Number(btn.dataset.run),btn)));
   rowsEl.querySelectorAll('[data-detail]').forEach(btn=>btn.addEventListener('click',()=>showDetail(Number(btn.dataset.detail))));
+  rowsEl.querySelectorAll('[data-working-paper]').forEach(btn=>btn.addEventListener('click',()=>downloadWorkingPaper(Number(btn.dataset.workingPaper),btn)));
+}
+async function downloadWorkingPaper(id,button){
+  button.disabled=true;
+  const originalText=button.textContent;
+  try{
+    button.textContent='Menyiapkan...';
+    log('Menyiapkan Kertas Kerja Batch #'+id+' ...');
+    const response=await fetch('/reports/'+id+'/working-paper',{headers:headers()});
+    if(!response.ok){
+      let message='HTTP '+response.status;
+      try{
+        const payload=await response.json();
+        message=payload.detail||message;
+      }catch(_error){}
+      throw new Error(message);
+    }
+    const blob=await response.blob();
+    const disposition=response.headers.get('content-disposition')||'';
+    const match=/filename="?([^";]+)"?/i.exec(disposition);
+    const filename=match&&match[1]?match[1]:'kertas_kerja_batch_'+id+'.xlsx';
+    const url=URL.createObjectURL(blob);
+    const link=document.createElement('a');
+    link.href=url;
+    link.download=filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    log('KERTAS KERJA BATCH #'+id+' BERHASIL DIDOWNLOAD.');
+  }catch(error){
+    log('DOWNLOAD KERTAS KERJA GAGAL: '+error.message);
+  }finally{
+    button.disabled=false;
+    button.textContent=originalText;
+  }
 }
 async function validateSap(id,button){
   button.disabled=true;
