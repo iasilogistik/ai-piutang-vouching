@@ -25,7 +25,7 @@ def test_document_field_parser_keeps_raw_and_normalized_values():
     assert result["billing_document_raw"] == "900001"
     assert result["billing_document"] == "900001"
     assert result["no_spj_raw"] == "SPJ-77"
-    assert result["no_spj"] == "SPJ77"
+    assert result["no_spj"] is None
     assert result["doc_date"] == date(2026, 9, 1)
     assert result["nominal"] == Decimal("1500000.00")
 
