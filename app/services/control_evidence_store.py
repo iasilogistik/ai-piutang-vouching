@@ -258,23 +258,29 @@ def _vision_evidence(vision: dict[str, Any], *, expected_customer: str | None) -
     raw_stamp_status = str(stamp_value.get("status") or "UNCLEAR").upper()
     stamp_status = "UNKNOWN" if raw_stamp_status == "UNCLEAR" else raw_stamp_status
     stamp_text = stamp_value.get("text")
+    stamp_match = compare_stamp_to_customer(stamp_text, expected_customer)
+    if stamp_status == "PRESENT" and not stamp_text:
+        # User policy: for vouching we test presence of a receiver stamp, not
+        # authenticity. If the cap is visibly present but its letters are too
+        # faint for OCR, do not force a reviewer solely for unreadable stamp text.
+        stamp_match = {
+            "status": "NOT_EVALUATED",
+            "confidence": stamp_value.get("confidence") or 0.0,
+            "remarks": "Stempel terlihat secara visual; tulisan stempel tidak dipakai sebagai syarat PASS.",
+        }
     result["receiver_stamp"] = {
         "status": stamp_status if stamp_status in {"PRESENT", "MISSING", "UNKNOWN"} else "UNKNOWN",
         "confidence": stamp_value.get("confidence") or 0.0,
         "stamp_text_raw": stamp_text,
         "stamp_text_normalized": stamp_text.upper().strip() if isinstance(stamp_text, str) and stamp_text.strip() else None,
-        "customer_match": compare_stamp_to_customer(stamp_text, expected_customer),
+        "customer_match": stamp_match,
         "remarks": (
             None
-            if stamp_status == "PRESENT" and stamp_text
+            if stamp_status == "PRESENT"
             else (
-                "Stempel terlihat, tetapi tulisan stempel belum terbaca jelas."
-                if stamp_status == "PRESENT"
-                else (
-                    "AI vision mengindikasikan stempel tidak ada."
-                    if stamp_status == "MISSING"
-                    else "AI vision belum dapat memastikan keberadaan stempel."
-                )
+                "AI vision mengindikasikan stempel tidak ada."
+                if stamp_status == "MISSING"
+                else "AI vision belum dapat memastikan keberadaan stempel."
             )
         ),
         "page_number": stamp_value.get("page_number"),

@@ -3,11 +3,12 @@ from decimal import Decimal
 
 from app.services.vouching import (
     _billing_document_from_filename,
+    _normalize_spj_number,
+    parse_document_fields,
     _extract_partial_payments,
     _norm_key,
     _parse_amount,
     _parse_date,
-    parse_document_fields,
 )
 
 
@@ -44,3 +45,27 @@ def test_partial_payment_parser_supports_common_scan_labels():
     assert amount == Decimal("1500000.00")
     assert "Payment Received" in raw
     assert "DP" in raw
+
+
+
+def test_official_spj_reference_preserves_raw_and_matches_final_number():
+    fields = parse_document_fields(
+        "PT SEMEN INDONESIA DISTRIBUTOR\n"
+        "SURAT PERINTAH JALAN\n"
+        "SPJ/S41C/202608/2501787882\n"
+        "Tanggal Pengiriman: 24-09-2026"
+    )
+
+    assert fields["no_spj_raw"] == "SPJ/S41C/202608/2501787882"
+    assert fields["no_spj"] == "2501787882"
+    assert _normalize_spj_number("SPJ/S41C/202608/2501787882") == "2501787882"
+
+
+def test_partial_payment_parser_supports_paid_and_previous_payment_labels():
+    amount, raw = _extract_partial_payments(
+        "Amount Paid: Rp 1.000.000\nPembayaran Sebelumnya: Rp 500.000"
+    )
+
+    assert amount == Decimal("1500000.00")
+    assert "Amount Paid" in raw
+    assert "Pembayaran Sebelumnya" in raw

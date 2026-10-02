@@ -52,6 +52,26 @@ def _norm_key(value: str | None) -> str | None:
     return re.sub(r"[^A-Za-z0-9]", "", value).upper()
 
 
+def _normalize_spj_number(value: str | None) -> str | None:
+    """Normalize official SPJ references to the transaction number.
+
+    Official SID SPJ format is typically SPJ/S41C/YYYYMM/##########.
+    We preserve the full raw value separately but use the final numeric token
+    for matching so other documents that print only ########## still reconcile.
+    """
+    raw = _norm(value)
+    if not raw:
+        return None
+    parts = [re.sub(r"[^A-Za-z0-9]", "", part).upper() for part in re.split(r"[/\\]", raw)]
+    for part in reversed(parts):
+        if re.fullmatch(r"\d{8,12}", part):
+            return part
+    match = re.search(r"(?<!\d)(\d{8,12})(?!\d)", raw)
+    if match:
+        return match.group(1)
+    return _norm_key(raw)
+
+
 def _billing_document_from_filename(file_name: str | None) -> str | None:
     """Return one unambiguous standalone 10-digit Billing token from filename."""
     if not file_name:
@@ -184,7 +204,7 @@ def _parse_date(value: str | None) -> date | None:
 def _extract_partial_payments(text: str) -> tuple[Decimal | None, str | None]:
     patterns = [
         r"(?:Pembayaran\s+(?:Partial|Parsial)|(?:Partial|Parsial)\s+Payment|Bayar\s+(?:Partial|Parsial)|Partial)\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9][0-9.,:\s-]*)",
-        r"(?:Payment\s+Received|Pembayaran\s+Diterima|Telah\s+Dibayar|Sudah\s+Dibayar)\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9][0-9.,:\s-]*)",
+        r"(?:Payment\s+Received|Amount\s+Paid|Paid\s+Amount|Jumlah\s+Dibayar|Pembayaran\s+(?:Diterima|Sebelumnya|Terdahulu)|Telah\s+Dibayar|Sudah\s+Dibayar)\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9][0-9.,:\s-]*)",
         r"(?:DP|Down\s+Payment|Uang\s+Muka)\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9][0-9.,:\s-]*)",
     ]
     amounts: list[Decimal] = []
@@ -402,17 +422,14 @@ def parse_document_fields(text: str) -> dict[str, Any]:
         r"Nomor\s+Faktur\s*[:#-]?\s*([0-9]+)",
     ])
 
-    no_spj = grab([
+    no_spj_raw = grab([
+        r"\b(SPJ\s*/\s*[A-Z0-9]+\s*/\s*\d{6}\s*/\s*\d{8,12})\b",
         r"No\.?\s*SPJ\s*[:#-]?\s*([A-Z0-9./-]+)",
         r"Nomor\s+SPJ\s*[:#-]?\s*([A-Z0-9./-]+)",
     ])
-    if no_spj and no_spj.upper().startswith("SPJ/"):
-        no_spj = no_spj.rstrip(".").split("/")[-1]
-
-    if not no_spj:
-        spj_header = grab([r"\b(SPJ/[A-Z0-9./-]+)"])
-        if spj_header:
-            no_spj = spj_header.rstrip(".").split("/")[-1]
+    if not no_spj_raw:
+        no_spj_raw = grab([r"\b(SPJ/[A-Z0-9./-]+)"])
+    no_spj = _normalize_spj_number(no_spj_raw)
 
     date_raw = grab([
         r"(?:Doc\.?\s*Date|Tanggal\s+Faktur)\s*[:#-]?\s*([0-9A-Za-z./-]+(?:\s+[A-Za-z]+\s+\d{4})?)",
@@ -429,8 +446,8 @@ def parse_document_fields(text: str) -> dict[str, Any]:
     return {
         "billing_document_raw": billing,
         "billing_document": _norm_key(billing),
-        "no_spj_raw": no_spj,
-        "no_spj": _norm_key(no_spj),
+        "no_spj_raw": no_spj_raw,
+        "no_spj": no_spj,
         "doc_date": _parse_date(date_raw),
         "nominal": _parse_amount(nominal_raw),
         "partial_payment_raw": partial_payment_raw,
@@ -509,9 +526,12 @@ def ocr_document(
                 if not fields.get("billing_document") and vision.get("billing_document"):
                     fields["billing_document_raw"] = vision["billing_document"]
                     fields["billing_document"] = _norm_key(vision["billing_document"])
-                if not fields.get("no_spj") and vision.get("spj_number"):
+                if vision.get("spj_number"):
+                    # The visual service explicitly selects the official SID
+                    # SURAT PERINTAH JALAN page. It is authoritative over any
+                    # Delivery Order/other SPJ-like number found earlier.
                     fields["no_spj_raw"] = vision["spj_number"]
-                    fields["no_spj"] = _norm_key(vision["spj_number"])
+                    fields["no_spj"] = _normalize_spj_number(vision["spj_number"])
                 if fields.get("doc_date") is None and vision.get("invoice_date") is not None:
                     fields["doc_date"] = vision["invoice_date"]
                 if fields.get("nominal") is None and vision.get("grand_total") is not None:
@@ -597,7 +617,7 @@ def ocr_document(
                     paired.billing_document = _norm_key(vision["billing_document"])
                 if vision.get("spj_number"):
                     paired.no_spj_raw = vision["spj_number"]
-                    paired.no_spj = _norm_key(vision["spj_number"])
+                    paired.no_spj = _normalize_spj_number(vision["spj_number"])
                 if vision.get("invoice_date") is not None:
                     paired.doc_date = vision["invoice_date"]
                 if vision.get("grand_total") is not None:
@@ -951,7 +971,7 @@ def vouch_spj(db: Session, *, branch: str | None = None) -> list[VouchingResult]
         if len(paired_spj) == 1:
             _refresh_visual_pair(db, billing, paired_spj[0])
 
-        no_spj = _norm_key(billing.no_spj)
+        no_spj = _normalize_spj_number(billing.no_spj)
         if not no_spj:
             paired_spj = _paired_spj_candidates(db, billing)
             if len(paired_spj) == 1:
@@ -1032,7 +1052,7 @@ def vouch_spj(db: Session, *, branch: str | None = None) -> list[VouchingResult]
                 if len(paired_spj) == 1:
                     spj = paired_spj[0]
                     _refresh_visual_pair(db, billing, spj)
-                    if _norm_key(spj.no_spj) == no_spj:
+                    if _normalize_spj_number(spj.no_spj) == no_spj:
                         matches = [spj]
 
             if not matches:
@@ -1180,7 +1200,7 @@ def confirm_reconciliation_manual(
             select(SPJ)
             .join(SPJ.document)
             .where(
-                SPJ.no_spj == _norm_key(billing.no_spj),
+                SPJ.no_spj == _normalize_spj_number(billing.no_spj),
                 Document.archived_at.is_(None),
             )
         )
