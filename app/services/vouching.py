@@ -183,6 +183,12 @@ _INDONESIAN_MONTHS = {
     "mei": 5, "juni": 6, "juli": 7, "agustus": 8,
     "september": 9, "oktober": 10, "november": 11, "desember": 12,
 }
+_ENGLISH_MONTHS = {
+    "january": 1, "jan": 1, "february": 2, "feb": 2, "march": 3, "mar": 3,
+    "april": 4, "apr": 4, "may": 5, "june": 6, "jun": 6, "july": 7, "jul": 7,
+    "august": 8, "aug": 8, "september": 9, "sep": 9, "sept": 9,
+    "october": 10, "oct": 10, "november": 11, "nov": 11, "december": 12, "dec": 12,
+}
 
 
 def _parse_date(value: str | None) -> date | None:
@@ -198,10 +204,18 @@ def _parse_date(value: str | None) -> date | None:
             continue
     match = re.fullmatch(r"(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})", raw, re.IGNORECASE)
     if match:
-        month = _INDONESIAN_MONTHS.get(match.group(2).lower())
+        month = _INDONESIAN_MONTHS.get(match.group(2).lower()) or _ENGLISH_MONTHS.get(match.group(2).lower())
         if month:
             try:
                 return date(int(match.group(3)), month, int(match.group(1)))
+            except ValueError:
+                return None
+    match = re.fullmatch(r"([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})", raw, re.IGNORECASE)
+    if match:
+        month = _ENGLISH_MONTHS.get(match.group(1).lower()) or _INDONESIAN_MONTHS.get(match.group(1).lower())
+        if month:
+            try:
+                return date(int(match.group(3)), month, int(match.group(2)))
             except ValueError:
                 return None
     return None
@@ -471,8 +485,8 @@ def parse_document_fields(text: str) -> dict[str, Any]:
     no_spj = _normalize_spj_number(no_spj_raw)
 
     date_raw = grab([
-        r"(?:Doc\.?\s*Date|Tanggal\s+Faktur)\s*[:#-]?\s*([0-9A-Za-z./-]+(?:\s+[A-Za-z]+\s+\d{4})?)",
-        r"(?:Tanggal)\s*[:#-]?\s*([0-9A-Za-z./-]+(?:\s+[A-Za-z]+\s+\d{4})?)",
+        r"(?:Invoice\s+Date|Billing\s+Date|Document\s+Date|Doc\.?\s*Date|Faktur\s+Date|Tanggal\s+Faktur|Tanggal\s+Invoice|Tanggal\s+Billing)\s*[:#-]?\s*([0-9A-Za-z.,/ -]{6,24})",
+        r"(?:Tanggal)\s*[:#-]?\s*([0-9A-Za-z.,/ -]{6,24})",
     ])
 
     nominal_raw = grab([
