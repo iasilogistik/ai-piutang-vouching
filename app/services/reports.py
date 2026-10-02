@@ -135,20 +135,64 @@ def build_report(db: Session, batch_id: int, fmt: str, *, branch: str | None = N
 
 
 
-def _working_paper_spj(db: Session, physical: PhysicalBilling | None, vouch: VouchingResult | None) -> SPJ | None:
-    if vouch is not None and vouch.spj_id is not None:
-        return db.get(SPJ, vouch.spj_id)
-    if not physical or not physical.no_spj:
-        return None
-    physical_branch = normalize_branch(physical.document.branch)
-    query = select(SPJ).join(SPJ.document).where(SPJ.no_spj == physical.no_spj)
-    query = query.where(
-        Document.branch == physical_branch
-        if physical_branch is not None
-        else Document.branch.is_(None)
-    )
-    matches = list(db.scalars(query).all())
-    return matches[0] if len(matches) == 1 else None
+def _working_paper_spj_maps(
+    db: Session,
+    rows: list[tuple[SAPBilling, BillingReconciliation | None, PhysicalBilling | None, VouchingResult | None]],
+    *,
+    branch: str | None,
+) -> tuple[dict[int, SPJ], dict[str, SPJ]]:
+    """Preload SPJ once for the whole working paper.
+
+    The old implementation queried SPJ row-by-row (N+1 queries), which made a
+    100+ row download noticeably slow on serverless/Postgres. This builds two
+    in-memory maps with at most two database queries.
+    """
+    spj_ids = {
+        int(vouch.spj_id)
+        for _, _, _, vouch in rows
+        if vouch is not None and vouch.spj_id is not None
+    }
+    by_id: dict[int, SPJ] = {}
+    if spj_ids:
+        by_id = {
+            row.id: row
+            for row in db.scalars(select(SPJ).where(SPJ.id.in_(spj_ids))).all()
+        }
+
+    no_spj_values = {
+        str(physical.no_spj)
+        for _, _, physical, vouch in rows
+        if physical is not None
+        and physical.no_spj
+        and not (vouch is not None and vouch.spj_id is not None)
+    }
+    by_no_spj: dict[str, SPJ] = {}
+    if no_spj_values:
+        branch_key = normalize_branch(branch)
+        query = (
+            select(SPJ)
+            .join(SPJ.document)
+            .where(
+                SPJ.no_spj.in_(no_spj_values),
+                Document.archived_at.is_(None),
+            )
+        )
+        query = query.where(
+            Document.branch == branch_key
+            if branch_key is not None
+            else Document.branch.is_(None)
+        )
+        grouped: dict[str, list[SPJ]] = {}
+        for row in db.scalars(query).all():
+            if row.no_spj:
+                grouped.setdefault(str(row.no_spj), []).append(row)
+        by_no_spj = {
+            key: matches[0]
+            for key, matches in grouped.items()
+            if len(matches) == 1
+        }
+
+    return by_id, by_no_spj
 
 
 def _working_paper_note(
@@ -248,6 +292,12 @@ def build_working_paper_report(
         ),
     )
 
+    spj_by_id, spj_by_no_spj = _working_paper_spj_maps(
+        db,
+        sorted_rows,
+        branch=batch.branch,
+    )
+
     wb = Workbook()
     ws = wb.active
     ws.title = "Kertas Kerja"
@@ -318,7 +368,15 @@ def build_working_paper_report(
     for sap, rec, physical, vouch in sorted_rows:
         customer_code = sap.customer or ""
         customer_name = sap.customer_account_name or sap.customer or ""
-        spj = _working_paper_spj(db, physical, vouch)
+        spj = (
+            spj_by_id.get(int(vouch.spj_id))
+            if vouch is not None and vouch.spj_id is not None
+            else (
+                spj_by_no_spj.get(str(physical.no_spj))
+                if physical is not None and physical.no_spj
+                else None
+            )
+        )
         net_physical = _working_paper_net_physical(sap.nominal, physical, spj)
 
         row_number = ws.max_row + 1
