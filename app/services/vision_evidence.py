@@ -147,6 +147,7 @@ def analyze_document_vision(
     expected_customer: str | None = None,
     expected_billing_document: str | None = None,
     expected_nominal: Decimal | None = None,
+    expected_doc_date: date | None = None,
 ) -> dict[str, Any] | None:
     internal_url = _internal_vision_url()
     token = _gateway_token()
@@ -165,6 +166,7 @@ Nama file: {file_name or Path(path).name}
 Customer SAP yang diharapkan: {expected_customer or "-"}
 Billing Document SAP yang diharapkan: {expected_billing_document or "-"}
 Nominal SAP/net outstanding yang diharapkan: {expected_nominal if expected_nominal is not None else "-"}
+Tanggal SAP (hanya untuk disambiguasi kandidat tanggal yang benar-benar tercetak): {expected_doc_date.isoformat() if expected_doc_date is not None else "-"}
 
 Baca SELURUH halaman yang diberikan. Return ONLY valid JSON tanpa markdown dengan struktur:
 {{
@@ -223,6 +225,9 @@ Aturan:
                             "expected_billing_document": expected_billing_document,
                             "expected_nominal": (
                                 str(expected_nominal) if expected_nominal is not None else None
+                            ),
+                            "expected_doc_date": (
+                                expected_doc_date.isoformat() if expected_doc_date is not None else None
                             ),
                         },
                     )
