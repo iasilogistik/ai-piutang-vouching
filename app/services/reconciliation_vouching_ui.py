@@ -305,13 +305,50 @@ function render(){
         '<button class="secondary" data-validate="'+item.id+'" type="button">Validate SAP</button>'+
         '<button data-run="'+item.id+'" type="button">Run Reconciliation</button>'+
         '<button class="secondary" data-detail="'+item.id+'" type="button">Detail</button>'+
+        '<button class="secondary" data-customer-backfill="'+item.id+'" type="button">Isi Kode Customer</button>'+
         '<button class="secondary" data-working-paper="'+item.id+'" type="button">Download Kertas Kerja</button>'+
       '</div></td></tr>';
   }).join('');
   rowsEl.querySelectorAll('[data-validate]').forEach(btn=>btn.addEventListener('click',()=>validateSap(Number(btn.dataset.validate),btn)));
   rowsEl.querySelectorAll('[data-run]').forEach(btn=>btn.addEventListener('click',()=>runReconciliation(Number(btn.dataset.run),btn)));
   rowsEl.querySelectorAll('[data-detail]').forEach(btn=>btn.addEventListener('click',()=>showDetail(Number(btn.dataset.detail))));
+  rowsEl.querySelectorAll('[data-customer-backfill]').forEach(btn=>btn.addEventListener('click',()=>backfillCustomerCodes(Number(btn.dataset.customerBackfill),btn)));
   rowsEl.querySelectorAll('[data-working-paper]').forEach(btn=>btn.addEventListener('click',()=>downloadWorkingPaper(Number(btn.dataset.workingPaper),btn)));
+}
+async function backfillCustomerCodes(id,button){
+  const input=document.createElement('input');
+  input.type='file';
+  input.accept='.xlsx,.xls';
+  input.style.display='none';
+  document.body.appendChild(input);
+  input.addEventListener('change',async()=>{
+    const file=input.files&&input.files[0];
+    input.remove();
+    if(!file)return;
+    button.disabled=true;
+    const originalText=button.textContent;
+    try{
+      button.textContent='Memperbarui...';
+      const form=new FormData();
+      form.append('file',file);
+      const response=await fetch('/sap/backfill-customer/'+id,{
+        method:'POST',
+        headers:{Authorization:'Bearer '+token()},
+        body:form,
+      });
+      const payload=await body(response);
+      log('KODE CUSTOMER SAP BATCH #'+id+' DIPERBARUI',payload);
+      if(Number(payload.unresolved||0)>0){
+        log('CATATAN: '+payload.unresolved+' baris belum menemukan kode Customer pada file SAP sumber.');
+      }
+    }catch(error){
+      log('PERBARUI KODE CUSTOMER GAGAL: '+error.message);
+    }finally{
+      button.disabled=false;
+      button.textContent=originalText;
+    }
+  },{once:true});
+  input.click();
 }
 async function downloadWorkingPaper(id,button){
   button.disabled=true;
