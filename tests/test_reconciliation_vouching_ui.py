@@ -97,9 +97,13 @@ def test_reconciliation_ui_does_not_show_separate_customer_backfill_action():
 
 
 
-def test_working_paper_download_refreshes_physical_billing_date_first():
+def test_working_paper_download_is_lightweight_and_does_not_run_ocr():
     html = reconciliation_vouching_html()
 
-    assert "Baca tanggal fisik..." in html
-    assert "await refreshVisualEvidenceForBatch(id)" in html
-    assert "Doc. Date Fisik berasal dari tanggal faktur Billing" in html
+    start = html.index("async function downloadWorkingPaper")
+    end = html.index("async function validateSap", start)
+    block = html[start:end]
+
+    assert "Baca tanggal fisik..." not in block
+    assert "refreshVisualEvidenceForBatch(id)" not in block
+    assert "hasil reconciliation terakhir" in block
