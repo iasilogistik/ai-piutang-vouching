@@ -236,23 +236,22 @@ def _vision_evidence(vision: dict[str, Any], *, expected_customer: str | None) -
         value = signatures.get(source) if isinstance(signatures.get(source), dict) else {}
         raw_status = str(value.get("status") or "UNCLEAR").upper()
         status = "UNKNOWN" if raw_status == "UNCLEAR" else raw_status
+        if status not in {"PRESENT", "MISSING", "UNKNOWN", "NOT_APPLICABLE"}:
+            status = "UNKNOWN"
+        if status == "PRESENT":
+            remarks = f"Visual mendeteksi coretan/TTD pada area {source}; keaslian tidak dianalisis."
+        elif status == "MISSING":
+            remarks = f"Tidak terdeteksi coretan/TTD pada area {source}."
+        elif status == "NOT_APPLICABLE":
+            remarks = f"Role {source} tidak tercetak pada template dokumen."
+        else:
+            remarks = f"Visual belum dapat memastikan tanda tangan {source}."
         result[target] = {
-            "status": status if status in {"PRESENT", "MISSING", "UNKNOWN"} else "UNKNOWN",
+            "status": status,
             "confidence": value.get("confidence") or 0.0,
-            "remarks": (
-                f"AI vision mendeteksi tanda tangan {source}."
-                if status == "PRESENT"
-                else (
-                    f"AI vision mengindikasikan tanda tangan {source} tidak ada."
-                    if status == "MISSING"
-                    else f"AI vision belum dapat memastikan tanda tangan {source}."
-                )
-            ),
+            "remarks": remarks,
             "page_number": value.get("page_number"),
-            "reference": {
-                "source": "AI_VISION",
-                **({"receiver_name": vision.get("receiver_name")} if source == "receiver" and vision.get("receiver_name") else {}),
-            },
+            "reference": {"source": "AI_VISION"},
         }
 
     stamp_value = vision.get("stamp") if isinstance(vision.get("stamp"), dict) else {}
@@ -297,6 +296,8 @@ def _vision_evidence(vision: dict[str, Any], *, expected_customer: str | None) -
             review_reasons.append(value.get("remarks") or f"{key} terindikasi tidak ada; perlu review.")
         elif value["status"] == "UNKNOWN":
             informational_reasons.append(value.get("remarks") or f"{key} tidak dapat dipastikan.")
+        elif value["status"] == "NOT_APPLICABLE":
+            informational_reasons.append(value.get("remarks") or f"{key} tidak berlaku pada template.")
 
     result["review_required"] = bool(review_reasons)
     result["review_reasons"] = review_reasons
