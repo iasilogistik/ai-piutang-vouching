@@ -439,6 +439,84 @@ function findLabeledAmount(
   return null;
 }
 
+function parseInvoiceDateValue(rawValue: string): string | null {
+  const raw = String(rawValue || '').trim().replace(/,/g, ' ').replace(/\s+/g, ' ');
+  if (!raw) return null;
+
+  const numeric = /^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})$/.exec(raw);
+  if (numeric) {
+    const day = Number(numeric[1]);
+    const month = Number(numeric[2]);
+    let year = Number(numeric[3]);
+    if (year < 100) year += 2000;
+    const date = new Date(Date.UTC(year, month - 1, day));
+    if (
+      date.getUTCFullYear() === year &&
+      date.getUTCMonth() === month - 1 &&
+      date.getUTCDate() === day
+    ) {
+      return year.toString().padStart(4, '0') + '-' +
+        month.toString().padStart(2, '0') + '-' +
+        day.toString().padStart(2, '0');
+    }
+  }
+
+  const months: Record<string, number> = {
+    JAN: 1, JANUARY: 1, JANUARI: 1,
+    FEB: 2, FEBRUARY: 2, FEBRUARI: 2,
+    MAR: 3, MARCH: 3, MARET: 3,
+    APR: 4, APRIL: 4,
+    MAY: 5, MEI: 5,
+    JUN: 6, JUNE: 6, JUNI: 6,
+    JUL: 7, JULY: 7, JULI: 7,
+    AUG: 8, AUGUST: 8, AGUSTUS: 8,
+    SEP: 9, SEPT: 9, SEPTEMBER: 9,
+    OCT: 10, OCTOBER: 10, OKTOBER: 10,
+    NOV: 11, NOVEMBER: 11,
+    DEC: 12, DECEMBER: 12, DESEMBER: 12,
+  };
+
+  let match = /^(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})$/i.exec(raw);
+  if (match) {
+    const day = Number(match[1]);
+    const month = months[match[2].toUpperCase()];
+    const year = Number(match[3]);
+    if (month) {
+      return year.toString().padStart(4, '0') + '-' +
+        month.toString().padStart(2, '0') + '-' +
+        day.toString().padStart(2, '0');
+    }
+  }
+
+  match = /^([A-Za-z]+)\s+(\d{1,2})\s+(\d{4})$/i.exec(raw);
+  if (match) {
+    const month = months[match[1].toUpperCase()];
+    const day = Number(match[2]);
+    const year = Number(match[3]);
+    if (month) {
+      return year.toString().padStart(4, '0') + '-' +
+        month.toString().padStart(2, '0') + '-' +
+        day.toString().padStart(2, '0');
+    }
+  }
+  return null;
+}
+
+function parseInvoiceDate(text: string): string | null {
+  const patterns = [
+    /(?:INVOICE\s+DATE|BILLING\s+DATE|DOCUMENT\s+DATE|DOC\.?\s*DATE|TANGGAL\s+FAKTUR|TGL\.?\s+FAKTUR|TANGGAL\s+INVOICE|FAKTUR\s+DATE)\s*[:#=-]?\s*([0-9]{1,2}[./-][0-9]{1,2}[./-][0-9]{2,4})/i,
+    /(?:INVOICE\s+DATE|BILLING\s+DATE|DOCUMENT\s+DATE|DOC\.?\s*DATE|TANGGAL\s+FAKTUR|TGL\.?\s+FAKTUR|TANGGAL\s+INVOICE|FAKTUR\s+DATE)\s*[:#=-]?\s*([0-9]{1,2}\s+[A-Za-z]+\s+[0-9]{4})/i,
+    /(?:INVOICE\s+DATE|BILLING\s+DATE|DOCUMENT\s+DATE|DOC\.?\s*DATE|TANGGAL\s+FAKTUR|TGL\.?\s+FAKTUR|TANGGAL\s+INVOICE|FAKTUR\s+DATE)\s*[:#=-]?\s*([A-Za-z]+\s+[0-9]{1,2},?\s+[0-9]{4})/i,
+  ];
+  for (const pattern of patterns) {
+    const match = pattern.exec(text);
+    if (!match) continue;
+    const normalized = parseInvoiceDateValue(match[1]);
+    if (normalized) return normalized;
+  }
+  return null;
+}
+
 function parsePartialPayments(
   text: string,
   expectedNominal?: number | null,
@@ -643,6 +721,7 @@ async function localAnalyze(
   // Fall back to all OCR pages because some combined evidence prints payment
   // history on a following page.
   const billingText = billingPageIndex >= 0 ? pages[billingPageIndex].text : ocrText;
+  const invoiceDate = parseInvoiceDate(billingText);
   let paymentResult = parsePartialPayments(
     billingText,
     expectedNominal,
@@ -657,9 +736,9 @@ async function localAnalyze(
   }
 
   return {
-    engine: 'LOCAL_TESSERACT_VISUAL_V7',
+    engine: 'LOCAL_TESSERACT_VISUAL_V8',
     billing_document: billingDocument,
-    invoice_date: null,
+    invoice_date: invoiceDate,
     grand_total: paymentResult.grossTotal,
     spj_number: officialSpjNumber,
     delivery_order_number: null,
@@ -683,7 +762,7 @@ app.get('/health', (c) =>
   c.json({
     status: 'ok',
     service: 'vision',
-    engine: 'LOCAL_TESSERACT_VISUAL_V7',
+    engine: 'LOCAL_TESSERACT_VISUAL_V8',
   }),
 );
 
@@ -691,7 +770,7 @@ app.get('/vision-ai-health', async (c) => {
   // Preview-only diagnostic route used while this branch is under test.
   return c.json({
     status: 'ok',
-    engine: 'LOCAL_TESSERACT_VISUAL_V7',
+    engine: 'LOCAL_TESSERACT_VISUAL_V8',
     paid_gateway_required: false,
   });
 });

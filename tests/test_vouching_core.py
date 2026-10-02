@@ -91,3 +91,15 @@ def test_ocr_amount_scale_repairs_decimal_magnitude_loss():
         Decimal("1144600.00"),
         Decimal("4500200.00"),
     ) == Decimal("5644800.00")
+
+
+
+def test_billing_date_parser_prioritizes_invoice_date_over_other_dates():
+    fields = parse_document_fields(
+        "Tanggal Pengiriman: 24-09-2026\n"
+        "Billing Document: 8501735930\n"
+        "Invoice Date: 25/09/2026\n"
+        "Grand Total: 2.350.000"
+    )
+
+    assert fields["doc_date"] == date(2026, 9, 25)
