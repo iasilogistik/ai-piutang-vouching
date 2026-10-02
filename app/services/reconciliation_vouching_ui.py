@@ -279,6 +279,11 @@ async function loadBatches(){
   const summaries=await Promise.all(batches.map(async item=>[item.id,await reconciliationSummary(item.id)]));
   summaries.forEach(([id,summary])=>batchSummaries.set(id,summary));
   render();
+  // Pre-generate the first visible working paper in the background so the
+  // download button is fast even on a cold serverless instance.
+  if(batches.length){
+    prepareWorkingPaper(Number(batches[0].id)).catch(()=>{});
+  }
 }
 function renderMetrics(){
   let population=0,match=0,review=0,exception=0,notFound=0;
@@ -312,6 +317,13 @@ function render(){
   rowsEl.querySelectorAll('[data-run]').forEach(btn=>btn.addEventListener('click',()=>runReconciliation(Number(btn.dataset.run),btn)));
   rowsEl.querySelectorAll('[data-detail]').forEach(btn=>btn.addEventListener('click',()=>showDetail(Number(btn.dataset.detail))));
   rowsEl.querySelectorAll('[data-working-paper]').forEach(btn=>btn.addEventListener('click',()=>downloadWorkingPaper(Number(btn.dataset.workingPaper),btn)));
+}
+async function prepareWorkingPaper(id){
+  try{
+    const response=await fetch('/reports/'+id+'/working-paper/prepare',{method:'POST',headers:headers()});
+    if(!response.ok)return;
+    await response.json();
+  }catch(_error){}
 }
 async function downloadWorkingPaper(id,button){
   button.disabled=true;
@@ -429,6 +441,8 @@ async function runReconciliation(id,button){
     batchSummaries.set(id,summary);
     render();
     renderReconciliationDetail(id,summary);
+    // Refresh the cached working paper asynchronously after reconciliation.
+    prepareWorkingPaper(id).catch(()=>{});
   }catch(error){log('RECONCILIATION GAGAL: '+error.message);}
   finally{button.disabled=false;button.textContent=originalText;}
 }

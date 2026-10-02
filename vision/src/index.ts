@@ -529,39 +529,40 @@ function daysBetweenIso(left: string, right: string): number {
   return Math.abs(a - b) / 86400000;
 }
 
-function parseInvoiceDate(text: string, expectedDocDate?: string | null): string | null {
-  const invoiceLabel = /\b(INVOICE\s+DATE|BILLING\s+DATE|DOCUMENT\s+DATE|DOC\.?\s*DATE|TANGGAL\s+FAKTUR(?:\s+PAJAK)?|TGL\.?\s+FAKTUR(?:\s+PAJAK)?|TANGGAL\s+INVOICE|TGL\.?\s+INVOICE|FAKTUR\s+DATE|DATE\s+OF\s+INVOICE|TANGGAL\s+DOKUMEN)\b/i;
-  const dueLabel = /\b(DUE\s+DATE|PAYMENT\s+DUE|NET\s+DUE|JATUH\s+TEMPO|TANGGAL\s+JATUH\s+TEMPO|TGL\.?\s+JATUH\s+TEMPO|BATAS\s+PEMBAYARAN)\b/i;
-  const datePattern = /(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{1,2}\s+[A-Za-z]{3,12}\s+\d{4}|[A-Za-z]{3,12}\s+\d{1,2},?\s+\d{4})/i;
+function parseInvoiceDate(text: string, _expectedDocDate?: string | null): string | null {
   const lines = String(text || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const datePattern = /(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{1,2}\s+[A-Za-z]{3,12}\s+\d{4}|[A-Za-z]{3,12}\s+\d{1,2},?\s+\d{4})/i;
 
-  // First choice: a date explicitly attached to an invoice/faktur issue-date
-  // label. The date may be on the same line or the next one/two OCR lines.
+  // Physical Doc. Date must come from the invoice/faktur issue-date label only.
+  // Never infer from Due Date/Jatuh Tempo, delivery date, posting date, or an
+  // unlabeled date elsewhere on the page.
+  const strictInvoiceLabels = [
+    /\bTANGGAL\s+FAKTUR(?:\s+PAJAK)?\b/i,
+    /\bTGL\.?\s+FAKTUR(?:\s+PAJAK)?\b/i,
+    /\bINVOICE\s+DATE\b/i,
+    /\bDATE\s+OF\s+INVOICE\b/i,
+    /\bTANGGAL\s+INVOICE\b/i,
+    /\bTGL\.?\s+INVOICE\b/i,
+  ];
+  const forbiddenLabels = /\b(DUE\s+DATE|PAYMENT\s+DUE|NET\s+DUE|JATUH\s+TEMPO|TANGGAL\s+JATUH\s+TEMPO|TGL\.?\s+JATUH\s+TEMPO|BATAS\s+PEMBAYARAN|DELIVERY\s+DATE|TANGGAL\s+PENGIRIMAN|POSTING\s+DATE)\b/i;
+
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    if (!invoiceLabel.test(line) || dueLabel.test(line)) continue;
+    if (!strictInvoiceLabels.some((pattern) => pattern.test(line))) continue;
+    if (forbiddenLabels.test(line)) continue;
 
     for (let offset = 0; offset <= 2 && i + offset < lines.length; offset++) {
       const candidateLine = lines[i + offset];
-      if (offset > 0 && (invoiceLabel.test(candidateLine) || dueLabel.test(candidateLine))) break;
-      if (dueLabel.test(candidateLine)) continue;
+      if (forbiddenLabels.test(candidateLine)) continue;
+      if (
+        offset > 0 &&
+        strictInvoiceLabels.some((pattern) => pattern.test(candidateLine))
+      ) break;
       const match = datePattern.exec(candidateLine);
       if (!match) continue;
       const normalized = parseInvoiceDateValue(match[1]);
       if (normalized) return normalized;
     }
-  }
-
-  // Fallback only among printed non-due dates on the selected Billing page.
-  // SAP date is used only to rank printed candidates, never as a substitute.
-  const candidates = invoiceDateCandidates(text);
-  if (candidates.length === 1) return candidates[0];
-  if (expectedDocDate && candidates.length > 1) {
-    const normalizedExpected = parseInvoiceDateValue(expectedDocDate) || expectedDocDate.slice(0, 10);
-    const ranked = candidates
-      .map((value) => ({ value, distance: daysBetweenIso(value, normalizedExpected) }))
-      .sort((a, b) => a.distance - b.distance);
-    if (ranked[0] && ranked[0].distance <= 90) return ranked[0].value;
   }
   return null;
 }
@@ -810,7 +811,7 @@ async function localAnalyze(
   }
 
   return {
-    engine: 'LOCAL_TESSERACT_VISUAL_V10',
+    engine: 'LOCAL_TESSERACT_VISUAL_V11',
     billing_document: billingDocument,
     invoice_date: invoiceDate,
     grand_total: paymentResult.grossTotal,
@@ -837,7 +838,7 @@ app.get('/health', (c) =>
   c.json({
     status: 'ok',
     service: 'vision',
-    engine: 'LOCAL_TESSERACT_VISUAL_V10',
+    engine: 'LOCAL_TESSERACT_VISUAL_V11',
   }),
 );
 
@@ -845,7 +846,7 @@ app.get('/vision-ai-health', async (c) => {
   // Preview-only diagnostic route used while this branch is under test.
   return c.json({
     status: 'ok',
-    engine: 'LOCAL_TESSERACT_VISUAL_V10',
+    engine: 'LOCAL_TESSERACT_VISUAL_V11',
     paid_gateway_required: false,
   });
 });
