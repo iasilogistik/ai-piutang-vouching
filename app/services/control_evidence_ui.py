@@ -177,6 +177,16 @@ function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>'"]/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[s]));
 }
 
+function formatMoneyId(value) {
+  if (value === null || value === undefined || value === '') return '-';
+  const number = Number(String(value).replace(/\s/g, '').replace(',', '.'));
+  if (!Number.isFinite(number)) return String(value);
+  return new Intl.NumberFormat('id-ID', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(number);
+}
+
 function rowSearchBlob(row) {
   return [
     row.branch, row.file_name, row.document_id, row.no_spj, row.no_spj_raw, row.billing_id,
@@ -228,9 +238,9 @@ function renderRows() {
     return `<tr>
       <td>${escapeHtml(row.branch || '-')}</td>
       <td><strong>${escapeHtml(row.file_name || row.document_id)}</strong><br><a href="${escapeHtml(row.document_url)}" target="_blank" rel="noopener">Buka dokumen</a></td>
-      <td>${escapeHtml(row.no_spj_raw || row.no_spj || '-')}</td>
-      <td>${escapeHtml(row.billing_partial_payment || '-')}</td>
-      <td>${escapeHtml(row.spj_partial_payment || '-')}</td>
+      <td>${escapeHtml(row.no_spj || '-')}</td>
+      <td>${escapeHtml(formatMoneyId(row.billing_partial_payment))}</td>
+      <td>${escapeHtml(formatMoneyId(row.spj_partial_payment))}</td>
       <td>${badge(row.overall_control_status)}</td>
       <td>${badge(row.review_status || (row.review_required ? 'REVIEW' : 'PASS'))}<br><small>${escapeHtml(row.reviewer_remarks || '')}</small></td>
       <td>${badge(row.receiver_signature_status)}</td>
