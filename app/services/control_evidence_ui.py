@@ -228,7 +228,7 @@ function renderRows() {
     return `<tr>
       <td>${escapeHtml(row.branch || '-')}</td>
       <td><strong>${escapeHtml(row.file_name || row.document_id)}</strong><br><a href="${escapeHtml(row.document_url)}" target="_blank" rel="noopener">Buka dokumen</a></td>
-      <td>${escapeHtml(row.no_spj || row.no_spj_raw || '-')}</td>
+      <td>${escapeHtml(row.no_spj_raw || row.no_spj || '-')}</td>
       <td>${escapeHtml(row.billing_partial_payment || '-')}</td>
       <td>${escapeHtml(row.spj_partial_payment || '-')}</td>
       <td>${badge(row.overall_control_status)}</td>
