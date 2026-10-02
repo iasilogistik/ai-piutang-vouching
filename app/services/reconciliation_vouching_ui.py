@@ -109,6 +109,12 @@ let batchSummaries=new Map();
 function token(){return (localStorage.getItem('auditToken')||'').trim();}
 function headers(){const value=token();if(!value)throw new Error('Sesi login tidak ditemukan. Silakan login ulang.');return {Authorization:'Bearer '+value};}
 function esc(value){return String(value??'-').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));}
+function formatMoneyId(value){
+  if(value===null||value===undefined||value==='')return '-';
+  const number=Number(String(value).replace(/\s/g,'').replace(',','.'));
+  if(!Number.isFinite(number))return String(value);
+  return new Intl.NumberFormat('id-ID',{minimumFractionDigits:2,maximumFractionDigits:2}).format(number);
+}
 function log(title,payload=null){logEl.textContent=title;if(payload)logEl.textContent+=String.fromCharCode(10,10)+JSON.stringify(payload,null,2);}
 async function body(response){const text=await response.text();let payload={};try{payload=text?JSON.parse(text):{};}catch(_){throw new Error('Response server tidak dapat dibaca. HTTP '+response.status);}if(!response.ok)throw new Error(payload.detail||('HTTP '+response.status));return payload;}
 function selectedBranch(){return branchEl.value.trim().toUpperCase();}
@@ -167,8 +173,8 @@ function renderReconciliationDetail(batchId,payload){
       '<td>'+statusPill(r.status)+'</td>'+
       '<td><strong>'+esc(evidenceLabel(state))+'</strong></td>'+
       '<td class="detail-message">'+esc(r.remarks||'Tidak ada catatan khusus.')+'</td>'+
-      '<td>'+esc(r.billing_partial_payment||'-')+'</td>'+
-      '<td>'+esc(r.nominal_difference||'0')+'</td>'+
+      '<td>'+esc(formatMoneyId(r.billing_partial_payment))+'</td>'+
+      '<td>'+esc(formatMoneyId(r.nominal_difference))+'</td>'+
       '<td>'+action+'</td>'+
     '</tr>';
   }).join(''):'<tr><td colspan="9">Belum ada hasil reconciliation. Klik Run Reconciliation.</td></tr>';
