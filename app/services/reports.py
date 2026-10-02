@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 from openpyxl import Workbook
@@ -17,7 +17,7 @@ from app.models import BillingReconciliation, Document, ImportBatch, PhysicalBil
 from app.services.control_evidence_dashboard import build_control_evidence_dashboard
 from app.services.vouching import _net_document_amount
 
-REPORT_ROOT = Path("storage/reports")
+REPORT_ROOT = Path("/tmp/ai-piutang-vouching-reports")
 
 
 def _rows(db: Session, batch_id: int, *, branch: str | None = None):
@@ -197,7 +197,7 @@ def build_working_paper_report(
         key=lambda item: (
             (item[0].customer_account_name or item[0].customer or "").casefold(),
             (item[0].customer or "").casefold(),
-            item[0].doc_date,
+            item[0].doc_date or date.min,
             item[0].billing_document or "",
             item[0].id,
         ),
@@ -295,7 +295,7 @@ def build_working_paper_report(
             cell.border = border
             cell.alignment = Alignment(vertical="center", wrap_text=True)
         for col in (5, 8, 9):
-            ws.cell(total_row, col).number_format = "#,##0"
+            ws.cell(total_row, col).number_format = "#,##0.00"
         group_start_row = None
         group_sap_total = 0.0
         group_physical_total = 0.0
@@ -362,7 +362,7 @@ def build_working_paper_report(
         ws.cell(row_number, 4).number_format = "dd/mm/yyyy"
         ws.cell(row_number, 7).number_format = "dd/mm/yyyy"
         for col in (5, 8, 9):
-            ws.cell(row_number, col).number_format = "#,##0"
+            ws.cell(row_number, col).number_format = "#,##0.00"
         if ws.cell(row_number, 9).value == 0:
             ws.cell(row_number, 9).value = "-"
 
