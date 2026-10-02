@@ -87,9 +87,10 @@ def test_reconciliation_ui_formats_money_in_indonesian_notation():
 
 
 
-def test_reconciliation_ui_can_backfill_customer_code_from_original_sap():
+
+
+def test_reconciliation_ui_does_not_show_separate_customer_backfill_action():
     html = reconciliation_vouching_html()
 
-    assert "Isi Kode Customer" in html
-    assert "/sap/backfill-customer/" in html
-    assert "backfillCustomerCodes" in html
+    assert "Isi Kode Customer" not in html
+    assert "/sap/backfill-customer/" not in html
