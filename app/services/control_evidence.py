@@ -128,7 +128,7 @@ def compare_stamp_to_customer(stamp_text: str | None, expected_customer: str | N
     return {
         "status": STATUS_REVIEW,
         "confidence": round(confidence, 4),
-        "remarks": f"Nama stempel '{stamp_text}' belum cukup cocok dengan pelanggan SAP '{expected_customer}'; cek reviewer.",
+        "remarks": f"Nama stempel '{stamp_text}' belum cukup cocok dengan pelanggan SAP '{expected_customer}'; cek manual/reviewer.",
     }
 
 
