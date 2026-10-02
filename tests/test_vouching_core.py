@@ -4,6 +4,7 @@ from decimal import Decimal
 from app.services.vouching import (
     _billing_document_from_filename,
     _normalize_spj_number,
+    _spj_numbers_match,
     parse_document_fields,
     _extract_partial_payments,
     _norm_key,
@@ -69,3 +70,10 @@ def test_partial_payment_parser_supports_paid_and_previous_payment_labels():
     assert amount == Decimal("1500000.00")
     assert "Amount Paid" in raw
     assert "Pembayaran Sebelumnya" in raw
+
+
+
+def test_spj_comparison_uses_final_transaction_number():
+    assert _spj_numbers_match("2501787882", "SPJ/S41C/202608/2501787882") is True
+    assert _spj_numbers_match("SPJ/S41C/202608/2501787882", "2501787882") is True
+    assert _spj_numbers_match("2501787882", "2501787883") is False
