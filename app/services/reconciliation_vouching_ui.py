@@ -317,15 +317,9 @@ async function downloadWorkingPaper(id,button){
   button.disabled=true;
   const originalText=button.textContent;
   try{
-    button.textContent='Baca tanggal fisik...';
-    log('Memastikan Doc. Date Fisik berasal dari tanggal faktur Billing untuk Batch #'+id+' ...');
-    const visual=await refreshVisualEvidenceForBatch(id);
-    if(visual.success>0){
-      log('Tanggal/field fisik diperbarui dari evidence Billing: '+visual.success+' dokumen.');
-    }
-
+    // Keep export lightweight. OCR/visual refresh is handled by Run Reconciliation.
     button.textContent='Menyiapkan...';
-    log('Menyiapkan Kertas Kerja Batch #'+id+' ...');
+    log('Menyiapkan Kertas Kerja Batch #'+id+' dari hasil reconciliation terakhir ...');
     const response=await fetch('/reports/'+id+'/working-paper',{headers:headers()});
     if(!response.ok){
       let message='HTTP '+response.status;
