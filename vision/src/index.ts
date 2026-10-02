@@ -502,11 +502,42 @@ function parseInvoiceDateValue(rawValue: string): string | null {
   return null;
 }
 
-function parseInvoiceDate(text: string): string | null {
+function invoiceDateCandidates(text: string): string[] {
+  const values = new Set<string>();
+  const numeric = text.match(/\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b/g) || [];
+  const dmyText = text.match(/\b\d{1,2}\s+[A-Za-z]{3,12}\s+\d{4}\b/g) || [];
+  const mdyText = text.match(/\b[A-Za-z]{3,12}\s+\d{1,2},?\s+\d{4}\b/g) || [];
+  for (const raw of [...numeric, ...dmyText, ...mdyText]) {
+    const normalized = parseInvoiceDateValue(raw);
+    if (normalized) values.add(normalized);
+  }
+  return [...values];
+}
+
+function daysBetweenIso(left: string, right: string): number {
+  const a = Date.parse(left + 'T00:00:00Z');
+  const b = Date.parse(right + 'T00:00:00Z');
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return Number.MAX_SAFE_INTEGER;
+  return Math.abs(a - b) / 86400000;
+}
+
+function parseInvoiceDate(text: string, expectedDocDate?: string | null): string | null {
+  const labels = [
+    'INVOICE\\s+DATE',
+    'BILLING\\s+DATE',
+    'DOCUMENT\\s+DATE',
+    'DOC\\.?\\s*DATE',
+    'TANGGAL\\s+FAKTUR(?:\\s+PAJAK)?',
+    'TGL\\.?\\s+FAKTUR(?:\\s+PAJAK)?',
+    'TANGGAL\\s+INVOICE',
+    'TGL\\.?\\s+INVOICE',
+    'FAKTUR\\s+DATE',
+    'DATE\\s+OF\\s+INVOICE',
+  ].join('|');
   const patterns = [
-    /(?:INVOICE\s+DATE|BILLING\s+DATE|DOCUMENT\s+DATE|DOC\.?\s*DATE|TANGGAL\s+FAKTUR|TGL\.?\s+FAKTUR|TANGGAL\s+INVOICE|FAKTUR\s+DATE)\s*[:#=-]?\s*([0-9]{1,2}[./-][0-9]{1,2}[./-][0-9]{2,4})/i,
-    /(?:INVOICE\s+DATE|BILLING\s+DATE|DOCUMENT\s+DATE|DOC\.?\s*DATE|TANGGAL\s+FAKTUR|TGL\.?\s+FAKTUR|TANGGAL\s+INVOICE|FAKTUR\s+DATE)\s*[:#=-]?\s*([0-9]{1,2}\s+[A-Za-z]+\s+[0-9]{4})/i,
-    /(?:INVOICE\s+DATE|BILLING\s+DATE|DOCUMENT\s+DATE|DOC\.?\s*DATE|TANGGAL\s+FAKTUR|TGL\.?\s+FAKTUR|TANGGAL\s+INVOICE|FAKTUR\s+DATE)\s*[:#=-]?\s*([A-Za-z]+\s+[0-9]{1,2},?\s+[0-9]{4})/i,
+    new RegExp('(?:' + labels + ')\\s*[:#=-]?\\s*([0-9]{1,2}[./-][0-9]{1,2}[./-][0-9]{2,4})', 'i'),
+    new RegExp('(?:' + labels + ')\\s*[:#=-]?\\s*([0-9]{1,2}\\s+[A-Za-z]+\\s+[0-9]{4})', 'i'),
+    new RegExp('(?:' + labels + ')\\s*[:#=-]?\\s*([A-Za-z]+\\s+[0-9]{1,2},?\\s+[0-9]{4})', 'i'),
   ];
   for (const pattern of patterns) {
     const match = pattern.exec(text);
@@ -514,7 +545,46 @@ function parseInvoiceDate(text: string): string | null {
     const normalized = parseInvoiceDateValue(match[1]);
     if (normalized) return normalized;
   }
+
+  // OCR often loses the words "Tanggal Faktur" while still reading the date.
+  // On the selected Billing page only, use a printed date candidate; SAP date is
+  // used only to choose among printed candidates, never as a substitute value.
+  const candidates = invoiceDateCandidates(text);
+  if (candidates.length === 1) return candidates[0];
+  if (expectedDocDate && candidates.length > 1) {
+    const normalizedExpected = parseInvoiceDateValue(expectedDocDate) || expectedDocDate.slice(0, 10);
+    const ranked = candidates
+      .map((value) => ({ value, distance: daysBetweenIso(value, normalizedExpected) }))
+      .sort((a, b) => a.distance - b.distance);
+    if (ranked[0] && ranked[0].distance <= 90) return ranked[0].value;
+  }
   return null;
+}
+
+function billingPageScore(page: PageOcr, expectedBillingDocument?: string | null): number {
+  const text = norm(page.text);
+  const compact = text.replace(/ /g, '');
+  const expected = norm(expectedBillingDocument || '').replace(/ /g, '');
+  let score = 0;
+  if (expected && compact.includes(expected)) score += 8;
+  if (/\b(BILLING|INVOICE|FAKTUR)\b/i.test(page.text)) score += 5;
+  if (/\b(GRAND\s+TOTAL|TOTAL\s+TAGIHAN|AMOUNT\s+DUE|PPN|DPP)\b/i.test(page.text)) score += 2;
+  if (/SURAT\s+PERINTAH\s+JALAN/i.test(page.text)) score -= 6;
+  if (/DELIVERY\s+ORDER/i.test(page.text)) score -= 4;
+  return score;
+}
+
+function selectBillingPageIndex(pages: PageOcr[], expectedBillingDocument?: string | null): number {
+  let bestIndex = -1;
+  let bestScore = 0;
+  pages.forEach((page, index) => {
+    const score = billingPageScore(page, expectedBillingDocument);
+    if (score > bestScore) {
+      bestScore = score;
+      bestIndex = index;
+    }
+  });
+  return bestScore >= 5 ? bestIndex : -1;
 }
 
 function parsePartialPayments(
@@ -597,6 +667,7 @@ async function localAnalyze(
   expectedCustomer?: string | null,
   expectedBillingDocument?: string | null,
   expectedNominal?: number | null,
+  expectedDocDate?: string | null,
 ) {
   const pages: PageOcr[] = [];
   for (const image of images.slice(0, 3)) pages.push(await recognizePage(String(image)));
@@ -709,19 +780,17 @@ async function localAnalyze(
     : null;
   const ocrText = pages.map((page, index) => '--- PAGE ' + (index + 1) + ' ---\n' + page.text).join('\n\n');
   const expectedBillingNorm = norm(expectedBillingDocument || '').replace(/ /g, '');
-  const billingPageIndex = expectedBillingNorm
-    ? pages.findIndex((page) => norm(page.text).replace(/ /g, '').includes(expectedBillingNorm))
-    : -1;
+  const billingPageIndex = selectBillingPageIndex(pages, expectedBillingDocument);
   const normalizedOcr = norm(ocrText).replace(/ /g, '');
   const billingDocument = expectedBillingNorm && normalizedOcr.includes(expectedBillingNorm)
     ? (expectedBillingDocument || null)
     : null;
 
-  // Prefer the page containing the exact Billing Document for payment parsing.
-  // Fall back to all OCR pages because some combined evidence prints payment
-  // history on a following page.
-  const billingText = billingPageIndex >= 0 ? pages[billingPageIndex].text : ocrText;
-  const invoiceDate = parseInvoiceDate(billingText);
+  // Read Doc. Date only from the Billing/Invoice/Faktur page. When OCR loses
+  // the label but keeps the printed date, expected SAP date only disambiguates
+  // among dates that are actually visible on that Billing page.
+  const billingText = billingPageIndex >= 0 ? pages[billingPageIndex].text : '';
+  const invoiceDate = billingText ? parseInvoiceDate(billingText, expectedDocDate) : null;
   let paymentResult = parsePartialPayments(
     billingText,
     expectedNominal,
@@ -736,7 +805,7 @@ async function localAnalyze(
   }
 
   return {
-    engine: 'LOCAL_TESSERACT_VISUAL_V8',
+    engine: 'LOCAL_TESSERACT_VISUAL_V9',
     billing_document: billingDocument,
     invoice_date: invoiceDate,
     grand_total: paymentResult.grossTotal,
@@ -752,6 +821,7 @@ async function localAnalyze(
         ? 'SPJ resmi dipilih dari halaman PT Semen Indonesia Distributor berjudul SURAT PERINTAH JALAN.'
         : 'Header SPJ resmi tidak terbaca; sistem memakai fallback dokumen.',
       'TTD hanya dinilai dari ada/tidaknya coretan visual; keaslian dan identitas tidak dianalisis.',
+      'Tanggal fisik Billing diambil dari tanggal yang tercetak pada halaman Billing/Invoice/Faktur; SAP hanya dipakai untuk memilih kandidat tanggal yang tercetak bila OCR label tanggal hilang.',
       'Partial payment dibaca dari label pembayaran; bila tidak ada label, derivasi dicatat eksplisit dari Total vs Outstanding/SAP hanya ketika Billing Document yang sama teridentifikasi.'
     ],
     ocr_text: ocrText,
@@ -762,7 +832,7 @@ app.get('/health', (c) =>
   c.json({
     status: 'ok',
     service: 'vision',
-    engine: 'LOCAL_TESSERACT_VISUAL_V8',
+    engine: 'LOCAL_TESSERACT_VISUAL_V9',
   }),
 );
 
@@ -770,7 +840,7 @@ app.get('/vision-ai-health', async (c) => {
   // Preview-only diagnostic route used while this branch is under test.
   return c.json({
     status: 'ok',
-    engine: 'LOCAL_TESSERACT_VISUAL_V8',
+    engine: 'LOCAL_TESSERACT_VISUAL_V9',
     paid_gateway_required: false,
   });
 });
@@ -830,11 +900,14 @@ app.post('/analyze', async (c) => {
       expectedNominalRaw == null || expectedNominalRaw === ''
         ? null
         : Number(String(expectedNominalRaw).replace(/[^0-9.-]/g, ''));
+    const expectedDocDate =
+      typeof body?.expected_doc_date === 'string' ? body.expected_doc_date : null;
     const result = await localAnalyze(
       images.map(String),
       expectedCustomer,
       expectedBillingDocument,
       Number.isFinite(expectedNominal) ? expectedNominal : null,
+      expectedDocDate,
     );
     return c.json({ result });
   } catch (error) {

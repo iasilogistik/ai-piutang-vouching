@@ -663,13 +663,13 @@ def reconciliation_visual_refresh_candidates(
             continue
         seen.add(spj.document_id)
 
-        current_v8 = db.scalar(
+        current_v9 = db.scalar(
             select(ControlEvidenceDetection.id).where(
                 ControlEvidenceDetection.document_id == spj.document_id,
-                ControlEvidenceDetection.extraction_engine.contains("LOCAL_TESSERACT_VISUAL_V8"),
+                ControlEvidenceDetection.extraction_engine.contains("LOCAL_TESSERACT_VISUAL_V9"),
             ).limit(1)
         )
-        if current_v8 is not None:
+        if current_v9 is not None:
             continue
 
         control = db.scalar(
@@ -739,6 +739,7 @@ def reanalyze_control_evidence_visual(
         expected_customer=expected_customer,
         expected_billing_document=sap.billing_document if sap else (billing.billing_document if billing else None),
         expected_nominal=sap.nominal if sap else None,
+        expected_doc_date=sap.doc_date if sap else None,
         force_vision=True,
     )
     payload = analyze_and_persist_control_evidence(

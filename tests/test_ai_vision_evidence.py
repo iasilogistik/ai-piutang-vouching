@@ -219,3 +219,50 @@ def test_visual_control_evidence_accepts_not_applicable_template_role(monkeypatc
         assert row.bm_signature_status == "NOT_APPLICABLE"
         assert row.review_required is False
         assert payload["receiver_name"] is None
+
+
+
+def test_ocr_forwards_expected_doc_date_to_visual_engine(monkeypatch, tmp_path):
+    monkeypatch.setattr(vouching, "extract_text", lambda path: ("", "REVIEW_REQUIRED"))
+    monkeypatch.setattr(vouching, "vision_available", lambda: True)
+    captured = {}
+
+    def fake_vision(*args, **kwargs):
+        captured.update(kwargs)
+        payload = _vision_payload()
+        payload["invoice_date"] = date(2026, 8, 24)
+        return payload
+
+    monkeypatch.setattr(vouching, "analyze_document_vision", fake_vision)
+
+    fake_pdf = tmp_path / "SANTOSO 8501735930.pdf"
+    fake_pdf.write_bytes(b"%PDF-test")
+
+    with Session(_engine()) as db:
+        doc = Document(
+            file_name=fake_pdf.name,
+            file_type="PDF",
+            document_type="BILLING",
+            file_hash="invoice-date-hash",
+            storage_path=str(fake_pdf),
+            branch="KEDIRI",
+        )
+        db.add(doc)
+        db.flush()
+        billing = PhysicalBilling(document_id=doc.id)
+        db.add(billing)
+        db.commit()
+
+        vouching.ocr_document(
+            db,
+            doc.id,
+            expected_customer="SANTOSO, TOKO",
+            expected_billing_document="8501735930",
+            expected_nominal=Decimal("2350000.00"),
+            expected_doc_date=date(2026, 8, 24),
+            force_vision=True,
+        )
+        db.refresh(billing)
+
+        assert captured["expected_doc_date"] == date(2026, 8, 24)
+        assert billing.doc_date == date(2026, 8, 24)
