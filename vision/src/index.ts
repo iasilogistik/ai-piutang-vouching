@@ -514,6 +514,71 @@ function parsePartialPayments(
   return { rows, grossTotal: gross?.amount ?? null };
 }
 
+function normalizeInvoiceDate(value: string): string | null {
+  const raw = String(value || '').trim().replace(/,/g, ' ').replace(/\s+/g, ' ');
+  let match = /^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})$/.exec(raw);
+  if (match) {
+    const day = Number(match[1]);
+    const month = Number(match[2]);
+    const year = Number(match[3]);
+    if (day >= 1 && day <= 31 && month >= 1 && month <= 12) {
+      return String(year).padStart(4, '0') + '-' + String(month).padStart(2, '0') + '-' + String(day).padStart(2, '0');
+    }
+  }
+  match = /^(\d{4})[\/.-](\d{1,2})[\/.-](\d{1,2})$/.exec(raw);
+  if (match) {
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    if (day >= 1 && day <= 31 && month >= 1 && month <= 12) {
+      return String(year).padStart(4, '0') + '-' + String(month).padStart(2, '0') + '-' + String(day).padStart(2, '0');
+    }
+  }
+
+  const months: Record<string, number> = {
+    JAN:1, JANUARY:1, JANUARI:1,
+    FEB:2, FEBRUARY:2, FEBRUARI:2,
+    MAR:3, MARCH:3, MARET:3,
+    APR:4, APRIL:4,
+    MAY:5, MEI:5,
+    JUN:6, JUNE:6, JUNI:6,
+    JUL:7, JULY:7, JULI:7,
+    AUG:8, AUGUST:8, AGU:8, AGUSTUS:8,
+    SEP:9, SEPT:9, SEPTEMBER:9,
+    OCT:10, OKT:10, OCTOBER:10, OKTOBER:10,
+    NOV:11, NOVEMBER:11,
+    DEC:12, DES:12, DECEMBER:12, DESEMBER:12,
+  };
+  const upper = raw.toUpperCase();
+  match = /^(\d{1,2})\s+([A-Z]+)\s+(\d{4})$/.exec(upper);
+  if (match && months[match[2]]) {
+    return match[3] + '-' + String(months[match[2]]).padStart(2, '0') + '-' + String(Number(match[1])).padStart(2, '0');
+  }
+  match = /^([A-Z]+)\s+(\d{1,2})\s+(\d{4})$/.exec(upper);
+  if (match && months[match[1]]) {
+    return match[3] + '-' + String(months[match[1]]).padStart(2, '0') + '-' + String(Number(match[2])).padStart(2, '0');
+  }
+  return null;
+}
+
+function extractBillingInvoiceDate(text: string): string | null {
+  const patterns = [
+    /(?:INVOICE\s+DATE|BILLING\s+DATE|DOCUMENT\s+DATE|DOC\.?\s*DATE|FAKTUR\s+DATE|TANGGAL\s+FAKTUR|TANGGAL\s+INVOICE|TANGGAL\s+BILLING)\s*[:#-]?\s*([0-9A-Za-z.,\/ -]{6,24})/i,
+    /(?:DATE\s+OF\s+INVOICE)\s*[:#-]?\s*([0-9A-Za-z.,\/ -]{6,24})/i,
+  ];
+  for (const pattern of patterns) {
+    const match = pattern.exec(text);
+    if (!match) continue;
+    const candidate = match[1]
+      .split(/\n/)[0]
+      .replace(/\s{2,}.*/, '')
+      .trim();
+    const normalized = normalizeInvoiceDate(candidate);
+    if (normalized) return normalized;
+  }
+  return null;
+}
+
 async function localAnalyze(
   images: string[],
   expectedCustomer?: string | null,
@@ -643,6 +708,7 @@ async function localAnalyze(
   // Fall back to all OCR pages because some combined evidence prints payment
   // history on a following page.
   const billingText = billingPageIndex >= 0 ? pages[billingPageIndex].text : ocrText;
+  const billingInvoiceDate = extractBillingInvoiceDate(billingText);
   let paymentResult = parsePartialPayments(
     billingText,
     expectedNominal,
@@ -657,9 +723,9 @@ async function localAnalyze(
   }
 
   return {
-    engine: 'LOCAL_TESSERACT_VISUAL_V7',
+    engine: 'LOCAL_TESSERACT_VISUAL_V8',
     billing_document: billingDocument,
-    invoice_date: null,
+    invoice_date: billingInvoiceDate,
     grand_total: paymentResult.grossTotal,
     spj_number: officialSpjNumber,
     delivery_order_number: null,
@@ -683,7 +749,7 @@ app.get('/health', (c) =>
   c.json({
     status: 'ok',
     service: 'vision',
-    engine: 'LOCAL_TESSERACT_VISUAL_V7',
+    engine: 'LOCAL_TESSERACT_VISUAL_V8',
   }),
 );
 
@@ -691,7 +757,7 @@ app.get('/vision-ai-health', async (c) => {
   // Preview-only diagnostic route used while this branch is under test.
   return c.json({
     status: 'ok',
-    engine: 'LOCAL_TESSERACT_VISUAL_V7',
+    engine: 'LOCAL_TESSERACT_VISUAL_V8',
     paid_gateway_required: false,
   });
 });
