@@ -569,10 +569,10 @@ def ocr_document(
                 if not fields.get("billing_document") and vision.get("billing_document"):
                     fields["billing_document_raw"] = vision["billing_document"]
                     fields["billing_document"] = _norm_key(vision["billing_document"])
-                if vision.get("spj_number"):
-                    # The visual service explicitly selects the official SID
-                    # SURAT PERINTAH JALAN page. It is authoritative over any
-                    # Delivery Order/other SPJ-like number found earlier.
+                if doc.document_type == "SPJ" and vision.get("official_spj_page"):
+                    fields["no_spj_raw"] = vision.get("spj_number")
+                    fields["no_spj"] = _normalize_spj_number(vision.get("spj_number"))
+                elif vision.get("spj_number"):
                     fields["no_spj_raw"] = vision["spj_number"]
                     fields["no_spj"] = _normalize_spj_number(vision["spj_number"])
                 if vision.get("invoice_date") is not None and (
@@ -670,10 +670,15 @@ def ocr_document(
                 if vision.get("billing_document"):
                     paired.billing_document_raw = vision["billing_document"]
                     paired.billing_document = _norm_key(vision["billing_document"])
-                detected_spj_raw = vision.get("spj_number") or fields.get("no_spj_raw")
-                detected_spj = _normalize_spj_number(detected_spj_raw or fields.get("no_spj"))
-                if detected_spj:
-                    paired.no_spj_raw = detected_spj_raw or detected_spj
+                if vision.get("official_spj_page"):
+                    detected_spj_raw = vision.get("spj_number")
+                    detected_spj = _normalize_spj_number(detected_spj_raw)
+                    paired.no_spj_raw = detected_spj_raw
+                    paired.no_spj = detected_spj
+                else:
+                    detected_spj_raw = vision.get("spj_number") or fields.get("no_spj_raw")
+                    detected_spj = _normalize_spj_number(detected_spj_raw or fields.get("no_spj"))
+                    paired.no_spj_raw = detected_spj_raw if detected_spj else None
                     paired.no_spj = detected_spj
                 # Replace any legacy/generic date with the strict
                 # invoice/faktur issue date. If the label is not readable, clear
