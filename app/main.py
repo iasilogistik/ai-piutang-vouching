@@ -28,7 +28,7 @@ from app.services.branch_master import ensure_branch_catalog
 from app.services.audit_management_dashboard import register_audit_management_dashboard_routes
 from app.services.bulk_upload_ui import bulk_upload_html
 from app.services.bulk_zip import classify_entry, iter_bulk_zip_entries, make_upload
-from app.services.reports import build_control_evidence_report, build_report
+from app.services.reports import build_control_evidence_report, build_report, build_working_paper_report
 from app.services.review_workflow import register_review_workflow_routes
 from app.services.reviewer_center import register_reviewer_center_routes
 from app.services.viewer_center import register_viewer_center_routes
@@ -1121,6 +1121,20 @@ def audit_trail(entity_type: str | None = None, entity_id: int | None = None,
         "actor": row.actor, "branch": row.branch, "remarks": row.remarks, "metadata": row.metadata_json,
         "created_at": row.created_at,
     } for row in rows]}
+
+
+@app.get("/reports/{batch_id}/working-paper")
+def generate_working_paper_report(
+    batch_id: int,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER", "VIEWER")),
+):
+    try:
+        path = build_working_paper_report(db, batch_id, branch=scoped_branch(user))
+    except ValueError as exc:
+        raise handle_error(exc) from exc
+    media = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    return FileResponse(path, filename=path.name, media_type=media)
 
 
 @app.get("/reports/{batch_id}")
