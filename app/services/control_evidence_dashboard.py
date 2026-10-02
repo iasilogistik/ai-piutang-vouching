@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+import re
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -62,8 +63,16 @@ def _dashboard_row(db: Session, row: DocumentControlEvidence) -> dict[str, Any]:
         "uploaded_at": document.uploaded_at if document else None,
         "document_url": f"/documents/{row.document_id}/view",
         "document_content_url": f"/documents/{row.document_id}/content",
-        "no_spj": spj.no_spj if spj else None,
-        "no_spj_raw": spj.no_spj_raw if spj else None,
+        "no_spj": (
+            spj.no_spj
+            if spj and re.fullmatch(r"\d{8,12}", str(spj.no_spj or ""))
+            else None
+        ),
+        "no_spj_raw": (
+            spj.no_spj_raw
+            if spj and re.fullmatch(r"\d{8,12}", str(spj.no_spj or ""))
+            else None
+        ),
         "spj_id": spj.id if spj else None,
         "billing_id": vouching.billing_id if vouching else None,
         "billing_partial_payment": str(vouching.billing.partial_payment) if vouching and vouching.billing.partial_payment is not None else None,
