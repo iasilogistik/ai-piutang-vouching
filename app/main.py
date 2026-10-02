@@ -663,13 +663,13 @@ def reconciliation_visual_refresh_candidates(
             continue
         seen.add(spj.document_id)
 
-        current_v6 = db.scalar(
+        current_v7 = db.scalar(
             select(ControlEvidenceDetection.id).where(
                 ControlEvidenceDetection.document_id == spj.document_id,
-                ControlEvidenceDetection.extraction_engine.contains("LOCAL_TESSERACT_VISUAL_V6"),
+                ControlEvidenceDetection.extraction_engine.contains("LOCAL_TESSERACT_VISUAL_V7"),
             ).limit(1)
         )
-        if current_v6 is not None:
+        if current_v7 is not None:
             continue
 
         control = db.scalar(
