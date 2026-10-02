@@ -317,6 +317,13 @@ async function downloadWorkingPaper(id,button){
   button.disabled=true;
   const originalText=button.textContent;
   try{
+    button.textContent='Baca tanggal fisik...';
+    log('Memastikan Doc. Date Fisik berasal dari tanggal faktur Billing untuk Batch #'+id+' ...');
+    const visual=await refreshVisualEvidenceForBatch(id);
+    if(visual.success>0){
+      log('Tanggal/field fisik diperbarui dari evidence Billing: '+visual.success+' dokumen.');
+    }
+
     button.textContent='Menyiapkan...';
     log('Menyiapkan Kertas Kerja Batch #'+id+' ...');
     const response=await fetch('/reports/'+id+'/working-paper',{headers:headers()});
