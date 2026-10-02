@@ -28,7 +28,7 @@ from app.services.branch_master import ensure_branch_catalog
 from app.services.audit_management_dashboard import register_audit_management_dashboard_routes
 from app.services.bulk_upload_ui import bulk_upload_html
 from app.services.bulk_zip import classify_entry, iter_bulk_zip_entries, make_upload
-from app.services.reports import build_control_evidence_report, build_report, build_working_paper_report
+from app.services.reports import build_control_evidence_report, build_report, build_working_paper_report, working_paper_cache_token
 from app.services.review_workflow import register_review_workflow_routes
 from app.services.reviewer_center import register_reviewer_center_routes
 from app.services.viewer_center import register_viewer_center_routes
@@ -50,7 +50,7 @@ from app.services.navigation import register_navigation_routes
 from app.services.notifications import register_notification_routes
 from app.services.release_readiness import register_release_readiness_routes
 from app.services.sap_import import import_sap_upload
-from app.services.storage import download_bytes
+from app.services.storage import download_bytes, upload_bytes
 from app.services.uat_pasuruan_ui import uat_pasuruan_html
 from app.services.upload_center import register_upload_center_routes
 from app.services.reconciliation_vouching_ui import register_reconciliation_vouching_routes
@@ -663,13 +663,13 @@ def reconciliation_visual_refresh_candidates(
             continue
         seen.add(spj.document_id)
 
-        current_v10 = db.scalar(
+        current_v11 = db.scalar(
             select(ControlEvidenceDetection.id).where(
                 ControlEvidenceDetection.document_id == spj.document_id,
-                ControlEvidenceDetection.extraction_engine.contains("LOCAL_TESSERACT_VISUAL_V10"),
+                ControlEvidenceDetection.extraction_engine.contains("LOCAL_TESSERACT_VISUAL_V11"),
             ).limit(1)
         )
-        if current_v10 is not None:
+        if current_v11 is not None:
             continue
 
         control = db.scalar(
@@ -1125,18 +1125,71 @@ def audit_trail(entity_type: str | None = None, entity_id: int | None = None,
     } for row in rows]}
 
 
+def _working_paper_storage_path(batch_id: int, token: str) -> str:
+    return f"reports/working-paper/batch_{batch_id}_{token}.xlsx"
+
+
+def _prepare_working_paper_bytes(
+    db: Session,
+    batch_id: int,
+    *,
+    branch: str | None,
+) -> tuple[bytes, str]:
+    token = working_paper_cache_token(db, batch_id, branch=branch)
+    storage_path = _working_paper_storage_path(batch_id, token)
+
+    if settings.use_supabase_storage:
+        try:
+            return download_bytes(storage_path), token
+        except ValueError:
+            pass
+
+    path = build_working_paper_report(db, batch_id, branch=branch)
+    content = path.read_bytes()
+    if settings.use_supabase_storage:
+        try:
+            upload_bytes(
+                storage_path,
+                content,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        except ValueError:
+            pass
+    return content, token
+
+
+@app.post("/reports/{batch_id}/working-paper/prepare")
+def prepare_working_paper_report(
+    batch_id: int,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER", "VIEWER")),
+):
+    branch = scoped_branch(user)
+    try:
+        content, token = _prepare_working_paper_bytes(db, batch_id, branch=branch)
+    except ValueError as exc:
+        raise handle_error(exc) from exc
+    return {"batch_id": batch_id, "ready": True, "bytes": len(content), "token": token}
+
+
 @app.get("/reports/{batch_id}/working-paper")
 def generate_working_paper_report(
     batch_id: int,
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER", "VIEWER")),
 ):
+    branch = scoped_branch(user)
     try:
-        path = build_working_paper_report(db, batch_id, branch=scoped_branch(user))
+        content, token = _prepare_working_paper_bytes(db, batch_id, branch=branch)
     except ValueError as exc:
         raise handle_error(exc) from exc
     media = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    return FileResponse(path, filename=path.name, media_type=media)
+    filename = f"kertas_kerja_batch_{batch_id}_{token}.xlsx"
+    return Response(
+        content=content,
+        media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.get("/reports/{batch_id}")
