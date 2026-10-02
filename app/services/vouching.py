@@ -204,7 +204,7 @@ def _parse_date(value: str | None) -> date | None:
 def _extract_partial_payments(text: str) -> tuple[Decimal | None, str | None]:
     patterns = [
         r"(?:Pembayaran\s+(?:Partial|Parsial)|(?:Partial|Parsial)\s+Payment|Bayar\s+(?:Partial|Parsial)|Partial)\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9][0-9.,:\s-]*)",
-        r"(?:Payment\s+Received|Pembayaran\s+Diterima|Telah\s+Dibayar|Sudah\s+Dibayar)\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9][0-9.,:\s-]*)",
+        r"(?:Payment\s+Received|Amount\s+Paid|Paid\s+Amount|Jumlah\s+Dibayar|Pembayaran\s+(?:Diterima|Sebelumnya|Terdahulu)|Telah\s+Dibayar|Sudah\s+Dibayar)\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9][0-9.,:\s-]*)",
         r"(?:DP|Down\s+Payment|Uang\s+Muka)\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9][0-9.,:\s-]*)",
     ]
     amounts: list[Decimal] = []
