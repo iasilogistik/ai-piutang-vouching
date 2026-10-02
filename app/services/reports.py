@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
+import hashlib
 from pathlib import Path
 
 from openpyxl import Workbook
@@ -262,6 +263,54 @@ def _working_paper_net_physical(
             return None
 
     return net.quantize(Decimal("0.01"))
+
+
+def working_paper_cache_token(
+    db: Session,
+    batch_id: int,
+    *,
+    branch: str | None = None,
+) -> str:
+    """Return a short content fingerprint for the current working-paper data."""
+    batch, rows = _rows(db, batch_id, branch=branch)
+    spj_by_id, spj_by_no_spj = _working_paper_spj_maps(
+        db,
+        rows,
+        branch=batch.branch,
+    )
+    parts: list[str] = []
+    for sap, rec, physical, vouch in rows:
+        spj = (
+            spj_by_id.get(int(vouch.spj_id))
+            if vouch is not None and vouch.spj_id is not None
+            else (
+                spj_by_no_spj.get(str(physical.no_spj))
+                if physical is not None and physical.no_spj
+                else None
+            )
+        )
+        parts.append("|".join([
+            str(sap.id),
+            str(sap.customer or ""),
+            str(sap.customer_account_name or ""),
+            str(sap.billing_document or ""),
+            str(sap.doc_date or ""),
+            str(sap.nominal or ""),
+            str(rec.id if rec else ""),
+            str(rec.status if rec else ""),
+            str(rec.nominal_difference if rec else ""),
+            str(physical.id if physical else ""),
+            str(physical.billing_document if physical else ""),
+            str(physical.doc_date if physical else ""),
+            str(physical.nominal if physical else ""),
+            str(physical.partial_payment if physical else ""),
+            str(spj.id if spj else ""),
+            str(spj.partial_payment if spj else ""),
+            str(vouch.id if vouch else ""),
+            str(vouch.status if vouch else ""),
+        ]))
+    digest = hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
+    return digest[:16]
 
 def build_working_paper_report(
     db: Session,
