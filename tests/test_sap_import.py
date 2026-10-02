@@ -7,7 +7,7 @@ from sqlalchemy import text
 
 from app.database import SessionLocal
 from app.models import ImportBatch, SAPBilling
-from app.services.sap_import import import_sap_excel
+from app.services.sap_import import backfill_customer_codes_from_excel, import_sap_excel
 
 
 def excel_bytes(rows: list[dict[str, object]]) -> bytes:
@@ -296,6 +296,59 @@ def test_import_sap_ledger_preserves_customer_code_when_available() -> None:
         row = db.query(SAPBilling).filter(SAPBilling.import_batch_id == batch.id).one()
         assert row.customer == "2119709"
         assert row.customer_account_name == "SANTOSO, TOKO"
+    finally:
+        if batch is not None:
+            cleanup(db, batch.id)
+        db.close()
+
+
+
+def test_backfill_customer_codes_updates_existing_batch_without_reimport() -> None:
+    db = SessionLocal()
+    batch = None
+    try:
+        batch = ImportBatch(
+            file_name="old_sap.xlsx",
+            branch="TEST-SAP-BACKFILL",
+            total_records=1,
+            status="IMPORTED",
+        )
+        db.add(batch)
+        db.flush()
+        row = SAPBilling(
+            import_batch_id=batch.id,
+            customer=None,
+            customer_account_name="SANTOSO, TOKO",
+            billing_document="8501735930",
+            doc_date=pd.Timestamp("2026-08-24").date(),
+            nominal=Decimal("2350000.00"),
+        )
+        db.add(row)
+        db.commit()
+
+        content = excel_bytes([
+            {
+                "Customer": "2119709",
+                "Billing Document": "8501735930",
+                "Text": None,
+                "Document Date": "2026-08-24",
+                "Company Code Currency Value": 2350000,
+                "Customer Account: Name 1": "SANTOSO, TOKO",
+            }
+        ])
+        result = backfill_customer_codes_from_excel(
+            db,
+            batch_id=batch.id,
+            filename="source.xlsx",
+            content=content,
+        )
+        db.commit()
+        db.refresh(row)
+
+        assert result["updated"] == 1
+        assert result["unresolved"] == 0
+        assert row.customer == "2119709"
+        assert row.nominal == Decimal("2350000.00")
     finally:
         if batch is not None:
             cleanup(db, batch.id)
