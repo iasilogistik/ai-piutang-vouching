@@ -53,24 +53,25 @@ def _norm_key(value: str | None) -> str | None:
 
 
 def _normalize_spj_number(value: str | None) -> str | None:
-    """Normalize official SPJ references to the transaction number.
-
-    Official SID SPJ format is typically SPJ/S41C/YYYYMM/##########.
-    We preserve the full raw value separately but use the final numeric token
-    for matching so other documents that print only ########## still reconcile.
-    """
+    """Return only the numeric transaction number from a credible SPJ reference."""
     raw = _norm(value)
     if not raw:
         return None
-    parts = [re.sub(r"[^A-Za-z0-9]", "", part).upper() for part in re.split(r"[/\\]", raw)]
-    for part in reversed(parts):
-        if re.fullmatch(r"\d{8,12}", part):
-            return part
-    match = re.search(r"(?<!\d)(\d{8,12})(?!\d)", raw)
-    if match:
-        return match.group(1)
-    return _norm_key(raw)
 
+    compact = re.sub(r"\\s+", "", raw)
+    if re.fullmatch(r"\\d{8,12}", compact):
+        return compact
+
+    official = re.search(
+        r"\\bSPJ\\s*[/\\\\-]\\s*[A-Z0-9]{2,10}\\s*[/\\\\-]\\s*\\d{6}\\s*[/\\\\-]\\s*(\\d{8,12})\\b",
+        raw,
+        re.IGNORECASE,
+    )
+    if official:
+        return official.group(1)
+
+    match = re.search(r"(?<![A-Za-z0-9])(\\d{8,12})(?![A-Za-z0-9])", raw)
+    return match.group(1) if match else None
 
 def _billing_document_from_filename(file_name: str | None) -> str | None:
     """Return one unambiguous standalone 10-digit Billing token from filename."""
