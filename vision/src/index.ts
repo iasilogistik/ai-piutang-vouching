@@ -407,78 +407,100 @@ function parseMoneyToken(value: string): number | null {
   return Number.isFinite(amount) && amount > 0 ? amount : null;
 }
 
-function findLabeledAmount(text: string, labels: string[]): { amount: number; reference: string } | null {
-  for (const label of labels) {
-    const pattern = new RegExp('(?:' + label + ')\\s*[:#=-]?\\s*(?:RP\\.?\\s*)?([0-9][0-9.,:\\\\s-]*)', 'i');
+function findLabeledAmount(
+  text: string,
+  patterns: RegExp[],
+): { amount: number; reference: string } | null {
+  for (const pattern of patterns) {
     const match = pattern.exec(text);
     if (!match) continue;
     const amount = parseMoneyToken(match[1]);
-    if (amount !== null) return { amount, reference: match[0].trim().slice(0, 120) };
+    if (amount !== null) return { amount, reference: match[0].trim().slice(0, 140) };
   }
   return null;
 }
 
-function parsePartialPayments(text: string) {
+function parsePartialPayments(
+  text: string,
+  expectedNominal?: number | null,
+  expectedBillingMatched = false,
+) {
   const rows: Array<{ amount: number; date: string | null; reference: string | null }> = [];
-  const explicitLabels = [
-    'PARTIAL\\s+PAYMENT',
-    'PAYMENT\\s+RECEIVED',
-    'AMOUNT\\s+PAID',
-    'PAID\\s+AMOUNT',
-    'JUMLAH\\s+DIBAYAR',
-    'PEMBAYARAN\\s+(?:PARTIAL|PARSIAL|DITERIMA|SEBELUMNYA|TERDAHULU)',
-    'TELAH\\s+DIBAYAR',
-    'SUDAH\\s+DIBAYAR',
-    'DOWN\\s+PAYMENT',
-    '\\bDP\\b',
-    'UANG\\s+MUKA',
+
+  // Use regex literals rather than dynamically escaped strings. The previous
+  // V4 patterns were over-escaped in RegExp(string), so labels such as
+  // "Payment Received", "Amount Paid" and "DP" were never matched.
+  const explicitPatterns = [
+    /(?:PARTIAL\s+PAYMENT|PARTIAL\s+PAID|PAYMENT\s+PARTIAL)\s*[:#=-]?\s*(?:RP\.?\s*)?([0-9][0-9.,:\s-]*)/gi,
+    /(?:PAYMENT\s+RECEIVED|PAYMENT\s+PAID|AMOUNT\s+PAID|PAID\s+AMOUNT)\s*[:#=-]?\s*(?:RP\.?\s*)?([0-9][0-9.,:\s-]*)/gi,
+    /(?:JUMLAH\s+DIBAYAR|PEMBAYARAN\s+(?:PARTIAL|PARSIAL|DITERIMA|SEBELUMNYA|TERDAHULU)|TELAH\s+DIBAYAR|SUDAH\s+DIBAYAR)\s*[:#=-]?\s*(?:RP\.?\s*)?([0-9][0-9.,:\s-]*)/gi,
+    /(?:DOWN\s+PAYMENT|\bDP\b|UANG\s+MUKA)\s*[:#=-]?\s*(?:RP\.?\s*)?([0-9][0-9.,:\s-]*)/gi,
   ];
 
-  for (const label of explicitLabels) {
-    const pattern = new RegExp('(?:' + label + ')\\s*[:#=-]?\\s*(?:RP\\.?\\s*)?([0-9][0-9.,:\\\\s-]*)', 'gi');
+  for (const pattern of explicitPatterns) {
+    pattern.lastIndex = 0;
     let match: RegExpExecArray | null;
     while ((match = pattern.exec(text)) !== null) {
       const amount = parseMoneyToken(match[1]);
-      if (amount !== null) {
-        const duplicate = rows.some((row) => Math.abs(row.amount - amount) < 0.01 && row.reference === match![0].slice(0, 120));
-        if (!duplicate) rows.push({ amount, date: null, reference: match[0].trim().slice(0, 120) });
+      if (amount === null) continue;
+      const reference = match[0].trim().slice(0, 140);
+      if (!rows.some((row) => Math.abs(row.amount - amount) < 0.01 && row.reference === reference)) {
+        rows.push({ amount, date: null, reference });
       }
     }
   }
 
-  // Some billing layouts do not print "partial payment" explicitly. When both
-  // Gross/Grand Total and a labelled Outstanding/Balance Due are present, the
-  // paid amount is an evidence-backed arithmetic fact: total - outstanding.
   const gross = findLabeledAmount(text, [
-    'GRAND\\s+TOTAL',
-    'TOTAL\\s+TAGIHAN',
-    'TOTAL\\s+INVOICE',
-    'JUMLAH\\s+TAGIHAN',
+    /(?:GRAND\s+TOTAL|TOTAL\s+TAGIHAN|TOTAL\s+INVOICE|JUMLAH\s+TAGIHAN|INVOICE\s+TOTAL|TOTAL\s+BILLING|NILAI\s+FAKTUR)\s*[:#=-]?\s*(?:RP\.?\s*)?([0-9][0-9.,:\s-]*)/i,
   ]);
   const outstanding = findLabeledAmount(text, [
-    'OUTSTANDING',
-    'BALANCE\\s+DUE',
-    'AMOUNT\\s+DUE',
-    'SISA\\s+TAGIHAN',
-    'SISA\\s+PEMBAYARAN',
-    'SALDO\\s+TERUTANG',
-    'NET\\s+DUE',
+    /(?:OUTSTANDING|BALANCE\s+DUE|AMOUNT\s+DUE|SISA\s+TAGIHAN|SISA\s+PEMBAYARAN|SALDO\s+TERUTANG|NET\s+DUE|NET\s+OUTSTANDING)\s*[:#=-]?\s*(?:RP\.?\s*)?([0-9][0-9.,:\s-]*)/i,
   ]);
+
+  // Evidence-backed arithmetic: Total - printed Outstanding.
   if (gross && outstanding && gross.amount > outstanding.amount) {
     const derived = Math.round((gross.amount - outstanding.amount) * 100) / 100;
-    const explicitTotal = rows.reduce((sum, row) => sum + row.amount, 0);
-    if (derived > 0 && Math.abs(explicitTotal - derived) > 0.01) {
+    if (derived > 0 && !rows.some((row) => Math.abs(row.amount - derived) < 0.01)) {
       rows.push({
         amount: derived,
         date: null,
-        reference: 'Derived: ' + gross.reference + ' - ' + outstanding.reference,
+        reference: 'DERIVED_DOCUMENT_TOTAL_MINUS_PRINTED_OUTSTANDING | ' + gross.reference + ' | ' + outstanding.reference,
       });
     }
   }
-  return rows;
+
+  // Last conservative fallback for partially paid invoices: only when the
+  // exact Billing Document is found in this evidence and a printed Grand Total
+  // is greater than the SAP outstanding. Keep the derivation explicit in the
+  // audit trail; do not pretend it was a directly printed payment label.
+  if (
+    rows.length === 0 &&
+    gross &&
+    expectedBillingMatched &&
+    expectedNominal != null &&
+    expectedNominal > 0 &&
+    gross.amount > expectedNominal
+  ) {
+    const derived = Math.round((gross.amount - expectedNominal) * 100) / 100;
+    const ratio = gross.amount / expectedNominal;
+    if (derived > 0 && ratio <= 20) {
+      rows.push({
+        amount: derived,
+        date: null,
+        reference: 'DERIVED_DOCUMENT_TOTAL_MINUS_SAP_OUTSTANDING | ' + gross.reference,
+      });
+    }
+  }
+
+  return { rows, grossTotal: gross?.amount ?? null };
 }
 
-async function localAnalyze(images: string[], expectedCustomer?: string | null, expectedBillingDocument?: string | null) {
+async function localAnalyze(
+  images: string[],
+  expectedCustomer?: string | null,
+  expectedBillingDocument?: string | null,
+  expectedNominal?: number | null,
+) {
   const pages: PageOcr[] = [];
   for (const image of images.slice(0, 3)) pages.push(await recognizePage(String(image)));
 
@@ -587,21 +609,41 @@ async function localAnalyze(images: string[], expectedCustomer?: string | null, 
     ? extractOfficialSpjNumber(pages[officialPageIndex].text)
     : null;
   const ocrText = pages.map((page, index) => '--- PAGE ' + (index + 1) + ' ---\n' + page.text).join('\n\n');
-  const normalizedOcr = norm(ocrText).replace(/ /g, '');
   const expectedBillingNorm = norm(expectedBillingDocument || '').replace(/ /g, '');
+  const billingPageIndex = expectedBillingNorm
+    ? pages.findIndex((page) => norm(page.text).replace(/ /g, '').includes(expectedBillingNorm))
+    : -1;
+  const normalizedOcr = norm(ocrText).replace(/ /g, '');
   const billingDocument = expectedBillingNorm && normalizedOcr.includes(expectedBillingNorm)
     ? (expectedBillingDocument || null)
     : null;
 
+  // Prefer the page containing the exact Billing Document for payment parsing.
+  // Fall back to all OCR pages because some combined evidence prints payment
+  // history on a following page.
+  const billingText = billingPageIndex >= 0 ? pages[billingPageIndex].text : ocrText;
+  let paymentResult = parsePartialPayments(
+    billingText,
+    expectedNominal,
+    Boolean(billingDocument),
+  );
+  if (paymentResult.rows.length === 0 && billingPageIndex >= 0) {
+    paymentResult = parsePartialPayments(
+      ocrText,
+      expectedNominal,
+      Boolean(billingDocument),
+    );
+  }
+
   return {
-    engine: 'LOCAL_TESSERACT_VISUAL_V4',
+    engine: 'LOCAL_TESSERACT_VISUAL_V5',
     billing_document: billingDocument,
     invoice_date: null,
-    grand_total: null,
+    grand_total: paymentResult.grossTotal,
     spj_number: officialSpjNumber,
     delivery_order_number: null,
     receiver_name: null,
-    partial_payments: parsePartialPayments(ocrText),
+    partial_payments: paymentResult.rows,
     signatures,
     stamp,
     official_spj_page: officialPageIndex >= 0 ? officialPageIndex + 1 : null,
@@ -610,7 +652,7 @@ async function localAnalyze(images: string[], expectedCustomer?: string | null, 
         ? 'SPJ resmi dipilih dari halaman PT Semen Indonesia Distributor berjudul SURAT PERINTAH JALAN.'
         : 'Header SPJ resmi tidak terbaca; sistem memakai fallback dokumen.',
       'TTD hanya dinilai dari ada/tidaknya coretan visual; keaslian dan identitas tidak dianalisis.',
-      'Partial payment dibaca dari label pembayaran atau dihitung hanya jika Total dan Outstanding/Sisa sama-sama tercetak.'
+      'Partial payment dibaca dari label pembayaran; bila tidak ada label, derivasi dicatat eksplisit dari Total vs Outstanding/SAP hanya ketika Billing Document yang sama teridentifikasi.'
     ],
     ocr_text: ocrText,
   };
@@ -620,7 +662,7 @@ app.get('/health', (c) =>
   c.json({
     status: 'ok',
     service: 'vision',
-    engine: 'LOCAL_TESSERACT_VISUAL_V4',
+    engine: 'LOCAL_TESSERACT_VISUAL_V5',
   }),
 );
 
@@ -628,7 +670,7 @@ app.get('/vision-ai-health', async (c) => {
   // Preview-only diagnostic route used while this branch is under test.
   return c.json({
     status: 'ok',
-    engine: 'LOCAL_TESSERACT_VISUAL_V4',
+    engine: 'LOCAL_TESSERACT_VISUAL_V5',
     paid_gateway_required: false,
   });
 });
@@ -683,7 +725,17 @@ app.post('/analyze', async (c) => {
     }
 
     const expectedBillingDocument = typeof body?.expected_billing_document === 'string' ? body.expected_billing_document : null;
-    const result = await localAnalyze(images.map(String), expectedCustomer, expectedBillingDocument);
+    const expectedNominalRaw = body?.expected_nominal;
+    const expectedNominal =
+      expectedNominalRaw == null || expectedNominalRaw === ''
+        ? null
+        : Number(String(expectedNominalRaw).replace(/[^0-9.-]/g, ''));
+    const result = await localAnalyze(
+      images.map(String),
+      expectedCustomer,
+      expectedBillingDocument,
+      Number.isFinite(expectedNominal) ? expectedNominal : null,
+    );
     return c.json({ result });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

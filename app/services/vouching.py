@@ -105,6 +105,12 @@ def _filename_customer_key(file_name: str | None) -> str | None:
     return "".join(tokens) or None
 
 
+def _spj_numbers_match(billing_value: str | None, spj_value: str | None) -> bool:
+    left = _normalize_spj_number(billing_value)
+    right = _normalize_spj_number(spj_value)
+    return bool(left and right and left == right)
+
+
 def _paired_spj_candidates(db: Session, billing: PhysicalBilling) -> list[SPJ]:
     """Find SPJ evidence registered from the exact same uploaded file package.
 
@@ -615,20 +621,30 @@ def ocr_document(
                 if vision.get("billing_document"):
                     paired.billing_document_raw = vision["billing_document"]
                     paired.billing_document = _norm_key(vision["billing_document"])
-                if vision.get("spj_number"):
-                    paired.no_spj_raw = vision["spj_number"]
-                    paired.no_spj = _normalize_spj_number(vision["spj_number"])
+                detected_spj_raw = vision.get("spj_number") or fields.get("no_spj_raw")
+                detected_spj = _normalize_spj_number(detected_spj_raw or fields.get("no_spj"))
+                if detected_spj:
+                    paired.no_spj_raw = detected_spj_raw or detected_spj
+                    paired.no_spj = detected_spj
                 if vision.get("invoice_date") is not None:
                     paired.doc_date = vision["invoice_date"]
                 if vision.get("grand_total") is not None:
                     paired.nominal = vision["grand_total"]
+
+                # Prefer structured partial-payment rows from visual V5. If the
+                # visual service could not structure them but OCR text did, use
+                # the parsed text result. Persist once on Billing to prevent
+                # double subtraction in reconciliation.
                 vision_partial, vision_partial_raw = partial_payment_summary(vision)
-                if vision_partial is not None:
-                    # The AI reads the same combined file for Billing and SPJ.
-                    # Store an extracted payment once on Billing to avoid
-                    # subtracting the same partial payment twice in reconciliation.
-                    paired.partial_payment = vision_partial
-                    paired.partial_payment_raw = vision_partial_raw
+                paired_partial = vision_partial if vision_partial is not None else fields.get("partial_payment")
+                paired_partial_raw = (
+                    vision_partial_raw
+                    if vision_partial is not None
+                    else fields.get("partial_payment_raw")
+                )
+                if paired_partial is not None:
+                    paired.partial_payment = paired_partial
+                    paired.partial_payment_raw = paired_partial_raw
                     row.partial_payment = None
                     row.partial_payment_raw = None
                 paired.ocr_confidence = confidence
@@ -1052,7 +1068,7 @@ def vouch_spj(db: Session, *, branch: str | None = None) -> list[VouchingResult]
                 if len(paired_spj) == 1:
                     spj = paired_spj[0]
                     _refresh_visual_pair(db, billing, spj)
-                    if _normalize_spj_number(spj.no_spj) == no_spj:
+                    if _spj_numbers_match(no_spj, spj.no_spj):
                         matches = [spj]
 
             if not matches:
