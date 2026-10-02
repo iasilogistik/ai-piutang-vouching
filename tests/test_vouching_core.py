@@ -4,6 +4,7 @@ from decimal import Decimal
 from app.services.vouching import (
     _billing_document_from_filename,
     _normalize_spj_number,
+    _normalize_ocr_amount_scale,
     _spj_numbers_match,
     parse_document_fields,
     _extract_partial_payments,
@@ -77,3 +78,16 @@ def test_spj_comparison_uses_final_transaction_number():
     assert _spj_numbers_match("2501787882", "SPJ/S41C/202608/2501787882") is True
     assert _spj_numbers_match("SPJ/S41C/202608/2501787882", "2501787882") is True
     assert _spj_numbers_match("2501787882", "2501787883") is False
+
+
+
+def test_ocr_amount_scale_repairs_decimal_magnitude_loss():
+    assert _normalize_ocr_amount_scale(
+        Decimal("2.35"),
+        Decimal("2350000.00"),
+    ) == Decimal("2350000.00")
+    assert _normalize_ocr_amount_scale(
+        Decimal("5644800.00"),
+        Decimal("1144600.00"),
+        Decimal("4500200.00"),
+    ) == Decimal("5644800.00")

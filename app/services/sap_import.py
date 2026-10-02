@@ -28,6 +28,7 @@ SAP_LEDGER_COLUMNS = {
     "Customer Account: Name 1": "customer_account_name",
 }
 SAP_LEDGER_TEXT_COLUMN = "Text"
+SAP_LEDGER_CUSTOMER_ALIASES = ("Customer", "Customer Account", "Customer Number", "Customer Account Number")
 
 
 def _clean_text(value: object) -> str | None:
@@ -123,19 +124,31 @@ def _import_sap_ledger(dataframe: pd.DataFrame) -> list[dict[str, object]]:
     # Duplicate effective keys are aggregated to the net SAP balance.
     grouped = frame.groupby("_vouching_key", sort=False)
     rows: list[dict[str, object]] = []
+    customer_code_column = next(
+        (column for column in SAP_LEDGER_CUSTOMER_ALIASES if column in frame.columns),
+        None,
+    )
     for vouching_key, group in grouped:
         dates = pd.to_datetime(group["Document Date"], errors="coerce").dropna()
         if dates.empty:
             raise ValueError(f"Billing/Text {vouching_key}: Document Date is required")
-        customer = next(
+        customer_name = next(
             (_clean_text(value) for value in group["Customer Account: Name 1"] if _clean_text(value)),
             None,
+        )
+        customer_code = (
+            next(
+                (_clean_identifier(value) for value in group[customer_code_column] if _clean_identifier(value)),
+                None,
+            )
+            if customer_code_column
+            else None
         )
         nominal = Decimal(str(group["_value"].sum())).quantize(Decimal("0.01"))
         rows.append(
             {
-                "customer": None,
-                "customer_account_name": customer,
+                "customer": customer_code,
+                "customer_account_name": customer_name,
                 "billing_document": str(vouching_key),
                 "doc_date": dates.max().date(),
                 "nominal": nominal,

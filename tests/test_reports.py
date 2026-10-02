@@ -169,7 +169,65 @@ def test_build_working_paper_sorted_grouped_and_blank_when_no_evidence(tmp_path,
         assert ws["J4"].value in ("", None)
         assert ws["K4"].value in ("", None)
 
-        # Customer subtotal follows the grouped customer rows.
-        assert ws["B5"].value == "ABADI JAYA, TOKO Total"
-        assert ws["E5"].value == 3000
-        assert ws["B6"].value == "ZETA TOKO"
+        # No customer subtotal rows: next row is the next customer.
+        assert ws["B5"].value == "ZETA TOKO"
+        assert all("Total" not in str(ws.cell(row, 2).value or "") for row in range(3, ws.max_row + 1))
+
+
+
+def test_working_paper_repairs_obvious_ocr_scale_loss_without_subtotal(tmp_path, monkeypatch):
+    engine = create_engine("sqlite:///:memory:")
+    from app.database import Base
+    Base.metadata.create_all(engine)
+    import app.services.reports as reports
+    monkeypatch.setattr(reports, "REPORT_ROOT", tmp_path)
+
+    with Session(engine) as db:
+        batch = ImportBatch(file_name="sap.xlsx", branch="KEDIRI", total_records=1, status="IMPORTED")
+        db.add(batch)
+        db.flush()
+        sap = SAPBilling(
+            import_batch_id=batch.id,
+            customer="2119709",
+            customer_account_name="SANTOSO, TOKO",
+            billing_document="8501735930",
+            doc_date=date(2026, 8, 24),
+            nominal=Decimal("2350000.00"),
+        )
+        db.add(sap)
+        db.flush()
+        doc = Document(
+            file_name="SANTOSO 8501735930.pdf",
+            file_type="PDF",
+            document_type="BILLING",
+            file_hash="santoso-hash",
+            storage_path="dummy.pdf",
+            branch="KEDIRI",
+        )
+        db.add(doc)
+        db.flush()
+        physical = PhysicalBilling(
+            document_id=doc.id,
+            billing_document="8501735930",
+            nominal=Decimal("2.35"),
+        )
+        db.add(physical)
+        db.flush()
+        db.add(BillingReconciliation(
+            sap_billing_id=sap.id,
+            physical_billing_id=physical.id,
+            billing_match=True,
+            date_match=False,
+            nominal_match=False,
+            nominal_difference=Decimal("2349997.65"),
+            status="EXCEPTION",
+        ))
+        db.commit()
+
+        path = build_working_paper_report(db, batch.id, branch="KEDIRI")
+        ws = load_workbook(path)["Kertas Kerja"]
+
+        assert ws["A3"].value == "2119709"
+        assert ws["H3"].value == 2350000
+        assert ws["I3"].value == "-"
+        assert ws.max_row == 3

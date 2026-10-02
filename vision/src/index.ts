@@ -657,7 +657,7 @@ async function localAnalyze(
   }
 
   return {
-    engine: 'LOCAL_TESSERACT_VISUAL_V6',
+    engine: 'LOCAL_TESSERACT_VISUAL_V7',
     billing_document: billingDocument,
     invoice_date: null,
     grand_total: paymentResult.grossTotal,
@@ -683,7 +683,7 @@ app.get('/health', (c) =>
   c.json({
     status: 'ok',
     service: 'vision',
-    engine: 'LOCAL_TESSERACT_VISUAL_V6',
+    engine: 'LOCAL_TESSERACT_VISUAL_V7',
   }),
 );
 
@@ -691,7 +691,7 @@ app.get('/vision-ai-health', async (c) => {
   // Preview-only diagnostic route used while this branch is under test.
   return c.json({
     status: 'ok',
-    engine: 'LOCAL_TESSERACT_VISUAL_V6',
+    engine: 'LOCAL_TESSERACT_VISUAL_V7',
     paid_gateway_required: false,
   });
 });
