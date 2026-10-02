@@ -273,3 +273,30 @@ def test_import_sap_requires_branch_when_file_has_none_and_actor_is_global() -> 
             import_sap_excel(db, filename="no_branch.xlsx", content=content)
     finally:
         db.close()
+
+
+
+def test_import_sap_ledger_preserves_customer_code_when_available() -> None:
+    content = excel_bytes(
+        [
+            {
+                "Customer": "2119709",
+                "Billing Document": "8501735930",
+                "Text": None,
+                "Document Date": "2026-08-24",
+                "Company Code Currency Value": 2350000,
+                "Customer Account: Name 1": "SANTOSO, TOKO",
+            }
+        ]
+    )
+    db = SessionLocal()
+    batch = None
+    try:
+        batch = import_sap_excel(db, filename="sap_ledger_customer.xlsx", content=content, branch="TEST-SAP-LEDGER")
+        row = db.query(SAPBilling).filter(SAPBilling.import_batch_id == batch.id).one()
+        assert row.customer == "2119709"
+        assert row.customer_account_name == "SANTOSO, TOKO"
+    finally:
+        if batch is not None:
+            cleanup(db, batch.id)
+        db.close()
