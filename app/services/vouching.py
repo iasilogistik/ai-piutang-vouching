@@ -576,19 +576,23 @@ def ocr_document(
                     fields["no_spj_raw"] = vision["spj_number"]
                     fields["no_spj"] = _normalize_spj_number(vision["spj_number"])
                 if doc.document_type == "BILLING":
-                    # Visual invoice/faktur issue date is authoritative for the
-                    # physical Billing date. A null result clears stale generic
-                    # dates (due/delivery/print) rather than leaving them behind.
+                    # Accuracy-first physical fields: when visual Billing analysis
+                    # runs, only explicit fields from the selected Billing/Invoice/
+                    # Faktur page are authoritative. Null clears stale generic OCR
+                    # values rather than retaining a due/delivery date or unrelated
+                    # amount from another page in the combined PDF.
                     fields["doc_date"] = vision.get("invoice_date")
-                elif fields.get("doc_date") is None and vision.get("invoice_date") is not None:
-                    fields["doc_date"] = vision["invoice_date"]
-                if fields.get("nominal") is None and vision.get("grand_total") is not None:
-                    fields["nominal"] = vision["grand_total"]
+                    fields["nominal"] = vision.get("grand_total")
+                else:
+                    if fields.get("doc_date") is None and vision.get("invoice_date") is not None:
+                        fields["doc_date"] = vision["invoice_date"]
+                    if fields.get("nominal") is None and vision.get("grand_total") is not None:
+                        fields["nominal"] = vision["grand_total"]
                 vision_partial, vision_partial_raw = partial_payment_summary(vision)
                 if doc.document_type == "BILLING":
-                    # V13 is evidence-only for partial payment. Always replace
-                    # the old value, including clearing legacy SAP-derived
-                    # partials when the physical document does not support them.
+                    # Partial payment is evidence-only. Always replace the old
+                    # value, including clearing legacy derived/false positives
+                    # when no explicit payment label exists on the Billing page.
                     fields["partial_payment"] = vision_partial
                     fields["partial_payment_raw"] = vision_partial_raw
                 elif fields.get("partial_payment") is None and vision_partial is not None:
@@ -690,14 +694,18 @@ def ocr_document(
                 # invoice/faktur issue date. If the label is not readable, clear
                 # the stale value rather than showing a due/delivery date.
                 paired.doc_date = vision.get("invoice_date")
-                if vision.get("grand_total") is not None:
-                    paired.nominal = _normalize_ocr_amount_scale(
-                        vision["grand_total"],
+                strict_grand_total = vision.get("grand_total")
+                paired.nominal = (
+                    _normalize_ocr_amount_scale(
+                        strict_grand_total,
                         expected_nominal,
                         paired.partial_payment,
                     )
+                    if strict_grand_total is not None
+                    else None
+                )
 
-                # Prefer structured partial-payment rows from visual V5. If the
+                # Prefer structured partial-payment rows from visual analysis. If the
                 # visual service could not structure them but OCR text did, use
                 # the parsed text result. Persist once on Billing to prevent
                 # double subtraction in reconciliation.
