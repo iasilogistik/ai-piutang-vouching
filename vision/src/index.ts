@@ -62,24 +62,73 @@ function flattenBlocks(blocks: any[] | null | undefined): { lines: OcrLine[]; wo
   return { lines, words };
 }
 
-async function recognizePage(dataUrl: string): Promise<PageOcr> {
-  const image = dataUrlToBuffer(dataUrl);
-  const metadata = await sharp(image).metadata();
-  const width = Number(metadata.width || 0);
-  const height = Number(metadata.height || 0);
-  if (!width || !height) throw new Error('Unable to determine image size');
+function orientationTextScore(text: string, expectedBillingDocument?: string | null): number {
+  const value = String(text || '');
+  const upper = value.toUpperCase();
+  const compact = upper.replace(/[^A-Z0-9]/g, '');
+  const expected = String(expectedBillingDocument || '').replace(/[^A-Z0-9]/gi, '').toUpperCase();
+  let score = Math.min(3, compact.length / 140);
+  if (expected && compact.includes(expected)) score += 10;
+  if (/SURAT\s+PERINTAH\s+JALAN/i.test(value)) score += 8;
+  if (/SEMEN\s+INDONESIA\s+DISTRIBUTOR/i.test(value)) score += 4;
+  if (/\b(BILLING|INVOICE|FAKTUR)\b/i.test(value)) score += 5;
+  if (/\b(GRAND\s+TOTAL|TOTAL\s+TAGIHAN|NILAI\s+FAKTUR)\b/i.test(value)) score += 3;
+  if (/\b(PENERIMA|DRIVER|CHECKER|SATPAM|BRANCH\s+MANAGER)\b/i.test(value)) score += 2;
+  return score;
+}
 
+async function recognizePage(
+  dataUrl: string,
+  expectedBillingDocument?: string | null,
+): Promise<PageOcr> {
+  const input = dataUrlToBuffer(dataUrl);
+
+  // First apply EXIF orientation. Then OCR the physical pixel orientation with
+  // rotateAuto disabled so OCR bounding boxes and the image used for signature
+  // / stamp crops always share the same coordinate system.
+  const baseImage = await sharp(input).rotate().toBuffer();
   const worker = await getWorker();
-  const result = await worker.recognize(image, { rotateAuto: true }, { text: true, blocks: true });
-  const flat = flattenBlocks(result.data.blocks as any[] | null | undefined);
-  return {
-    text: String(result.data.text || '').trim(),
-    lines: flat.lines,
-    words: flat.words,
-    width,
-    height,
-    image,
-  };
+
+  async function readVariant(image: Buffer, degrees: number) {
+    const metadata = await sharp(image).metadata();
+    const width = Number(metadata.width || 0);
+    const height = Number(metadata.height || 0);
+    if (!width || !height) throw new Error('Unable to determine image size');
+    const result = await worker.recognize(image, { rotateAuto: false }, { text: true, blocks: true });
+    const text = String(result.data.text || '').trim();
+    const flat = flattenBlocks(result.data.blocks as any[] | null | undefined);
+    return {
+      page: {
+        text,
+        lines: flat.lines,
+        words: flat.words,
+        width,
+        height,
+        image,
+      } satisfies PageOcr,
+      score: orientationTextScore(text, expectedBillingDocument),
+      degrees,
+    };
+  }
+
+  let best = await readVariant(baseImage, 0);
+
+  // Tesseract auto-orientation is unreliable for camera scans that are exactly
+  // 90/180/270 degrees sideways. Only pay the extra OCR cost when the first
+  // pass does not contain enough domain text. This keeps normal documents fast.
+  if (best.score < 6) {
+    for (const degrees of [90, 270, 180]) {
+      const rotated = await sharp(baseImage).rotate(degrees).toBuffer();
+      const candidate = await readVariant(rotated, degrees);
+      if (candidate.score > best.score) best = candidate;
+      if (best.score >= 12) break;
+    }
+  }
+
+  if (best.degrees) {
+    console.log('LOCAL_OCR_ROTATION_SELECTED', best.degrees);
+  }
+  return best.page;
 }
 
 function norm(value: string): string {
@@ -551,21 +600,23 @@ function parseInvoiceDate(text: string, expectedDocDate?: string | null): string
   const lines = String(text || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   const datePattern = /(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{1,2}\s+[A-Za-z]{3,12}\s+\d{4}|[A-Za-z]{3,12}\s+\d{1,2},?\s+\d{4})/i;
 
-  // Physical Doc. Date is evidence-only. Accept only a date attached to an
-  // Invoice/Faktur/Billing issue-date label. SAP date may disambiguate only
-  // when that exact date is also visibly printed on the selected Billing page.
+  // Physical Doc. Date must be the printed Faktur/Invoice/Billing issue date,
+  // never due date / jatuh tempo. Include common OCR confusions such as
+  // TANGGAI, TG1 and FAKT0R so a slightly rotated/faint label is still usable.
   const invoiceLabels = [
-    /\bTANGGAL\s+FAKTUR(?:\s+PAJAK)?\b/i,
-    /\bTGL\.?\s+FAKTUR(?:\s+PAJAK)?\b/i,
-    /\bFAKTUR\s+DATE\b/i,
+    /\bTANGGA[L1I]\s+F[A4]KT[UO0]R(?:\s+PAJAK)?\b/i,
+    /\bTG[L1I]\.?\s+F[A4]KT[UO0]R(?:\s+PAJAK)?\b/i,
+    /\bFAKT[UO0]R\s+DATE\b/i,
     /\bINVOICE\s+DATE\b/i,
     /\bDATE\s+OF\s+INVOICE\b/i,
-    /\bTANGGAL\s+INVOICE\b/i,
-    /\bTGL\.?\s+INVOICE\b/i,
+    /\bTANGGA[L1I]\s+INVOICE\b/i,
+    /\bTG[L1I]\.?\s+INVOICE\b/i,
     /\bBILLING\s+DATE\b/i,
     /\bBILL\s+DATE\b/i,
+    /\bDOCUMENT\s+DATE\b/i,
+    /\bTANGGA[L1I]\s+DOKUMEN\b/i,
   ];
-  const forbiddenLabels = /\b(DUE\s+DATE|PAYMENT\s+DUE|NET\s+DUE|JATUH\s+TEMPO|TANGGAL\s+JATUH\s+TEMPO|TGL\.?\s+JATUH\s+TEMPO|BATAS\s+PEMBAYARAN|DELIVERY\s+DATE|TANGGAL\s+PENGIRIMAN|POSTING\s+DATE|PRINT\s+DATE|TANGGAL\s+CETAK|TGL\.?\s+CETAK|ORDER\s+DATE|PO\s+DATE)\b/i;
+  const forbiddenLabels = /\b(DUE\s+DATE|PAYMENT\s+DUE|NET\s+DUE|JATUH\s+TEMPO|TANGGA[L1I]\s+JATUH\s+TEMPO|TG[L1I]\.?\s+JATUH\s+TEMPO|BATAS\s+PEMBAYARAN|DELIVERY\s+DATE|TANGGA[L1I]\s+PENGIRIMAN|POSTING\s+DATE|PRINT\s+DATE|TANGGA[L1I]\s+CETAK|TG[L1I]\.?\s+CETAK|ORDER\s+DATE|PO\s+DATE)\b/i;
 
   const labeled: string[] = [];
   for (let i = 0; i < lines.length; i++) {
@@ -573,13 +624,16 @@ function parseInvoiceDate(text: string, expectedDocDate?: string | null): string
     if (!invoiceLabels.some((pattern) => pattern.test(line))) continue;
     if (forbiddenLabels.test(line)) continue;
 
-    for (let offset = 0; offset <= 1 && i + offset < lines.length; offset++) {
+    // Prefer a date on the same line. A one/two-line fallback is allowed for
+    // table layouts where the label and value are vertically stacked.
+    for (let offset = 0; offset <= 2 && i + offset < lines.length; offset++) {
       const candidateLine = lines[i + offset];
       if (forbiddenLabels.test(candidateLine)) continue;
       const match = datePattern.exec(candidateLine);
       if (!match) continue;
       const normalized = parseInvoiceDateValue(match[1]);
       if (normalized && !labeled.includes(normalized)) labeled.push(normalized);
+      if (offset === 0 && normalized) break;
     }
   }
   if (!labeled.length) return null;
@@ -592,9 +646,9 @@ function parseInvoiceDate(text: string, expectedDocDate?: string | null): string
 
     if (expectedPrinted && labeled.length === 1) {
       const delta = daysBetweenIso(labeled[0], expected);
-      // Common credit terms are a strong signal that OCR associated Due Date
-      // with an Invoice/Billing label. Prefer SAP date only because that same
-      // date is visibly printed on the physical Billing page.
+      // 30/45/60/90-day terms are a typical symptom of the due date being
+      // associated with a damaged Invoice Date label. Use SAP only when the SAP
+      // date itself is also visibly printed on this Billing page.
       if ([30, 45, 60, 90].includes(delta)) return expected;
     }
 
@@ -632,6 +686,14 @@ function selectBillingPageIndex(pages: PageOcr[], expectedBillingDocument?: stri
   return bestScore >= 5 ? bestIndex : -1;
 }
 
+function parsePaymentMoneyToken(value: string): number | null {
+  // Payment lines are often printed as negative credits. For a partial-payment
+  // amount we need the absolute paid value, while gross/outstanding parsers stay
+  // positive-only.
+  const cleaned = String(value || '').trim().replace(/^\(/, '').replace(/^[-–—]+/, '');
+  return parseMoneyToken(cleaned);
+}
+
 function parsePartialPayments(
   text: string,
   allowPrintedDerivation = true,
@@ -639,19 +701,19 @@ function parsePartialPayments(
   const rows: Array<{ amount: number; date: string | null; reference: string | null }> = [];
 
   const explicitPatterns = [
-    /(?:PARTIAL\s+PAYMENT|PARTIAL\s+PAID|PAYMENT\s+PARTIAL)\s*[:#=-]?\s*(?:RP\.?\s*)?([0-9][0-9.,:\s-]*)/gi,
-    /(?:PAYMENT\s+RECEIVED|PAYMENT\s+PAID|AMOUNT\s+PAID|PAID\s+AMOUNT)\s*[:#=-]?\s*(?:RP\.?\s*)?([0-9][0-9.,:\s-]*)/gi,
-    /(?:JUMLAH\s+DIBAYAR|PEMBAYARAN\s+(?:PARTIAL|PARSIAL|DITERIMA|SEBELUMNYA|TERDAHULU)|TELAH\s+DIBAYAR|SUDAH\s+DIBAYAR)\s*[:#=-]?\s*(?:RP\.?\s*)?([0-9][0-9.,:\s-]*)/gi,
-    /(?:DOWN\s+PAYMENT|\bDP\b|UANG\s+MUKA)\s*[:#=-]?\s*(?:RP\.?\s*)?([0-9][0-9.,:\s-]*)/gi,
+    /(?:PARTIAL\s+PAYMENT|PARTIAL\s+PAID|PAYMENT\s+PARTIAL|PARTIAL\s+BILLING)[ \t]*[:#=-]?[ \t]*(?:RP\.?[ \t]*)?([-–—(]?[0-9][0-9.,: \t-]*)/gi,
+    /(?:PAYMENT\s+RECEIVED|PAYMENT\s+PAID|PAYMENT\s+AMOUNT|AMOUNT\s+PAID|PAID\s+AMOUNT)[ \t]*[:#=-]?[ \t]*(?:RP\.?[ \t]*)?([-–—(]?[0-9][0-9.,: \t-]*)/gi,
+    /(?:JUMLAH\s+DIBAYAR|NILAI\s+PEMBAYARAN|TOTAL\s+PEMBAYARAN|JUMLAH\s+PEMBAYARAN|PEMBAYARAN\s+(?:PARTIAL|PARSIAL|SEBAGIAN|DITERIMA|SEBELUMNYA|TERDAHULU)|PELUNASAN\s+SEBAGIAN|TELAH\s+DIBAYAR|SUDAH\s+DIBAYAR)[ \t]*[:#=-]?[ \t]*(?:RP\.?[ \t]*)?([-–—(]?[0-9][0-9.,: \t-]*)/gi,
+    /(?:DOWN\s+PAYMENT|\bDP\b|UANG\s+MUKA)[ \t]*[:#=-]?[ \t]*(?:RP\.?[ \t]*)?([-–—(]?[0-9][0-9.,: \t-]*)/gi,
   ];
 
   for (const pattern of explicitPatterns) {
     pattern.lastIndex = 0;
     let match: RegExpExecArray | null;
     while ((match = pattern.exec(text)) !== null) {
-      const amount = parseMoneyToken(match[1]);
+      const amount = parsePaymentMoneyToken(match[1]);
       if (amount === null) continue;
-      const reference = match[0].trim().slice(0, 140);
+      const reference = match[0].trim().slice(0, 160);
       if (!rows.some((row) => Math.abs(row.amount - amount) < 0.01 && row.reference === reference)) {
         rows.push({ amount, date: null, reference });
       }
@@ -659,26 +721,55 @@ function parsePartialPayments(
   }
 
   const gross = findLabeledAmount(text, [
-    /(?:GRAND\s+TOTAL|TOTAL\s+TAGIHAN|TOTAL\s+INVOICE|JUMLAH\s+TAGIHAN|INVOICE\s+TOTAL|TOTAL\s+BILLING|NILAI\s+FAKTUR)\s*[:#=-]?\s*(?:RP\.?\s*)?([0-9][0-9.,:\s-]*)/i,
+    /(?:GRAND[ \t]+TOTAL|TOTAL[ \t]+TAGIHAN|TOTAL[ \t]+INVOICE|JUMLAH[ \t]+TAGIHAN|INVOICE[ \t]+TOTAL|TOTAL[ \t]+BILLING|NILAI[ \t]+FAKTUR|TOTAL[ \t]+FAKTUR)[ \t]*[:#=-]?[ \t]*(?:RP\.?[ \t]*)?([0-9][0-9.,: \t-]*)/i,
+  ]);
+  const subtotal = findLabeledAmount(text, [
+    /(?:SUB[ \t]*TOTAL|DPP)[ \t]*[:#=-]?[ \t]*(?:RP\.?[ \t]*)?([0-9][0-9.,: \t-]*)/i,
+  ]);
+  const tax = findLabeledAmount(text, [
+    /(?:PPN|VAT)[ \t]*[:#=-]?[ \t]*(?:RP\.?[ \t]*)?([0-9][0-9.,: \t-]*)/i,
   ]);
   const outstanding = findLabeledAmount(text, [
-    /(?:OUTSTANDING|BALANCE\s+DUE|AMOUNT\s+DUE|SISA\s+TAGIHAN|SISA\s+PEMBAYARAN|SALDO\s+TERUTANG|NET\s+DUE|NET\s+OUTSTANDING)\s*[:#=-]?\s*(?:RP\.?\s*)?([0-9][0-9.,:\s-]*)/i,
+    /(?:OUTSTANDING(?:[ \t]+PIUTANG)?|TOTAL[ \t]+OUTSTANDING|BALANCE[ \t]+DUE|AMOUNT[ \t]+DUE|SISA[ \t]+TAGIHAN|SISA[ \t]+TAGIH|SISA[ \t]+PEMBAYARAN|SISA[ \t]+PIUTANG|SISA[ \t]+BILLING|SALDO[ \t]+TERUTANG|SALDO[ \t]+PIUTANG|NET[ \t]+DUE|NET[ \t]+OUTSTANDING)[ \t]*[:#=-]?[ \t]*(?:RP\.?[ \t]*)?([0-9][0-9.,: \t-]*)/i,
   ]);
 
-  // Derive partial payment only when BOTH amounts are printed on the same
-  // Billing page. Never derive payment from SAP outstanding.
-  if (allowPrintedDerivation && rows.length === 0 && gross && outstanding && gross.amount > outstanding.amount) {
-    const derived = Math.round((gross.amount - outstanding.amount) * 100) / 100;
+  let grossTotal = gross?.amount ?? null;
+
+  // Real SID billings often print Sub Total + PPN + Grand Total. When OCR drops
+  // a zero in Grand Total (e.g. 8.815.890 -> 881.589), the printed arithmetic is
+  // stronger evidence than the damaged total token. Use it only when the direct
+  // total is absent or clearly below its own subtotal.
+  if (subtotal && tax) {
+    const componentTotal = Math.round((subtotal.amount + tax.amount) * 100) / 100;
+    if (grossTotal === null || grossTotal < subtotal.amount || grossTotal < componentTotal * 0.5) {
+      grossTotal = componentTotal;
+    }
+  }
+
+  // Derive partial payment only from values printed on the physical evidence.
+  // SAP outstanding is never used to manufacture a payment.
+  if (
+    allowPrintedDerivation &&
+    rows.length === 0 &&
+    grossTotal !== null &&
+    outstanding &&
+    grossTotal > outstanding.amount
+  ) {
+    const derived = Math.round((grossTotal - outstanding.amount) * 100) / 100;
     if (derived > 0) {
       rows.push({
         amount: derived,
         date: null,
-        reference: 'DERIVED_DOCUMENT_TOTAL_MINUS_PRINTED_OUTSTANDING | ' + gross.reference + ' | ' + outstanding.reference,
+        reference:
+          'DERIVED_DOCUMENT_TOTAL_MINUS_PRINTED_OUTSTANDING | GROSS ' +
+          grossTotal +
+          ' | ' +
+          outstanding.reference,
       });
     }
   }
 
-  return { rows, grossTotal: gross?.amount ?? null };
+  return { rows, grossTotal };
 }
 
 async function localAnalyze(
@@ -689,7 +780,9 @@ async function localAnalyze(
   expectedDocDate?: string | null,
 ) {
   const pages: PageOcr[] = [];
-  for (const image of images.slice(0, 3)) pages.push(await recognizePage(String(image)));
+  for (const image of images.slice(0, 3)) {
+    pages.push(await recognizePage(String(image), expectedBillingDocument));
+  }
 
   // When a package contains Delivery Order + Billing + SPJ, only the official
   // PT SID page headed "SURAT PERINTAH JALAN" is authoritative for SPJ number,
@@ -844,7 +937,7 @@ async function localAnalyze(
   // same Billing evidence are accepted by parsePartialPayments().
 
   return {
-    engine: 'LOCAL_TESSERACT_VISUAL_V15',
+    engine: 'LOCAL_TESSERACT_VISUAL_V16',
     billing_document: billingDocument,
     invoice_date: invoiceDate,
     grand_total: paymentResult.grossTotal,
@@ -860,7 +953,8 @@ async function localAnalyze(
         ? 'SPJ resmi dipilih dari halaman PT Semen Indonesia Distributor berjudul SURAT PERINTAH JALAN.'
         : 'Header SPJ resmi tidak terbaca; sistem memakai fallback dokumen.',
       'TTD hanya dinilai dari ada/tidaknya coretan visual; keaslian dan identitas tidak dianalisis.',
-      'Tanggal fisik Billing hanya diambil dari label tanggal Invoice/Faktur/Billing/Document pada halaman Billing; Due/Jatuh Tempo/Delivery tidak pernah dipakai.',
+      'Tanggal fisik Billing hanya diambil dari tanggal Faktur/Invoice/Billing/Document yang tercetak pada halaman Billing; Due/Jatuh Tempo/Delivery tidak pernah dipakai.',
+      'Nominal fisik memakai Gross/Grand Total yang tercetak, dengan recovery Sub Total + PPN bila token Grand Total kehilangan digit.',
       'Partial payment hanya dibaca dari bukti fisik: label pembayaran atau Total dikurangi Outstanding/Sisa yang sama-sama tercetak pada Billing. Selisih terhadap SAP tidak pernah dianggap sebagai partial payment.'
     ],
     ocr_text: ocrText,
@@ -871,7 +965,7 @@ app.get('/health', (c) =>
   c.json({
     status: 'ok',
     service: 'vision',
-    engine: 'LOCAL_TESSERACT_VISUAL_V15',
+    engine: 'LOCAL_TESSERACT_VISUAL_V16',
   }),
 );
 
@@ -879,41 +973,87 @@ app.get('/vision-ai-health', async (c) => {
   // Preview-only diagnostic route used while this branch is under test.
   return c.json({
     status: 'ok',
-    engine: 'LOCAL_TESSERACT_VISUAL_V15',
+    engine: 'LOCAL_TESSERACT_VISUAL_V16',
     paid_gateway_required: false,
   });
 });
 
 app.get('/vision-local-selftest', async (c) => {
   try {
-    const svg = `
+    // Billing page is deliberately rotated 90 degrees and its Grand Total is
+    // deliberately missing one zero. The self-test therefore covers the two
+    // production failures reported in the working paper: rotated scans and
+    // gross-total magnitude loss.
+    const billingSvg = `
       <svg width="1200" height="900" xmlns="http://www.w3.org/2000/svg">
         <rect width="1200" height="900" fill="white"/>
-        <text x="70" y="90" font-size="38" font-family="Arial">BILLING DOCUMENT 8501735930</text>
-        <text x="70" y="145" font-size="34" font-family="Arial">NO SPJ S41C/202608/2501787882</text>
-        <text x="70" y="200" font-size="34" font-family="Arial">GRAND TOTAL 3000000</text>
-        <text x="70" y="255" font-size="34" font-family="Arial">PARTIAL PAYMENT 1000000</text>
-        <rect x="60" y="560" width="1080" height="230" fill="none" stroke="black" stroke-width="3"/>
-        <text x="90" y="620" font-size="30" font-family="Arial">PENERIMA</text>
-        <text x="335" y="620" font-size="30" font-family="Arial">DRIVER</text>
-        <text x="565" y="620" font-size="30" font-family="Arial">SECURITY</text>
-        <text x="790" y="620" font-size="30" font-family="Arial">CHECKER</text>
-        <path d="M100 700 C160 630 210 760 270 680" fill="none" stroke="#1557d5" stroke-width="10"/>
-        <path d="M340 700 C390 640 450 760 500 680" fill="none" stroke="#1557d5" stroke-width="10"/>
-        <path d="M580 700 C630 650 690 760 740 680" fill="none" stroke="#1557d5" stroke-width="10"/>
-        <path d="M800 700 C850 645 910 755 970 680" fill="none" stroke="#1557d5" stroke-width="10"/>
-        <ellipse cx="1080" cy="690" rx="70" ry="50" fill="none" stroke="#0a8a55" stroke-width="10"/>
-        <text x="1020" y="700" font-size="22" font-family="Arial" fill="#0a8a55">SANTOSO</text>
+        <text x="70" y="90" font-size="38" font-family="Arial">BILLING DOCUMENT 8501681202</text>
+        <text x="70" y="155" font-size="34" font-family="Arial">TANGGAL FAKTUR 03 Juli 2026</text>
+        <text x="70" y="215" font-size="30" font-family="Arial">POSTING DATE 10/09/2026</text>
+        <text x="70" y="330" font-size="34" font-family="Arial">SUB TOTAL 7.942.224</text>
+        <text x="70" y="390" font-size="34" font-family="Arial">PPN 873.666</text>
+        <text x="70" y="450" font-size="34" font-family="Arial">GRAND TOTAL 881.589</text>
+        <text x="70" y="520" font-size="34" font-family="Arial">PEMBAYARAN SEBAGIAN 3.400.008</text>
       </svg>`;
-    const image = await sharp(Buffer.from(svg)).jpeg({ quality: 88 }).toBuffer();
-    const dataUrl = 'data:image/jpeg;base64,' + image.toString('base64');
-    const result = await localAnalyze([dataUrl], 'SANTOSO');
+    const billingUpright = await sharp(Buffer.from(billingSvg)).jpeg({ quality: 92 }).toBuffer();
+    const billingRotated = await sharp(billingUpright).rotate(90).jpeg({ quality: 92 }).toBuffer();
+
+    const spjSvg = `
+      <svg width="1200" height="900" xmlns="http://www.w3.org/2000/svg">
+        <rect width="1200" height="900" fill="white"/>
+        <text x="70" y="70" font-size="30" font-family="Arial">PT SEMEN INDONESIA DISTRIBUTOR</text>
+        <text x="620" y="70" font-size="36" font-family="Arial">SURAT PERINTAH JALAN</text>
+        <text x="620" y="115" font-size="28" font-family="Arial">SPJ/S41C/202607/2501731412</text>
+        <text x="85" y="545" font-size="28" font-family="Arial">Penerima</text>
+        <text x="325" y="545" font-size="28" font-family="Arial">Driver</text>
+        <text x="510" y="545" font-size="28" font-family="Arial">Checker</text>
+        <text x="710" y="545" font-size="28" font-family="Arial">Satpam</text>
+        <text x="900" y="545" font-size="28" font-family="Arial">Branch Manager</text>
+        <path d="M90 595 C145 540 190 650 245 575" fill="none" stroke="#1557d5" stroke-width="10"/>
+        <path d="M330 595 C380 545 425 650 485 575" fill="none" stroke="#1557d5" stroke-width="10"/>
+        <path d="M520 595 C570 545 620 650 680 575" fill="none" stroke="#1557d5" stroke-width="10"/>
+        <path d="M715 595 C765 545 815 650 870 575" fill="none" stroke="#1557d5" stroke-width="10"/>
+        <path d="M915 595 C965 545 1030 650 1090 575" fill="none" stroke="#1557d5" stroke-width="10"/>
+        <ellipse cx="170" cy="620" rx="72" ry="45" fill="none" stroke="#0a8a55" stroke-width="9"/>
+        <text x="112" y="628" font-size="20" font-family="Arial" fill="#0a8a55">BERKAH</text>
+      </svg>`;
+    const spjImage = await sharp(Buffer.from(spjSvg)).jpeg({ quality: 92 }).toBuffer();
+
+    const result = await localAnalyze(
+      [
+        'data:image/jpeg;base64,' + billingRotated.toString('base64'),
+        'data:image/jpeg;base64,' + spjImage.toString('base64'),
+      ],
+      'BERKAH AL AQSO, TB',
+      '8501681202',
+      5415882,
+      '2026-09-10',
+    );
+
+    const partial = result.partial_payments.reduce(
+      (sum: number, row: { amount: number }) => sum + Number(row.amount || 0),
+      0,
+    );
+    const netPhysical =
+      result.grand_total == null ? null : Number(result.grand_total) - partial;
+
     return c.json({
-      status: 'ok',
+      status:
+        result.invoice_date === '2026-07-03' &&
+        Number(result.grand_total) === 8815890 &&
+        partial === 3400008 &&
+        netPhysical === 5415882
+          ? 'ok'
+          : 'failed',
       engine: result.engine,
-      ocr_text: String(result.ocr_text || '').slice(0, 700),
+      invoice_date: result.invoice_date,
+      grand_total: result.grand_total,
+      partial_payment: partial,
+      net_physical: netPhysical,
+      spj_number: result.spj_number,
       signatures: result.signatures,
       stamp: result.stamp,
+      ocr_text: String(result.ocr_text || '').slice(0, 1200),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

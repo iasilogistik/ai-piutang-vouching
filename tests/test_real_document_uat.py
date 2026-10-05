@@ -3,7 +3,7 @@ from decimal import Decimal
 import pandas as pd
 
 from app.services.sap_import import _import_sap_ledger
-from app.services.vouching import _parse_amount, parse_document_fields
+from app.services.vouching import _normalize_ocr_amount_scale, _parse_amount, parse_document_fields
 
 
 def test_real_sap_export_shape_aggregates_ledger_rows() -> None:
@@ -74,3 +74,14 @@ def test_grand_total_is_not_replaced_by_sub_total() -> None:
     Grand Total 570.000
     """
     assert parse_document_fields(text)["nominal"] == Decimal("570000.00")
+
+
+
+def test_scale_repair_recovers_dropped_zero_when_physical_partial_is_known() -> None:
+    repaired = _normalize_ocr_amount_scale(
+        Decimal("881589.00"),
+        Decimal("5415882.00"),
+        Decimal("3400008.00"),
+    )
+
+    assert repaired == Decimal("8815890.00")
