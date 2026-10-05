@@ -786,23 +786,18 @@ async function localAnalyze(
   // among dates that are actually visible on that Billing page.
   const billingText = billingPageIndex >= 0 ? pages[billingPageIndex].text : '';
   const invoiceDate = billingText ? parseInvoiceDate(billingText) : null;
-  let paymentResult = parsePartialPayments(billingText);
-  if (paymentResult.rows.length === 0 && billingPageIndex >= 0) {
-    const crossPagePayments = parsePartialPayments(ocrText);
-    paymentResult = {
-      rows: crossPagePayments.rows,
-      grossTotal: paymentResult.grossTotal,
-    };
-  }
+  const paymentResult = parsePartialPayments(billingText);
 
-  // Partial payment must be supported by the physical evidence itself.
+  // Partial payment must come from the selected Billing page only. Never scan
+  // SPJ/Delivery Order pages for payment words because that produced false
+  // partials in combined evidence packages.
   // Never manufacture a payment as Gross Billing - SAP outstanding: that can
   // make reconciliation appear correct even when the document has no payment
   // history. Only explicit payment labels or Total - printed Outstanding on the
   // same Billing evidence are accepted by parsePartialPayments().
 
   return {
-    engine: 'LOCAL_TESSERACT_VISUAL_V16',
+    engine: 'LOCAL_TESSERACT_VISUAL_V17',
     billing_document: billingDocument,
     invoice_date: invoiceDate,
     grand_total: paymentResult.grossTotal,
@@ -829,7 +824,7 @@ app.get('/health', (c) =>
   c.json({
     status: 'ok',
     service: 'vision',
-    engine: 'LOCAL_TESSERACT_VISUAL_V16',
+    engine: 'LOCAL_TESSERACT_VISUAL_V17',
   }),
 );
 
@@ -837,7 +832,7 @@ app.get('/vision-ai-health', async (c) => {
   // Preview-only diagnostic route used while this branch is under test.
   return c.json({
     status: 'ok',
-    engine: 'LOCAL_TESSERACT_VISUAL_V16',
+    engine: 'LOCAL_TESSERACT_VISUAL_V17',
     paid_gateway_required: false,
   });
 });
