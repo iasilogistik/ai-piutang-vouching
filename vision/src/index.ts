@@ -62,24 +62,73 @@ function flattenBlocks(blocks: any[] | null | undefined): { lines: OcrLine[]; wo
   return { lines, words };
 }
 
-async function recognizePage(dataUrl: string): Promise<PageOcr> {
-  const image = dataUrlToBuffer(dataUrl);
-  const metadata = await sharp(image).metadata();
-  const width = Number(metadata.width || 0);
-  const height = Number(metadata.height || 0);
-  if (!width || !height) throw new Error('Unable to determine image size');
+function orientationTextScore(text: string, expectedBillingDocument?: string | null): number {
+  const value = String(text || '');
+  const upper = value.toUpperCase();
+  const compact = upper.replace(/[^A-Z0-9]/g, '');
+  const expected = String(expectedBillingDocument || '').replace(/[^A-Z0-9]/gi, '').toUpperCase();
+  let score = Math.min(3, compact.length / 140);
+  if (expected && compact.includes(expected)) score += 10;
+  if (/SURAT\s+PERINTAH\s+JALAN/i.test(value)) score += 8;
+  if (/SEMEN\s+INDONESIA\s+DISTRIBUTOR/i.test(value)) score += 4;
+  if (/\b(BILLING|INVOICE|FAKTUR)\b/i.test(value)) score += 5;
+  if (/\b(GRAND\s+TOTAL|TOTAL\s+TAGIHAN|NILAI\s+FAKTUR)\b/i.test(value)) score += 3;
+  if (/\b(PENERIMA|DRIVER|CHECKER|SATPAM|BRANCH\s+MANAGER)\b/i.test(value)) score += 2;
+  return score;
+}
 
+async function recognizePage(
+  dataUrl: string,
+  expectedBillingDocument?: string | null,
+): Promise<PageOcr> {
+  const input = dataUrlToBuffer(dataUrl);
+
+  // First apply EXIF orientation. Then OCR the physical pixel orientation with
+  // rotateAuto disabled so OCR bounding boxes and the image used for signature
+  // / stamp crops always share the same coordinate system.
+  const baseImage = await sharp(input).rotate().toBuffer();
   const worker = await getWorker();
-  const result = await worker.recognize(image, { rotateAuto: true }, { text: true, blocks: true });
-  const flat = flattenBlocks(result.data.blocks as any[] | null | undefined);
-  return {
-    text: String(result.data.text || '').trim(),
-    lines: flat.lines,
-    words: flat.words,
-    width,
-    height,
-    image,
-  };
+
+  async function readVariant(image: Buffer, degrees: number) {
+    const metadata = await sharp(image).metadata();
+    const width = Number(metadata.width || 0);
+    const height = Number(metadata.height || 0);
+    if (!width || !height) throw new Error('Unable to determine image size');
+    const result = await worker.recognize(image, { rotateAuto: false }, { text: true, blocks: true });
+    const text = String(result.data.text || '').trim();
+    const flat = flattenBlocks(result.data.blocks as any[] | null | undefined);
+    return {
+      page: {
+        text,
+        lines: flat.lines,
+        words: flat.words,
+        width,
+        height,
+        image,
+      } satisfies PageOcr,
+      score: orientationTextScore(text, expectedBillingDocument),
+      degrees,
+    };
+  }
+
+  let best = await readVariant(baseImage, 0);
+
+  // Tesseract auto-orientation is unreliable for camera scans that are exactly
+  // 90/180/270 degrees sideways. Only pay the extra OCR cost when the first
+  // pass does not contain enough domain text. This keeps normal documents fast.
+  if (best.score < 6) {
+    for (const degrees of [90, 270, 180]) {
+      const rotated = await sharp(baseImage).rotate(degrees).toBuffer();
+      const candidate = await readVariant(rotated, degrees);
+      if (candidate.score > best.score) best = candidate;
+      if (best.score >= 12) break;
+    }
+  }
+
+  if (best.degrees) {
+    console.log('LOCAL_OCR_ROTATION_SELECTED', best.degrees);
+  }
+  return best.page;
 }
 
 function norm(value: string): string {
@@ -689,7 +738,9 @@ async function localAnalyze(
   expectedDocDate?: string | null,
 ) {
   const pages: PageOcr[] = [];
-  for (const image of images.slice(0, 3)) pages.push(await recognizePage(String(image)));
+  for (const image of images.slice(0, 3)) {
+    pages.push(await recognizePage(String(image), expectedBillingDocument));
+  }
 
   // When a package contains Delivery Order + Billing + SPJ, only the official
   // PT SID page headed "SURAT PERINTAH JALAN" is authoritative for SPJ number,
