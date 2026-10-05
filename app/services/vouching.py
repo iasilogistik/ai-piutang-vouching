@@ -575,17 +575,23 @@ def ocr_document(
                 elif vision.get("spj_number"):
                     fields["no_spj_raw"] = vision["spj_number"]
                     fields["no_spj"] = _normalize_spj_number(vision["spj_number"])
-                if vision.get("invoice_date") is not None and (
-                    doc.document_type == "BILLING" or fields.get("doc_date") is None
-                ):
-                    # For Billing evidence, the invoice/faktur date is
-                    # authoritative. Do not keep a generic "Tanggal" that may
-                    # have come from the SPJ/delivery page in a combined PDF.
+                if doc.document_type == "BILLING":
+                    # Visual invoice/faktur issue date is authoritative for the
+                    # physical Billing date. A null result clears stale generic
+                    # dates (due/delivery/print) rather than leaving them behind.
+                    fields["doc_date"] = vision.get("invoice_date")
+                elif fields.get("doc_date") is None and vision.get("invoice_date") is not None:
                     fields["doc_date"] = vision["invoice_date"]
                 if fields.get("nominal") is None and vision.get("grand_total") is not None:
                     fields["nominal"] = vision["grand_total"]
                 vision_partial, vision_partial_raw = partial_payment_summary(vision)
-                if fields.get("partial_payment") is None and vision_partial is not None:
+                if doc.document_type == "BILLING":
+                    # V13 is evidence-only for partial payment. Always replace
+                    # the old value, including clearing legacy SAP-derived
+                    # partials when the physical document does not support them.
+                    fields["partial_payment"] = vision_partial
+                    fields["partial_payment_raw"] = vision_partial_raw
+                elif fields.get("partial_payment") is None and vision_partial is not None:
                     fields["partial_payment"] = vision_partial
                     fields["partial_payment_raw"] = vision_partial_raw
     finally:
@@ -696,17 +702,12 @@ def ocr_document(
                 # the parsed text result. Persist once on Billing to prevent
                 # double subtraction in reconciliation.
                 vision_partial, vision_partial_raw = partial_payment_summary(vision)
-                paired_partial = vision_partial if vision_partial is not None else fields.get("partial_payment")
-                paired_partial_raw = (
-                    vision_partial_raw
-                    if vision_partial is not None
-                    else fields.get("partial_payment_raw")
-                )
-                if paired_partial is not None:
-                    paired.partial_payment = paired_partial
-                    paired.partial_payment_raw = paired_partial_raw
-                    row.partial_payment = None
-                    row.partial_payment_raw = None
+                paired.partial_payment = vision_partial
+                paired.partial_payment_raw = vision_partial_raw
+                # Combined-file payment is stored once on Billing to avoid
+                # subtracting the same amount twice.
+                row.partial_payment = None
+                row.partial_payment_raw = None
                 if paired.nominal is not None:
                     paired.nominal = _normalize_ocr_amount_scale(
                         paired.nominal,
