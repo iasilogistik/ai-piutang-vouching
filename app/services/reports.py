@@ -7,10 +7,6 @@ from pathlib import Path
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-from reportlab.lib.pagesizes import A4, landscape
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-from reportlab.lib import colors
-from reportlab.lib.styles import getSampleStyleSheet
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -116,6 +112,11 @@ def build_report(db: Session, batch_id: int, fmt: str, *, branch: str | None = N
         _autosize(wb)
         wb.save(path)
     else:
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import A4, landscape
+        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
         styles = getSampleStyleSheet()
         doc = SimpleDocTemplate(str(path), pagesize=landscape(A4), rightMargin=24, leftMargin=24, topMargin=24, bottomMargin=24)
         story = [Paragraph(f"AI Piutang Vouching — Batch {batch_id}", styles["Title"]), Spacer(1, 8),
