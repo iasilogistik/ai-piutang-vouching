@@ -60,9 +60,13 @@ def _image_data_urls(path: str, *, max_pages: int = MAX_PAGES) -> list[str]:
         finally:
             pdf.close()
     else:
-        from PIL import Image
+        from PIL import Image, ImageOps
 
-        image = Image.open(path).convert("RGB")
+        # Respect EXIF orientation before the image is flattened to RGB. Camera
+        # scans often look rotated only because the orientation is stored in
+        # metadata; converting first would discard that metadata and make OCR
+        # read a sideways page.
+        image = ImageOps.exif_transpose(Image.open(path)).convert("RGB")
         if image.width > 1400:
             ratio = 1400 / image.width
             image = image.resize((1400, max(1, int(image.height * ratio))))
