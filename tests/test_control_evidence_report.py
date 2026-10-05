@@ -24,7 +24,7 @@ def test_build_control_evidence_report_creates_workbook():
         )
         db.add(doc)
         db.flush()
-        db.add(SPJ(document_id=doc.id, no_spj_raw="SPJ-100", no_spj="SPJ100"))
+        db.add(SPJ(document_id=doc.id, no_spj_raw="SPJ/S41C/202609/2500000100", no_spj="2500000100"))
         db.add(
             DocumentControlEvidence(
                 document_id=doc.id,
@@ -51,5 +51,5 @@ def test_build_control_evidence_report_creates_workbook():
         assert "Manual Review Queue" in workbook.sheetnames
         rows = list(workbook["Control Evidence"].iter_rows(values_only=True))
         assert rows[0][0] == "Control Evidence ID"
-        assert rows[1][3] == "SPJ100"
+        assert rows[1][3] == "2500000100"
         assert rows[1][18] == "MATCH"

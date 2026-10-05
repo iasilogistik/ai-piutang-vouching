@@ -24,8 +24,8 @@ def test_end_to_end_pass_flow():
         spj_doc = Document(file_name="spj.pdf", file_type="PDF", document_type="SPJ", file_hash="e2e-spj", storage_path="storage/e2e-spj")
         db.add_all([billing_doc, spj_doc]); db.flush()
         billing = PhysicalBilling(document_id=billing_doc.id, billing_document_raw="B-100", billing_document="B100",
-                                  no_spj_raw="SPJ-100", no_spj="SPJ100", doc_date=date(2026, 9, 1), nominal=Decimal("1500000.00"))
-        spj = SPJ(document_id=spj_doc.id, no_spj_raw="SPJ-100", no_spj="SPJ100", ocr_confidence=Decimal("0.9000"))
+                                  no_spj_raw="SPJ/S41C/202609/2500000100", no_spj="2500000100", doc_date=date(2026, 9, 1), nominal=Decimal("1500000.00"))
+        spj = SPJ(document_id=spj_doc.id, no_spj_raw="SPJ/S41C/202609/2500000100", no_spj="2500000100", ocr_confidence=Decimal("0.9000"))
         db.add_all([billing, spj]); db.commit()
 
         rec = reconcile_batch(db, batch.id)

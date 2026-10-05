@@ -33,7 +33,7 @@ def control_evidence_dashboard_html() -> str:
     button.warning { background: var(--yellow); }
     button.danger { background: var(--red); }
     button:disabled { opacity: .55; cursor: not-allowed; }
-    .cards { margin: 18px 0; display: grid; gap: 12px; grid-template-columns: repeat(5, minmax(140px, 1fr)); }
+    .cards { margin: 18px 0; display: grid; gap: 12px; grid-template-columns: repeat(6, minmax(140px, 1fr)); }
     .card { padding: 16px; }
     .card .value { font-size: 28px; font-weight: 800; margin-top: 5px; }
     .card .label { color: var(--muted); font-size: 13px; }
@@ -111,6 +111,7 @@ def control_evidence_dashboard_html() -> str:
     <div class="card"><div class="label">Total Dokumen</div><div class="value" id="totalDocuments">-</div></div>
     <div class="card"><div class="label">PASS</div><div class="value" id="passDocuments">-</div></div>
     <div class="card"><div class="label">Perlu Review</div><div class="value" id="reviewDocuments">-</div></div>
+    <div class="card"><div class="label">Exception</div><div class="value" id="exceptionDocuments">-</div></div>
     <div class="card"><div class="label">Rows API</div><div class="value" id="returnedRows">-</div></div>
     <div class="card"><div class="label">Rows Setelah Filter</div><div class="value" id="visibleRows">-</div></div>
   </section>
@@ -220,6 +221,7 @@ function renderSummary(data, visibleCount) {
   document.getElementById('totalDocuments').textContent = summary.total_documents ?? '-';
   document.getElementById('passDocuments').textContent = summary.pass_documents ?? '-';
   document.getElementById('reviewDocuments').textContent = summary.review_required_documents ?? '-';
+  document.getElementById('exceptionDocuments').textContent = summary.exception_documents ?? '-';
   document.getElementById('returnedRows').textContent = data.returned_rows ?? '-';
   document.getElementById('visibleRows').textContent = visibleCount ?? '-';
 }

@@ -96,4 +96,4 @@ def test_reconciliation_and_vouching_keep_combined_scanned_evidence_linked():
         assert result.spj_id == spj.id
         assert result.status == "REVIEW"
         assert result.rule_code == "SPJ_NUMBER_UNREADABLE_PAIRED_EVIDENCE"
-        assert "evidence tidak dianggap hilang" in (result.remarks or "")
+        assert "nomor SPJ resmi" in (result.remarks or "")

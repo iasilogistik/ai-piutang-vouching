@@ -58,19 +58,19 @@ def _normalize_spj_number(value: str | None) -> str | None:
     if not raw:
         return None
 
-    compact = re.sub(r"\\s+", "", raw)
-    if re.fullmatch(r"\\d{8,12}", compact):
+    compact = re.sub(r"\s+", "", raw)
+    if re.fullmatch(r"\d{8,12}", compact):
         return compact
 
     official = re.search(
-        r"\\bSPJ\\s*[/\\\\-]\\s*[A-Z0-9]{2,10}\\s*[/\\\\-]\\s*\\d{6}\\s*[/\\\\-]\\s*(\\d{8,12})\\b",
+        r"\bSPJ\s*[/\\-]\s*[A-Z0-9]{2,10}\s*[/\\-]\s*\d{6}\s*[/\\-]\s*(\d{8,12})\b",
         raw,
         re.IGNORECASE,
     )
     if official:
         return official.group(1)
 
-    match = re.search(r"(?<![A-Za-z0-9])(\\d{8,12})(?![A-Za-z0-9])", raw)
+    match = re.search(r"(?<![A-Za-z0-9])(\d{8,12})(?![A-Za-z0-9])", raw)
     return match.group(1) if match else None
 
 def _billing_document_from_filename(file_name: str | None) -> str | None:
@@ -1059,35 +1059,23 @@ def vouch_spj(db: Session, *, branch: str | None = None) -> list[VouchingResult]
             if len(paired_spj) == 1:
                 spj = paired_spj[0]
                 control_evidence = _refresh_visual_pair(db, billing, spj)
-                if _control_evidence_complete(control_evidence):
-                    result = _upsert_vouching_result(
-                        db,
-                        billing=billing,
-                        spj=spj,
-                        spj_match=True,
-                        automated_status="PASS",
-                        automated_rule_code="PAIRED_EVIDENCE_COMPLETE",
-                        automated_remarks=(
-                            "Billing dan SPJ berasal dari file/hash/cabang yang sama; seluruh tanda tangan "
-                            "wajib dan stempel terdeteksi lengkap. Nomor SPJ belum terbaca dengan yakin, "
-                            "namun evidence visual lengkap sehingga vouching dinyatakan PASS."
-                        ),
-                        control_evidence=control_evidence,
-                    )
-                else:
-                    result = _upsert_vouching_result(
-                        db,
-                        billing=billing,
-                        spj=spj,
-                        spj_match=False,
-                        automated_status="REVIEW",
-                        automated_rule_code="SPJ_NUMBER_UNREADABLE_PAIRED_EVIDENCE",
-                        automated_remarks=(
-                            "Evidence SPJ ditemukan dari file/hash yang sama dengan Billing; evidence tidak dianggap hilang, "
-                            "tetapi nomor SPJ atau control evidence belum dapat dipastikan. Vouching diteruskan ke review."
-                        ),
-                        control_evidence=control_evidence,
-                    )
+                # A same-file/hash pair proves the evidence belongs together,
+                # but it does NOT prove the SPJ number is correct. A readable
+                # 8-12 digit transaction number is mandatory for automatic PASS.
+                result = _upsert_vouching_result(
+                    db,
+                    billing=billing,
+                    spj=spj,
+                    spj_match=False,
+                    automated_status="REVIEW",
+                    automated_rule_code="SPJ_NUMBER_UNREADABLE_PAIRED_EVIDENCE",
+                    automated_remarks=(
+                        "Evidence Billing dan SPJ berasal dari file/hash/cabang yang sama, tetapi nomor SPJ resmi "
+                        "belum terbaca sebagai 8-12 digit transaction number. Item tidak boleh auto-PASS dan "
+                        "diteruskan ke review."
+                    ),
+                    control_evidence=control_evidence,
+                )
             elif len(paired_spj) > 1:
                 result = _upsert_vouching_result(
                     db,

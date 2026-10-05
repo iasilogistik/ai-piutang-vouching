@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.branch_access import normalize_branch
-from app.models import Document, DocumentControlEvidence, VouchingResult
+from app.models import BillingReconciliation, Document, DocumentControlEvidence, VouchingResult
 from app.services.control_evidence_store import evidence_payload
 
 
@@ -47,10 +47,50 @@ def _latest_vouching_for_spj(db: Session, spj_id: int | None) -> VouchingResult 
     return db.scalar(select(VouchingResult).where(VouchingResult.spj_id == spj_id).order_by(VouchingResult.id.desc()))
 
 
+def _reconciliation_for_vouching(db: Session, vouching: VouchingResult | None) -> BillingReconciliation | None:
+    if vouching is None:
+        return None
+    return db.scalar(
+        select(BillingReconciliation)
+        .where(BillingReconciliation.physical_billing_id == vouching.billing_id)
+        .order_by(BillingReconciliation.id.desc())
+    )
+
+
+def _combined_overall_status(
+    row: DocumentControlEvidence,
+    reconciliation: BillingReconciliation | None,
+    vouching: VouchingResult | None,
+) -> str:
+    """Overall means end-to-end result, not control evidence alone."""
+    control_status = _control_status(row)
+    rec_status = reconciliation.status if reconciliation else None
+    vouch_status = vouching.status if vouching else None
+
+    if reconciliation is None and vouching is None:
+        return control_status
+    if control_status == "EXCEPTION" or rec_status in {"EXCEPTION", "NOT_FOUND"} or vouch_status == "EXCEPTION":
+        return "EXCEPTION"
+    if (
+        control_status == "REVIEW"
+        or rec_status == "REVIEW"
+        or vouch_status == "REVIEW"
+        or reconciliation is None
+        or vouching is None
+    ):
+        return "REVIEW"
+    if rec_status == "MATCH" and vouch_status == "PASS" and control_status == "PASS":
+        return "PASS"
+    return "REVIEW"
+
+
 def _dashboard_row(db: Session, row: DocumentControlEvidence) -> dict[str, Any]:
     document = row.document
     spj = document.spj if document else None
     vouching = _latest_vouching_for_spj(db, spj.id if spj else None)
+    reconciliation = _reconciliation_for_vouching(db, vouching)
+    control_status = _control_status(row)
+    overall_status = _combined_overall_status(row, reconciliation, vouching)
 
     payload = evidence_payload(row) or {}
     return {
@@ -79,7 +119,9 @@ def _dashboard_row(db: Session, row: DocumentControlEvidence) -> dict[str, Any]:
         "spj_partial_payment": str(spj.partial_payment) if spj and spj.partial_payment is not None else None,
         "vouching_result_id": vouching.id if vouching else None,
         "spj_vouching_status": vouching.status if vouching else None,
-        "overall_control_status": _control_status(row),
+        "reconciliation_status": reconciliation.status if reconciliation else None,
+        "control_evidence_status": control_status,
+        "overall_control_status": overall_status,
         "review_required": row.review_required,
         "review_reasons": _split_reasons(row.review_reasons),
         "review_status": row.review_status,
@@ -119,12 +161,22 @@ def build_control_evidence_dashboard(
     filtered_rows = [row for row in sorted_rows if row.review_required] if review_only else sorted_rows
     selected_rows = filtered_rows[:limit]
 
-    review_rows = [row for row in all_rows if row.review_required]
+    dashboard_all = [_dashboard_row(db, row) for row in all_rows]
+    combined_counts: dict[str, int] = {}
+    for payload in dashboard_all:
+        status = payload["overall_control_status"]
+        combined_counts[status] = combined_counts.get(status, 0) + 1
+
+    review_rows = [
+        row for row, payload in zip(all_rows, dashboard_all)
+        if payload["overall_control_status"] in {"REVIEW", "EXCEPTION"}
+    ]
     summary = {
         "total_documents": len(all_rows),
-        "pass_documents": sum(1 for row in all_rows if not row.review_required),
-        "review_required_documents": len(review_rows),
-        "overall_control_status": _control_status_counts(all_rows),
+        "pass_documents": combined_counts.get("PASS", 0),
+        "review_required_documents": combined_counts.get("REVIEW", 0),
+        "exception_documents": combined_counts.get("EXCEPTION", 0),
+        "overall_control_status": combined_counts,
         "receiver_signature": _status_counts(all_rows, "receiver_signature_status"),
         "driver_signature": _status_counts(all_rows, "driver_signature_status"),
         "security_signature": _status_counts(all_rows, "security_signature_status"),

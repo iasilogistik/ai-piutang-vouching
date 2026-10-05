@@ -264,20 +264,37 @@ async function residualInkStats(page: PageOcr, region: BBox, excludeOcrWords = t
 
   let darkCount = 0;
   let colorCount = 0;
+  let colorMinX = info.width;
+  let colorMaxX = -1;
+  let colorMinY = info.height;
+  let colorMaxY = -1;
   for (let y = 0; y < info.height; y++) {
     for (let x = 0; x < info.width; x++) {
       if (removeRows[y] || removeCols[x]) continue;
       const i = y * info.width + x;
       darkCount += dark[i];
-      colorCount += colored[i];
+      if (colored[i]) {
+        colorCount += 1;
+        colorMinX = Math.min(colorMinX, x);
+        colorMaxX = Math.max(colorMaxX, x);
+        colorMinY = Math.min(colorMinY, y);
+        colorMaxY = Math.max(colorMaxY, y);
+      }
     }
   }
+
+  const colorWidthRatio =
+    colorCount > 0 ? (colorMaxX - colorMinX + 1) / Math.max(info.width, 1) : 0;
+  const colorHeightRatio =
+    colorCount > 0 ? (colorMaxY - colorMinY + 1) / Math.max(info.height, 1) : 0;
 
   return {
     darkRatio: darkCount / Math.max(pixels, 1),
     colorRatio: colorCount / Math.max(pixels, 1),
     darkCount,
     colorCount,
+    colorWidthRatio,
+    colorHeightRatio,
   };
 }
 
@@ -741,18 +758,36 @@ async function localAnalyze(
           .sort((a, b) => overlapScore(b, expectedCustomer) - overlapScore(a, expectedCustomer))[0] || null;
 
         const stats = best.stats;
-        const stampPresentByColor = stats.colorCount >= 38 && stats.colorRatio >= 0.0005;
-        const stampPresentByInk = stats.darkCount >= 260 && stats.darkRatio >= 0.0038;
-        const visualStamp = stampPresentByColor || stampPresentByInk;
-        const score = stats.colorRatio * 8 + stats.darkRatio;
+
+        // Stamp presence must be independent from signature presence. Earlier
+        // versions treated any dark ink in the receiver box as a stamp, so a
+        // handwritten receiver signature could make every document look
+        // STAMP=PRESENT. V12 only accepts a visually stamp-like coloured shape
+        // here; black/grey ink without readable stamp text remains UNCLEAR and
+        // goes to reviewer rather than becoming a false PASS.
+        const stampPresentByColorShape =
+          stats.colorCount >= 65 &&
+          stats.colorRatio >= 0.0008 &&
+          stats.colorWidthRatio >= 0.28 &&
+          stats.colorHeightRatio >= 0.28;
+        const stampTextBackedInk =
+          Boolean(stampTextCandidate) &&
+          stats.darkCount >= 320 &&
+          stats.darkRatio >= 0.0045;
+        const visualStamp = stampPresentByColorShape || stampTextBackedInk;
+        const score =
+          stats.colorRatio * 8 +
+          stats.colorWidthRatio +
+          stats.colorHeightRatio +
+          (stampTextCandidate ? 1 : 0);
 
         if (visualStamp && (!bestStampRegion || score > bestStampRegion.score)) {
           bestStampRegion = { page, region: best.region, pageNumber: pageIndex + 1, score };
         }
         if (visualStamp && stampTextCandidate) {
           stamp = { status: 'PRESENT', text: stampTextCandidate, confidence: 0.94, page_number: pageIndex + 1 };
-        } else if (visualStamp && stamp.status !== 'PRESENT') {
-          stamp = { status: 'PRESENT', text: null, confidence: stampPresentByColor ? 0.9 : 0.7, page_number: pageIndex + 1 };
+        } else if (stampPresentByColorShape && stamp.status !== 'PRESENT') {
+          stamp = { status: 'PRESENT', text: null, confidence: 0.88, page_number: pageIndex + 1 };
         }
       }
     }
@@ -811,7 +846,7 @@ async function localAnalyze(
   }
 
   return {
-    engine: 'LOCAL_TESSERACT_VISUAL_V11',
+    engine: 'LOCAL_TESSERACT_VISUAL_V12',
     billing_document: billingDocument,
     invoice_date: invoiceDate,
     grand_total: paymentResult.grossTotal,
@@ -838,7 +873,7 @@ app.get('/health', (c) =>
   c.json({
     status: 'ok',
     service: 'vision',
-    engine: 'LOCAL_TESSERACT_VISUAL_V11',
+    engine: 'LOCAL_TESSERACT_VISUAL_V12',
   }),
 );
 
@@ -846,7 +881,7 @@ app.get('/vision-ai-health', async (c) => {
   // Preview-only diagnostic route used while this branch is under test.
   return c.json({
     status: 'ok',
-    engine: 'LOCAL_TESSERACT_VISUAL_V11',
+    engine: 'LOCAL_TESSERACT_VISUAL_V12',
     paid_gateway_required: false,
   });
 });
