@@ -391,3 +391,66 @@ def test_working_paper_subtracts_partial_payment_and_keeps_invoice_date(tmp_path
         assert ws["I3"].value == "-"
         assert "Partial Payment Billing: 999.950,00" in (ws["K3"].value or "")
         assert "Gross Billing - SAP outstanding" not in (ws["K3"].value or "")
+
+
+
+def test_working_paper_uses_physical_total_minus_billing_partial_and_invoice_date(tmp_path, monkeypatch):
+    engine = create_engine("sqlite:///:memory:")
+    from app.database import Base
+    Base.metadata.create_all(engine)
+    import app.services.reports as reports
+    monkeypatch.setattr(reports, "REPORT_ROOT", tmp_path)
+
+    with Session(engine) as db:
+        batch = ImportBatch(file_name="sap.xlsx", branch="KEDIRI", total_records=1, status="IMPORTED")
+        db.add(batch)
+        db.flush()
+        sap = SAPBilling(
+            import_batch_id=batch.id,
+            customer="2138024",
+            customer_account_name="BERKAH AL AQSO, TB",
+            billing_document="8501681202",
+            doc_date=date(2026, 9, 10),
+            nominal=Decimal("5415882.00"),
+        )
+        db.add(sap)
+        db.flush()
+
+        doc = Document(
+            file_name="Berkah Al aqso 8501681202.pdf",
+            file_type="PDF",
+            document_type="BILLING",
+            file_hash="berkah-hash",
+            storage_path="berkah.pdf",
+            branch="KEDIRI",
+        )
+        db.add(doc)
+        db.flush()
+        physical = PhysicalBilling(
+            document_id=doc.id,
+            billing_document="8501681202",
+            doc_date=date(2026, 7, 3),
+            nominal=Decimal("8815890.00"),
+            partial_payment=Decimal("3400008.00"),
+            partial_payment_raw="PEMBAYARAN SEBAGIAN 3.400.008",
+        )
+        db.add(physical)
+        db.flush()
+        db.add(BillingReconciliation(
+            sap_billing_id=sap.id,
+            physical_billing_id=physical.id,
+            billing_match=True,
+            date_match=False,
+            nominal_match=True,
+            nominal_difference=Decimal("0.00"),
+            status="EXCEPTION",
+        ))
+        db.commit()
+
+        path = build_working_paper_report(db, batch.id, branch="KEDIRI")
+        ws = load_workbook(path)["Kertas Kerja"]
+
+        assert ws["G3"].value.date() == date(2026, 7, 3)
+        assert ws["H3"].value == 5415882
+        assert ws["I3"].value == "-"
+        assert "Partial Payment Billing: 3.400.008,00" in (ws["K3"].value or "")
