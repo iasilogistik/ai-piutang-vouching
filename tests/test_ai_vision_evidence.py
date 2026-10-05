@@ -316,20 +316,14 @@ def test_unclear_visual_stamp_never_auto_passes(monkeypatch, tmp_path):
 
 
 
-def test_v14_refresh_persists_derived_partial_and_only_invoice_date(monkeypatch, tmp_path):
+def test_v15_refresh_clears_legacy_sap_derived_partial(monkeypatch, tmp_path):
     monkeypatch.setattr(vouching, "extract_text", lambda path: ("", "REVIEW_REQUIRED"))
     monkeypatch.setattr(vouching, "vision_available", lambda: True)
 
     vision = _vision_payload()
-    vision["engine"] = "LOCAL_TESSERACT_VISUAL_V14"
+    vision["engine"] = "LOCAL_TESSERACT_VISUAL_V15"
     vision["invoice_date"] = date(2026, 9, 10)
-    vision["partial_payments"] = [
-        {
-            "amount": Decimal("999950.00"),
-            "date": None,
-            "reference": "DERIVED_BILLING_GROSS_MINUS_SAP_OUTSTANDING | Gross 2637230 | SAP Outstanding 1637280",
-        }
-    ]
+    vision["partial_payments"] = []
     vision["grand_total"] = Decimal("2637230.00")
 
     monkeypatch.setattr(vouching, "analyze_document_vision", lambda *args, **kwargs: vision)
@@ -359,8 +353,10 @@ def test_v14_refresh_persists_derived_partial_and_only_invoice_date(monkeypatch,
         billing = PhysicalBilling(
             document_id=billing_doc.id,
             billing_document="8501692627",
-            doc_date=None,
+            doc_date=date(2026, 10, 25),
             nominal=Decimal("2637230.00"),
+            partial_payment=Decimal("999950.00"),
+            partial_payment_raw="DERIVED_BILLING_GROSS_MINUS_SAP_OUTSTANDING",
         )
         spj = SPJ(document_id=spj_doc.id)
         db.add_all([billing, spj])
@@ -379,5 +375,5 @@ def test_v14_refresh_persists_derived_partial_and_only_invoice_date(monkeypatch,
 
         assert billing.doc_date == date(2026, 9, 10)
         assert billing.nominal == Decimal("2637230.00")
-        assert billing.partial_payment == Decimal("999950.00")
-        assert "DERIVED_BILLING_GROSS_MINUS_SAP_OUTSTANDING" in (billing.partial_payment_raw or "")
+        assert billing.partial_payment is None
+        assert billing.partial_payment_raw is None
