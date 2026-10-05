@@ -67,6 +67,8 @@ def _combined_overall_status(
     rec_status = reconciliation.status if reconciliation else None
     vouch_status = vouching.status if vouching else None
 
+    if reconciliation is None and vouching is None:
+        return control_status
     if control_status == "EXCEPTION" or rec_status in {"EXCEPTION", "NOT_FOUND"} or vouch_status == "EXCEPTION":
         return "EXCEPTION"
     if (
