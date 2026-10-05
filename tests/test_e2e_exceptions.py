@@ -36,8 +36,8 @@ def test_duplicate_spj_number_requires_review():
         s1 = Document(file_name="s1.pdf", file_type="PDF", document_type="SPJ", file_hash="spj-1", storage_path="s1")
         s2 = Document(file_name="s2.pdf", file_type="PDF", document_type="SPJ", file_hash="spj-2", storage_path="s2")
         db.add_all([d1, s1, s2]); db.flush()
-        db.add(PhysicalBilling(document_id=d1.id, billing_document="B300", no_spj="SPJ300"))
-        db.add_all([SPJ(document_id=s1.id, no_spj="SPJ300"), SPJ(document_id=s2.id, no_spj="SPJ300")])
+        db.add(PhysicalBilling(document_id=d1.id, billing_document="B300", no_spj="2500000300"))
+        db.add_all([SPJ(document_id=s1.id, no_spj="2500000300"), SPJ(document_id=s2.id, no_spj="2500000300")])
         db.commit()
         result = vouch_spj(db)[0]
         assert result.status == "REVIEW"
@@ -83,8 +83,8 @@ def test_missing_spj_moves_to_review_and_does_not_stop_vouching():
             PhysicalBilling(
                 document_id=billing_doc.id,
                 billing_document="B500",
-                no_spj_raw="SPJ-500",
-                no_spj="SPJ500",
+                no_spj_raw="SPJ/S41C/202609/2500000500",
+                no_spj="2500000500",
             )
         )
         db.commit()
