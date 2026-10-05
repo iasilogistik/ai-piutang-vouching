@@ -16,6 +16,7 @@ from app.services.control_evidence_dashboard import build_control_evidence_dashb
 from app.services.vouching import _net_document_amount
 
 REPORT_ROOT = Path("/tmp/ai-piutang-vouching-reports")
+WORKING_PAPER_SCHEMA_VERSION = "v3-physical-evidence-only"
 
 
 def _rows(db: Session, batch_id: int, *, branch: str | None = None):
@@ -317,6 +318,7 @@ def working_paper_cache_token(
             str(vouch.id if vouch else ""),
             str(vouch.status if vouch else ""),
         ]))
+    parts.insert(0, WORKING_PAPER_SCHEMA_VERSION)
     digest = hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
     return digest[:16]
 
