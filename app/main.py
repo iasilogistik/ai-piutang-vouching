@@ -28,7 +28,6 @@ from app.services.branch_master import ensure_branch_catalog
 from app.services.audit_management_dashboard import register_audit_management_dashboard_routes
 from app.services.bulk_upload_ui import bulk_upload_html
 from app.services.bulk_zip import classify_entry, iter_bulk_zip_entries, make_upload
-from app.services.reports import build_control_evidence_report, build_report, build_working_paper_report, working_paper_cache_token
 from app.services.review_workflow import register_review_workflow_routes
 from app.services.reviewer_center import register_reviewer_center_routes
 from app.services.viewer_center import register_viewer_center_routes
@@ -1093,6 +1092,8 @@ def export_control_evidence_dashboard(review_only: bool = False, limit: int = 50
                                       user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER", "VIEWER"))):
     if limit < 1 or limit > 500:
         raise HTTPException(status_code=400, detail="limit must be between 1 and 500")
+    from app.services.reports import build_control_evidence_report
+
     path = build_control_evidence_report(db, review_only=review_only, limit=limit, branch=scoped_branch(user, branch))
     media = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     return FileResponse(path, filename=path.name, media_type=media)
@@ -1243,6 +1244,8 @@ def _prepare_working_paper_bytes(
     *,
     branch: str | None,
 ) -> tuple[bytes, str]:
+    from app.services.reports import build_working_paper_report, working_paper_cache_token
+
     token = working_paper_cache_token(db, batch_id, branch=branch)
     storage_path = _working_paper_storage_path(batch_id, token)
 
@@ -1302,6 +1305,8 @@ def generate_working_paper_report(
 
 @app.get("/reports/{batch_id}")
 def generate_report(batch_id: int, format: str = "xlsx", db: Session = Depends(get_db), user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER", "VIEWER"))):
+    from app.services.reports import build_report
+
     try:
         path = build_report(db, batch_id, format, branch=scoped_branch(user))
     except ValueError as exc:
