@@ -136,11 +136,12 @@ function statusPill(status){
 }
 function evidenceSummary(summary){
   const rows=(summary&&summary.rows)||[];
-  const billingMissing=rows.filter(r=>r.evidence_state==='BILLING_BELUM_LENGKAP').length;
-  const spjMissing=rows.filter(r=>r.evidence_state==='SPJ_BELUM_LENGKAP').length;
-  const spjOcrInfo=rows.filter(r=>r.evidence_state==='SPJ_OCR_INFO').length;
-  const spjOcr=rows.filter(r=>r.evidence_state==='SPJ_OCR_REVIEW').length;
-  const spjReview=rows.filter(r=>r.evidence_state==='SPJ_PERLU_REVIEW').length;
+  const ec=(summary&&summary.evidence_counts)||null;
+  const billingMissing=ec?Number(ec.BILLING_BELUM_LENGKAP||0):rows.filter(r=>r.evidence_state==='BILLING_BELUM_LENGKAP').length;
+  const spjMissing=ec?Number(ec.SPJ_BELUM_LENGKAP||0):rows.filter(r=>r.evidence_state==='SPJ_BELUM_LENGKAP').length;
+  const spjOcrInfo=ec?Number(ec.SPJ_OCR_INFO||0):rows.filter(r=>r.evidence_state==='SPJ_OCR_INFO').length;
+  const spjOcr=ec?Number(ec.SPJ_OCR_REVIEW||0):rows.filter(r=>r.evidence_state==='SPJ_OCR_REVIEW').length;
+  const spjReview=ec?Number(ec.SPJ_PERLU_REVIEW||0):rows.filter(r=>r.evidence_state==='SPJ_PERLU_REVIEW').length;
   if(summary&&summary._error)return '<div class="evidence-note bad"><strong>Detail belum terbaca</strong><span>'+esc(summary._error)+'</span></div>';
   if(billingMissing||spjMissing||spjOcr||spjReview){
     return '<div class="evidence-note warn"><strong>Proses tetap dilanjutkan</strong><span>Perlu perhatian: Billing belum lengkap: '+billingMissing+' · SPJ belum lengkap: '+spjMissing+(spjOcr?' · SPJ tersedia/OCR review: '+spjOcr:'')+(spjReview?' · SPJ review: '+spjReview:'')+'</span></div>';
@@ -148,7 +149,7 @@ function evidenceSummary(summary){
   if(spjOcrInfo){
     return '<div class="evidence-note"><strong>Evidence terhubung</strong><span>SPJ tersedia; nomor/field OCR yang belum terbaca hanya informasi, bukan REVIEW: '+spjOcrInfo+'</span></div>';
   }
-  if(rows.length)return '<div class="evidence-note"><strong>Evidence terhubung</strong><span>Tidak ada Billing/SPJ yang ditandai belum lengkap.</span></div>';
+  if(rows.length||Number(summary&&summary.reconciled_total||0)>0)return '<div class="evidence-note"><strong>Evidence terhubung</strong><span>Tidak ada Billing/SPJ yang ditandai belum lengkap.</span></div>';
   return '<div class="evidence-note warn"><strong>Belum direkonsiliasi</strong><span>Jalankan reconciliation untuk melihat kelengkapan evidence.</span></div>';
 }
 function renderReconciliationDetail(batchId,payload){
@@ -271,19 +272,20 @@ async function reconciliationSummary(batchId){
   }
 }
 async function loadBatches(){
-  const response=await fetch('/uploads/recent?limit=80',{headers:headers()});
-  const payload=await body(response);
   const branch=selectedBranch();
-  batches=(payload.items||[]).filter(item=>item.kind==='SAP'&&(!branch||String(item.branch||'').toUpperCase()===branch)).slice(0,30);
+  const params=new URLSearchParams({limit:'30'});
+  if(branch)params.set('branch',branch);
+  const response=await fetch('/reconciliation/workspace?'+params.toString(),{headers:headers()});
+  const payload=await body(response);
+  batches=payload.items||[];
   batchSummaries=new Map();
-  const summaries=await Promise.all(batches.map(async item=>[item.id,await reconciliationSummary(item.id)]));
-  summaries.forEach(([id,summary])=>batchSummaries.set(id,summary));
+  batches.forEach(item=>batchSummaries.set(item.id,{
+    counts:item.counts||{MATCH:0,REVIEW:0,EXCEPTION:0,NOT_FOUND:0},
+    evidence_counts:item.evidence_counts||{},
+    reconciled_total:item.reconciled_total||0,
+    rows:[]
+  }));
   render();
-  // Pre-generate the first visible working paper in the background so the
-  // download button is fast even on a cold serverless instance.
-  if(batches.length){
-    prepareWorkingPaper(Number(batches[0].id)).catch(()=>{});
-  }
 }
 function renderMetrics(){
   let population=0,match=0,review=0,exception=0,notFound=0;
@@ -468,8 +470,16 @@ async function runSpjVouch(){
   finally{button.disabled=false;}
 }
 async function refresh(){
-  try{await loadSession();await loadBatches();log('Data batch SAP berhasil dimuat.');}
-  catch(error){log('GAGAL MEMUAT WORKSPACE: '+error.message);}
+  try{
+    document.getElementById('refreshBtn').disabled=true;
+    await loadSession();
+    await loadBatches();
+    log('Data batch SAP berhasil dimuat.');
+  }catch(error){
+    log('GAGAL MEMUAT WORKSPACE: '+error.message);
+  }finally{
+    document.getElementById('refreshBtn').disabled=false;
+  }
 }
 document.getElementById('refreshBtn').addEventListener('click',refresh);
 document.getElementById('spjVouchBtn').addEventListener('click',runSpjVouch);
