@@ -196,6 +196,13 @@ def _working_paper_spj_maps(
     return by_id, by_no_spj
 
 
+def _format_id_amount(value: Decimal | int | float) -> str:
+    number = Decimal(str(value)).quantize(Decimal("0.01"))
+    whole, fraction = f"{number:.2f}".split(".")
+    grouped = f"{int(whole):,}".replace(",", ".")
+    return f"{grouped},{fraction}"
+
+
 def _working_paper_note(
     physical: PhysicalBilling | None,
     spj: SPJ | None,
@@ -206,15 +213,15 @@ def _working_paper_note(
 
     notes: list[str] = []
     if physical.partial_payment is not None:
-        if physical.partial_payment_raw:
-            notes.append(str(physical.partial_payment_raw))
-        else:
-            notes.append(f"Partial Billing {float(physical.partial_payment):,.2f}")
+        source = " (hasil Gross Billing - SAP outstanding)" if (
+            physical.partial_payment_raw
+            and "DERIVED_BILLING_GROSS_MINUS_SAP_OUTSTANDING" in physical.partial_payment_raw
+        ) else ""
+        notes.append(
+            f"Partial Payment Billing: {_format_id_amount(physical.partial_payment)}{source}"
+        )
     if spj is not None and spj.partial_payment is not None:
-        if spj.partial_payment_raw:
-            notes.append(str(spj.partial_payment_raw))
-        else:
-            notes.append(f"Partial SPJ {float(spj.partial_payment):,.2f}")
+        notes.append(f"Partial Payment SPJ: {_format_id_amount(spj.partial_payment)}")
     if rec is not None and rec.status not in {"MATCH", None}:
         notes.append(rec.status)
     return " | ".join(note for note in notes if note)

@@ -389,4 +389,5 @@ def test_working_paper_subtracts_partial_payment_and_keeps_invoice_date(tmp_path
         assert ws["G3"].value.date() == date(2026, 9, 10)
         assert ws["H3"].value == 1637280
         assert ws["I3"].value == "-"
-        assert "DERIVED_BILLING_GROSS_MINUS_SAP_OUTSTANDING" in (ws["K3"].value or "")
+        assert "Partial Payment Billing: 999.950,00" in (ws["K3"].value or "")
+        assert "Gross Billing - SAP outstanding" in (ws["K3"].value or "")
