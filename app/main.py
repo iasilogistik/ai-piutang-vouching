@@ -590,7 +590,7 @@ def _reconciliation_row_payload(row: BillingReconciliation) -> dict:
         "physical_billing_id": row.physical_billing_id,
         "billing_document": sap.billing_document if sap else None,
         "customer": (sap.customer_account_name or sap.customer) if sap else None,
-        "spj_number": physical.no_spj_raw or physical.no_spj if physical else None,
+        "spj_number": physical.no_spj if physical else None,
         "billing_match": row.billing_match,
         "date_match": row.date_match,
         "nominal_match": row.nominal_match,
@@ -663,14 +663,14 @@ def reconciliation_visual_refresh_candidates(
             continue
         seen.add(spj.document_id)
 
-        current_v13 = db.scalar(
+        current_v14 = db.scalar(
             select(ControlEvidenceDetection.id).where(
                 ControlEvidenceDetection.document_id == spj.document_id,
-                ControlEvidenceDetection.extraction_engine.contains("LOCAL_TESSERACT_VISUAL_V13"),
+                ControlEvidenceDetection.extraction_engine.contains("LOCAL_TESSERACT_VISUAL_V14"),
             ).limit(1)
         )
         malformed_spj = bool(spj.no_spj and _normalize_spj_number(spj.no_spj) is None)
-        if current_v13 is not None and not malformed_spj:
+        if current_v14 is not None and not malformed_spj:
             continue
 
         control = db.scalar(

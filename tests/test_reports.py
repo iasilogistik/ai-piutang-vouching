@@ -316,3 +316,77 @@ def test_working_paper_preloads_spj_without_n_plus_one_queries(tmp_path, monkeyp
 
     # One batch lookup + one joined row query + one SPJ preload query.
     assert statements["count"] <= 5
+
+
+
+def test_working_paper_subtracts_partial_payment_and_keeps_invoice_date(tmp_path, monkeypatch):
+    engine = create_engine("sqlite:///:memory:")
+    from app.database import Base
+    Base.metadata.create_all(engine)
+    import app.services.reports as reports
+    monkeypatch.setattr(reports, "REPORT_ROOT", tmp_path)
+
+    with Session(engine) as db:
+        batch = ImportBatch(file_name="sap.xlsx", branch="KEDIRI", total_records=1, status="IMPORTED")
+        db.add(batch)
+        db.flush()
+        sap = SAPBilling(
+            import_batch_id=batch.id,
+            customer="2138780",
+            customer_account_name="GEMILANG 86, TB",
+            billing_document="8501692627",
+            doc_date=date(2026, 9, 10),
+            nominal=Decimal("1637280.00"),
+        )
+        db.add(sap)
+        db.flush()
+
+        bill_doc = Document(
+            file_name="gemilang 86.pdf",
+            file_type="PDF",
+            document_type="BILLING",
+            file_hash="gemilang-hash",
+            storage_path="gemilang.pdf",
+            branch="KEDIRI",
+        )
+        spj_doc = Document(
+            file_name="gemilang 86.pdf",
+            file_type="PDF",
+            document_type="SPJ",
+            file_hash="gemilang-hash",
+            storage_path="gemilang.pdf",
+            branch="KEDIRI",
+        )
+        db.add_all([bill_doc, spj_doc])
+        db.flush()
+
+        physical = PhysicalBilling(
+            document_id=bill_doc.id,
+            billing_document="8501692627",
+            doc_date=date(2026, 9, 10),
+            nominal=Decimal("2637230.00"),
+            partial_payment=Decimal("999950.00"),
+            partial_payment_raw="DERIVED_BILLING_GROSS_MINUS_SAP_OUTSTANDING",
+            no_spj="2501800001",
+        )
+        spj = SPJ(document_id=spj_doc.id, no_spj="2501800001")
+        db.add_all([physical, spj])
+        db.flush()
+        db.add(BillingReconciliation(
+            sap_billing_id=sap.id,
+            physical_billing_id=physical.id,
+            billing_match=True,
+            date_match=True,
+            nominal_match=True,
+            nominal_difference=Decimal("0.00"),
+            status="MATCH",
+        ))
+        db.commit()
+
+        path = build_working_paper_report(db, batch.id, branch="KEDIRI")
+        ws = load_workbook(path)["Kertas Kerja"]
+
+        assert ws["G3"].value.date() == date(2026, 9, 10)
+        assert ws["H3"].value == 1637280
+        assert ws["I3"].value == "-"
+        assert "DERIVED_BILLING_GROSS_MINUS_SAP_OUTSTANDING" in (ws["K3"].value or "")
