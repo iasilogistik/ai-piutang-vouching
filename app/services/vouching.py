@@ -58,19 +58,19 @@ def _normalize_spj_number(value: str | None) -> str | None:
     if not raw:
         return None
 
-    compact = re.sub(r"\\s+", "", raw)
-    if re.fullmatch(r"\\d{8,12}", compact):
+    compact = re.sub(r"\s+", "", raw)
+    if re.fullmatch(r"\d{8,12}", compact):
         return compact
 
     official = re.search(
-        r"\\bSPJ\\s*[/\\\\-]\\s*[A-Z0-9]{2,10}\\s*[/\\\\-]\\s*\\d{6}\\s*[/\\\\-]\\s*(\\d{8,12})\\b",
+        r"\bSPJ\s*[/\\-]\s*[A-Z0-9]{2,10}\s*[/\\-]\s*\d{6}\s*[/\\-]\s*(\d{8,12})\b",
         raw,
         re.IGNORECASE,
     )
     if official:
         return official.group(1)
 
-    match = re.search(r"(?<![A-Za-z0-9])(\\d{8,12})(?![A-Za-z0-9])", raw)
+    match = re.search(r"(?<![A-Za-z0-9])(\d{8,12})(?![A-Za-z0-9])", raw)
     return match.group(1) if match else None
 
 def _billing_document_from_filename(file_name: str | None) -> str | None:
