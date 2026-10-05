@@ -564,9 +564,6 @@ function parseInvoiceDate(text: string, _expectedDocDate?: string | null): strin
     /\bTGL\.?\s+INVOICE\b/i,
     /\bBILLING\s+DATE\b/i,
     /\bBILL\s+DATE\b/i,
-    /\bDOCUMENT\s+DATE\b/i,
-    /\bDOC\.?\s*DATE\b/i,
-    /\bTANGGAL\s+DOKUMEN\b/i,
   ];
   const forbiddenLabels = /\b(DUE\s+DATE|PAYMENT\s+DUE|NET\s+DUE|JATUH\s+TEMPO|TANGGAL\s+JATUH\s+TEMPO|TGL\.?\s+JATUH\s+TEMPO|BATAS\s+PEMBAYARAN|DELIVERY\s+DATE|TANGGAL\s+PENGIRIMAN|POSTING\s+DATE|PRINT\s+DATE|TANGGAL\s+CETAK|TGL\.?\s+CETAK|ORDER\s+DATE|PO\s+DATE)\b/i;
 
