@@ -568,22 +568,36 @@ def run_ocr(document_id: int, db: Session = Depends(get_db),
     except ValueError as exc: raise handle_error(exc) from exc
 
 
+def _reconciliation_evidence_state_values(
+    *,
+    status: str | None,
+    exception_code: str | None,
+    physical_billing_id: int | None,
+    remarks: str | None,
+) -> str:
+    text_value = remarks or ""
+    if exception_code == "BILLING_DOCUMENT_NOT_FOUND" or physical_billing_id is None:
+        return "BILLING_BELUM_LENGKAP"
+    if "Evidence SPJ tersedia" in text_value:
+        return "SPJ_OCR_INFO" if status == "MATCH" else "SPJ_OCR_REVIEW"
+    if "SPJ belum lengkap" in text_value:
+        return "SPJ_BELUM_LENGKAP"
+    if "SPJ perlu review" in text_value:
+        return "SPJ_PERLU_REVIEW"
+    if "Billing belum lengkap" in text_value:
+        return "BILLING_BELUM_LENGKAP"
+    return "LENGKAP"
+
+
 def _reconciliation_row_payload(row: BillingReconciliation) -> dict:
     sap = row.sap_billing
     physical = row.physical_billing
-    remarks = row.remarks or ""
-    if row.exception_code == "BILLING_DOCUMENT_NOT_FOUND" or physical is None:
-        evidence_state = "BILLING_BELUM_LENGKAP"
-    elif "Evidence SPJ tersedia" in remarks:
-        evidence_state = "SPJ_OCR_INFO" if row.status == "MATCH" else "SPJ_OCR_REVIEW"
-    elif "SPJ belum lengkap" in remarks:
-        evidence_state = "SPJ_BELUM_LENGKAP"
-    elif "SPJ perlu review" in remarks:
-        evidence_state = "SPJ_PERLU_REVIEW"
-    elif "Billing belum lengkap" in remarks:
-        evidence_state = "BILLING_BELUM_LENGKAP"
-    else:
-        evidence_state = "LENGKAP"
+    evidence_state = _reconciliation_evidence_state_values(
+        status=row.status,
+        exception_code=row.exception_code,
+        physical_billing_id=row.physical_billing_id,
+        remarks=row.remarks,
+    )
     return {
         "id": row.id,
         "sap_billing_id": row.sap_billing_id,
@@ -891,6 +905,99 @@ def confirm_reconciliation_batch_manual(
         "skipped_count": len(skipped),
         "confirmed": confirmed_rows,
         "skipped": skipped,
+    }
+
+
+@app.get("/reconciliation/workspace")
+def reconciliation_workspace(
+    limit: int = 30,
+    branch: str | None = None,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR", "REVIEWER", "VIEWER")),
+):
+    """Return batch cards + aggregate reconciliation counts in two DB queries.
+
+    The previous UI called /uploads/recent and then one /reconciliation/{id}
+    request for every visible batch. On serverless this amplified cold starts and
+    made the page feel slow. This endpoint returns only the summary data needed
+    for the initial screen; full row detail is fetched on demand.
+    """
+    safe_limit = min(max(limit, 1), 50)
+    effective_branch = scoped_branch(user, branch)
+
+    batch_stmt = (
+        select(ImportBatch)
+        .order_by(ImportBatch.uploaded_at.desc(), ImportBatch.id.desc())
+        .limit(safe_limit)
+    )
+    if effective_branch is not None:
+        batch_stmt = batch_stmt.where(ImportBatch.branch == effective_branch)
+    batches = list(db.scalars(batch_stmt).all())
+    if not batches:
+        return {"items": []}
+
+    batch_ids = [batch.id for batch in batches]
+    rec_rows = db.execute(
+        select(
+            SAPBilling.import_batch_id,
+            BillingReconciliation.status,
+            BillingReconciliation.exception_code,
+            BillingReconciliation.physical_billing_id,
+            BillingReconciliation.remarks,
+        )
+        .join(
+            BillingReconciliation,
+            BillingReconciliation.sap_billing_id == SAPBilling.id,
+        )
+        .where(SAPBilling.import_batch_id.in_(batch_ids))
+    ).all()
+
+    summaries: dict[int, dict[str, dict[str, int] | int]] = {}
+    for batch in batches:
+        summaries[batch.id] = {
+            "counts": {"MATCH": 0, "REVIEW": 0, "EXCEPTION": 0, "NOT_FOUND": 0},
+            "evidence_counts": {
+                "LENGKAP": 0,
+                "BILLING_BELUM_LENGKAP": 0,
+                "SPJ_BELUM_LENGKAP": 0,
+                "SPJ_OCR_INFO": 0,
+                "SPJ_OCR_REVIEW": 0,
+                "SPJ_PERLU_REVIEW": 0,
+            },
+            "reconciled_total": 0,
+        }
+
+    for import_batch_id, status, exception_code, physical_billing_id, remarks in rec_rows:
+        summary = summaries.get(import_batch_id)
+        if summary is None:
+            continue
+        counts = summary["counts"]
+        counts[status] = int(counts.get(status, 0)) + 1
+        state = _reconciliation_evidence_state_values(
+            status=status,
+            exception_code=exception_code,
+            physical_billing_id=physical_billing_id,
+            remarks=remarks,
+        )
+        evidence_counts = summary["evidence_counts"]
+        evidence_counts[state] = int(evidence_counts.get(state, 0)) + 1
+        summary["reconciled_total"] = int(summary["reconciled_total"]) + 1
+
+    return {
+        "items": [
+            {
+                "id": batch.id,
+                "kind": "SAP",
+                "file_name": batch.file_name,
+                "branch": batch.branch,
+                "period": batch.period,
+                "status": batch.status,
+                "total_records": batch.total_records,
+                "uploaded_at": batch.uploaded_at,
+                **summaries[batch.id],
+            }
+            for batch in batches
+        ]
     }
 
 
