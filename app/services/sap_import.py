@@ -162,7 +162,24 @@ def _read_excel_records(content: bytes) -> tuple[list[str], list[dict[str, objec
         raise ValueError("Unable to read SAP Excel file") from exc
 
 
-def _import_standard(columns: list[str], records: list[dict[str, object]]) -> list[dict[str, object]]:
+def _coerce_table(
+    columns_or_frame,
+    records: list[dict[str, object]] | None = None,
+) -> tuple[list[str], list[dict[str, object]]]:
+    if records is not None:
+        return list(columns_or_frame), records
+    # Backward-compatible test/helper path: accept a pandas-like DataFrame
+    # without importing pandas in production.
+    frame = columns_or_frame
+    columns = [str(column).strip() for column in frame.columns]
+    return columns, list(frame.to_dict(orient="records"))
+
+
+def _import_standard(
+    columns_or_frame,
+    records: list[dict[str, object]] | None = None,
+) -> list[dict[str, object]]:
+    columns, records = _coerce_table(columns_or_frame, records)
     missing = [column for column in STANDARD_REQUIRED_COLUMNS if column not in columns]
     if missing:
         raise ValueError(f"Missing required columns: {', '.join(missing)}")
@@ -188,7 +205,11 @@ def _import_standard(columns: list[str], records: list[dict[str, object]]) -> li
     return rows
 
 
-def _import_sap_ledger(columns: list[str], records: list[dict[str, object]]) -> list[dict[str, object]]:
+def _import_sap_ledger(
+    columns_or_frame,
+    records: list[dict[str, object]] | None = None,
+) -> list[dict[str, object]]:
+    columns, records = _coerce_table(columns_or_frame, records)
     missing = [column for column in SAP_LEDGER_COLUMNS if column not in columns]
     if missing:
         raise ValueError(f"Missing SAP export columns: {', '.join(missing)}")
