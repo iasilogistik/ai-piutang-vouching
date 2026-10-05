@@ -366,7 +366,7 @@ def test_working_paper_subtracts_partial_payment_and_keeps_invoice_date(tmp_path
             doc_date=date(2026, 9, 10),
             nominal=Decimal("2637230.00"),
             partial_payment=Decimal("999950.00"),
-            partial_payment_raw="DERIVED_BILLING_GROSS_MINUS_SAP_OUTSTANDING",
+            partial_payment_raw="Payment received: 999950",
             no_spj="2501800001",
         )
         spj = SPJ(document_id=spj_doc.id, no_spj="2501800001")
@@ -390,4 +390,4 @@ def test_working_paper_subtracts_partial_payment_and_keeps_invoice_date(tmp_path
         assert ws["H3"].value == 1637280
         assert ws["I3"].value == "-"
         assert "Partial Payment Billing: 999.950,00" in (ws["K3"].value or "")
-        assert "Gross Billing - SAP outstanding" in (ws["K3"].value or "")
+        assert "Gross Billing - SAP outstanding" not in (ws["K3"].value or "")
