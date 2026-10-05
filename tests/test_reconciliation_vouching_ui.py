@@ -11,7 +11,8 @@ def test_reconciliation_vouching_page_exposes_operational_flow():
     html = reconciliation_vouching_html()
 
     assert "Reconciliation &amp; Vouching" in html
-    assert "/uploads/recent?limit=80" in html
+    assert "/reconciliation/workspace?" in html
+    assert "/uploads/recent?limit=80" not in html
     assert "/sap/validate/" in html
     assert "/reconciliation/" in html
     assert "/spj/vouch?branch=" in html
@@ -107,3 +108,16 @@ def test_working_paper_download_is_lightweight_and_does_not_run_ocr():
     assert "Baca tanggal fisik..." not in block
     assert "refreshVisualEvidenceForBatch(id)" not in block
     assert "hasil reconciliation terakhir" in block
+
+
+
+def test_reconciliation_workspace_avoids_n_plus_one_initial_load():
+    html = reconciliation_vouching_html()
+
+    load_start = html.index("async function loadBatches")
+    load_end = html.index("function renderMetrics", load_start)
+    block = html[load_start:load_end]
+
+    assert "/reconciliation/workspace?" in block
+    assert "Promise.all(batches.map" not in block
+    assert "prepareWorkingPaper" not in block
