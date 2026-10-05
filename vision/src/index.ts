@@ -598,9 +598,7 @@ function parseInvoiceDate(text: string, expectedDocDate?: string | null): string
   if (closest && daysBetweenIso(closest, expectedDocDate) <= 7) {
     return closest;
   }
-  return strictCandidate && daysBetweenIso(strictCandidate, expectedDocDate) <= 45
-    ? strictCandidate
-    : null;
+  return null;
 }
 
 function billingPageScore(page: PageOcr, expectedBillingDocument?: string | null): number {
