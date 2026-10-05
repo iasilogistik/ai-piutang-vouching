@@ -547,13 +547,13 @@ function daysBetweenIso(left: string, right: string): number {
   return Math.abs(a - b) / 86400000;
 }
 
-function parseInvoiceDate(text: string, _expectedDocDate?: string | null): string | null {
+function parseInvoiceDate(text: string, expectedDocDate?: string | null): string | null {
   const lines = String(text || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   const datePattern = /(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{1,2}\s+[A-Za-z]{3,12}\s+\d{4}|[A-Za-z]{3,12}\s+\d{1,2},?\s+\d{4})/i;
 
-  // Physical Doc. Date is evidence-only. Accept a date only when the Billing
-  // page explicitly labels it as Invoice/Faktur/Billing/Document date. Never
-  // use SAP date as a substitute and never accept Due/Jatuh Tempo/Delivery date.
+  // Physical Doc. Date is evidence-only. Accept only a date attached to an
+  // Invoice/Faktur/Billing issue-date label. SAP date may disambiguate only
+  // when that exact date is also visibly printed on the selected Billing page.
   const invoiceLabels = [
     /\bTANGGAL\s+FAKTUR(?:\s+PAJAK)?\b/i,
     /\bTGL\.?\s+FAKTUR(?:\s+PAJAK)?\b/i,
@@ -567,22 +567,43 @@ function parseInvoiceDate(text: string, _expectedDocDate?: string | null): strin
   ];
   const forbiddenLabels = /\b(DUE\s+DATE|PAYMENT\s+DUE|NET\s+DUE|JATUH\s+TEMPO|TANGGAL\s+JATUH\s+TEMPO|TGL\.?\s+JATUH\s+TEMPO|BATAS\s+PEMBAYARAN|DELIVERY\s+DATE|TANGGAL\s+PENGIRIMAN|POSTING\s+DATE|PRINT\s+DATE|TANGGAL\s+CETAK|TGL\.?\s+CETAK|ORDER\s+DATE|PO\s+DATE)\b/i;
 
+  const labeled: string[] = [];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (!invoiceLabels.some((pattern) => pattern.test(line))) continue;
     if (forbiddenLabels.test(line)) continue;
 
-    // Date is commonly on the same line or the immediately following OCR line.
     for (let offset = 0; offset <= 1 && i + offset < lines.length; offset++) {
       const candidateLine = lines[i + offset];
       if (forbiddenLabels.test(candidateLine)) continue;
       const match = datePattern.exec(candidateLine);
       if (!match) continue;
       const normalized = parseInvoiceDateValue(match[1]);
-      if (normalized) return normalized;
+      if (normalized && !labeled.includes(normalized)) labeled.push(normalized);
     }
   }
-  return null;
+  if (!labeled.length) return null;
+
+  const expected = expectedDocDate ? parseInvoiceDateValue(expectedDocDate) : null;
+  if (expected) {
+    const printedCandidates = invoiceDateCandidates(text);
+    const expectedPrinted = printedCandidates.includes(expected);
+    if (expectedPrinted && labeled.includes(expected)) return expected;
+
+    if (expectedPrinted && labeled.length === 1) {
+      const delta = daysBetweenIso(labeled[0], expected);
+      // Common credit terms are a strong signal that OCR associated Due Date
+      // with an Invoice/Billing label. Prefer SAP date only because that same
+      // date is visibly printed on the physical Billing page.
+      if ([30, 45, 60, 90].includes(delta)) return expected;
+    }
+
+    if (expectedPrinted && labeled.length > 1) {
+      return labeled.slice().sort((a, b) => daysBetweenIso(a, expected) - daysBetweenIso(b, expected))[0];
+    }
+  }
+
+  return labeled[0];
 }
 
 function billingPageScore(page: PageOcr, expectedBillingDocument?: string | null): number {
@@ -816,34 +837,14 @@ async function localAnalyze(
     };
   }
 
-  // Some SID Billing layouts print Gross/Grand Total but do not print a
-  // separate "partial payment" label. When the exact Billing Document is found
-  // on the selected Billing page and SAP contains the remaining outstanding,
-  // the difference is a controlled derived partial payment. Keep an explicit
-  // audit-trail reference so it is never mistaken for directly OCR-read text.
-  if (
-    paymentResult.rows.length === 0 &&
-    billingDocument &&
-    billingPageIndex >= 0 &&
-    paymentResult.grossTotal != null &&
-    expectedNominal != null &&
-    expectedNominal > 0 &&
-    paymentResult.grossTotal > expectedNominal
-  ) {
-    const derived = Math.round((paymentResult.grossTotal - expectedNominal) * 100) / 100;
-    const ratio = paymentResult.grossTotal / expectedNominal;
-    if (derived > 0 && ratio <= 20) {
-      paymentResult.rows.push({
-        amount: derived,
-        date: null,
-        reference: 'DERIVED_BILLING_GROSS_MINUS_SAP_OUTSTANDING | Gross ' +
-          paymentResult.grossTotal + ' | SAP Outstanding ' + expectedNominal,
-      });
-    }
-  }
+  // Partial payment must be supported by the physical evidence itself.
+  // Never manufacture a payment as Gross Billing - SAP outstanding: that can
+  // make reconciliation appear correct even when the document has no payment
+  // history. Only explicit payment labels or Total - printed Outstanding on the
+  // same Billing evidence are accepted by parsePartialPayments().
 
   return {
-    engine: 'LOCAL_TESSERACT_VISUAL_V14',
+    engine: 'LOCAL_TESSERACT_VISUAL_V15',
     billing_document: billingDocument,
     invoice_date: invoiceDate,
     grand_total: paymentResult.grossTotal,
@@ -860,7 +861,7 @@ async function localAnalyze(
         : 'Header SPJ resmi tidak terbaca; sistem memakai fallback dokumen.',
       'TTD hanya dinilai dari ada/tidaknya coretan visual; keaslian dan identitas tidak dianalisis.',
       'Tanggal fisik Billing hanya diambil dari label tanggal Invoice/Faktur/Billing/Document pada halaman Billing; Due/Jatuh Tempo/Delivery tidak pernah dipakai.',
-      'Partial payment dibaca dari label pembayaran/Total-Outstanding; bila label tidak tersedia, selisih Gross Billing dengan SAP outstanding hanya dipakai jika exact Billing Document yang sama ditemukan dan dicatat sebagai DERIVED_BILLING_GROSS_MINUS_SAP_OUTSTANDING.'
+      'Partial payment hanya dibaca dari bukti fisik: label pembayaran atau Total dikurangi Outstanding/Sisa yang sama-sama tercetak pada Billing. Selisih terhadap SAP tidak pernah dianggap sebagai partial payment.'
     ],
     ocr_text: ocrText,
   };
@@ -870,7 +871,7 @@ app.get('/health', (c) =>
   c.json({
     status: 'ok',
     service: 'vision',
-    engine: 'LOCAL_TESSERACT_VISUAL_V14',
+    engine: 'LOCAL_TESSERACT_VISUAL_V15',
   }),
 );
 
@@ -878,7 +879,7 @@ app.get('/vision-ai-health', async (c) => {
   // Preview-only diagnostic route used while this branch is under test.
   return c.json({
     status: 'ok',
-    engine: 'LOCAL_TESSERACT_VISUAL_V14',
+    engine: 'LOCAL_TESSERACT_VISUAL_V15',
     paid_gateway_required: false,
   });
 });
