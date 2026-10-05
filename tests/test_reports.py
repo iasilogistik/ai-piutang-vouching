@@ -386,7 +386,7 @@ def test_working_paper_subtracts_partial_payment_and_keeps_invoice_date(tmp_path
         path = build_working_paper_report(db, batch.id, branch="KEDIRI")
         ws = load_workbook(path)["Kertas Kerja"]
 
-        assert ws["G3"].value == date(2026, 9, 10)
+        assert ws["G3"].value.date() == date(2026, 9, 10)
         assert ws["H3"].value == 1637280
         assert ws["I3"].value == "-"
         assert "DERIVED_BILLING_GROSS_MINUS_SAP_OUTSTANDING" in (ws["K3"].value or "")
