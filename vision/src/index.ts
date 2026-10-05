@@ -600,21 +600,23 @@ function parseInvoiceDate(text: string, expectedDocDate?: string | null): string
   const lines = String(text || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   const datePattern = /(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{1,2}\s+[A-Za-z]{3,12}\s+\d{4}|[A-Za-z]{3,12}\s+\d{1,2},?\s+\d{4})/i;
 
-  // Physical Doc. Date is evidence-only. Accept only a date attached to an
-  // Invoice/Faktur/Billing issue-date label. SAP date may disambiguate only
-  // when that exact date is also visibly printed on the selected Billing page.
+  // Physical Doc. Date must be the printed Faktur/Invoice/Billing issue date,
+  // never due date / jatuh tempo. Include common OCR confusions such as
+  // TANGGAI, TG1 and FAKT0R so a slightly rotated/faint label is still usable.
   const invoiceLabels = [
-    /\bTANGGAL\s+FAKTUR(?:\s+PAJAK)?\b/i,
-    /\bTGL\.?\s+FAKTUR(?:\s+PAJAK)?\b/i,
-    /\bFAKTUR\s+DATE\b/i,
+    /\bTANGGA[L1I]\s+F[A4]KT[UO0]R(?:\s+PAJAK)?\b/i,
+    /\bTG[L1I]\.?\s+F[A4]KT[UO0]R(?:\s+PAJAK)?\b/i,
+    /\bFAKT[UO0]R\s+DATE\b/i,
     /\bINVOICE\s+DATE\b/i,
     /\bDATE\s+OF\s+INVOICE\b/i,
-    /\bTANGGAL\s+INVOICE\b/i,
-    /\bTGL\.?\s+INVOICE\b/i,
+    /\bTANGGA[L1I]\s+INVOICE\b/i,
+    /\bTG[L1I]\.?\s+INVOICE\b/i,
     /\bBILLING\s+DATE\b/i,
     /\bBILL\s+DATE\b/i,
+    /\bDOCUMENT\s+DATE\b/i,
+    /\bTANGGA[L1I]\s+DOKUMEN\b/i,
   ];
-  const forbiddenLabels = /\b(DUE\s+DATE|PAYMENT\s+DUE|NET\s+DUE|JATUH\s+TEMPO|TANGGAL\s+JATUH\s+TEMPO|TGL\.?\s+JATUH\s+TEMPO|BATAS\s+PEMBAYARAN|DELIVERY\s+DATE|TANGGAL\s+PENGIRIMAN|POSTING\s+DATE|PRINT\s+DATE|TANGGAL\s+CETAK|TGL\.?\s+CETAK|ORDER\s+DATE|PO\s+DATE)\b/i;
+  const forbiddenLabels = /\b(DUE\s+DATE|PAYMENT\s+DUE|NET\s+DUE|JATUH\s+TEMPO|TANGGA[L1I]\s+JATUH\s+TEMPO|TG[L1I]\.?\s+JATUH\s+TEMPO|BATAS\s+PEMBAYARAN|DELIVERY\s+DATE|TANGGA[L1I]\s+PENGIRIMAN|POSTING\s+DATE|PRINT\s+DATE|TANGGA[L1I]\s+CETAK|TG[L1I]\.?\s+CETAK|ORDER\s+DATE|PO\s+DATE)\b/i;
 
   const labeled: string[] = [];
   for (let i = 0; i < lines.length; i++) {
@@ -622,13 +624,16 @@ function parseInvoiceDate(text: string, expectedDocDate?: string | null): string
     if (!invoiceLabels.some((pattern) => pattern.test(line))) continue;
     if (forbiddenLabels.test(line)) continue;
 
-    for (let offset = 0; offset <= 1 && i + offset < lines.length; offset++) {
+    // Prefer a date on the same line. A one/two-line fallback is allowed for
+    // table layouts where the label and value are vertically stacked.
+    for (let offset = 0; offset <= 2 && i + offset < lines.length; offset++) {
       const candidateLine = lines[i + offset];
       if (forbiddenLabels.test(candidateLine)) continue;
       const match = datePattern.exec(candidateLine);
       if (!match) continue;
       const normalized = parseInvoiceDateValue(match[1]);
       if (normalized && !labeled.includes(normalized)) labeled.push(normalized);
+      if (offset === 0 && normalized) break;
     }
   }
   if (!labeled.length) return null;
@@ -641,9 +646,9 @@ function parseInvoiceDate(text: string, expectedDocDate?: string | null): string
 
     if (expectedPrinted && labeled.length === 1) {
       const delta = daysBetweenIso(labeled[0], expected);
-      // Common credit terms are a strong signal that OCR associated Due Date
-      // with an Invoice/Billing label. Prefer SAP date only because that same
-      // date is visibly printed on the physical Billing page.
+      // 30/45/60/90-day terms are a typical symptom of the due date being
+      // associated with a damaged Invoice Date label. Use SAP only when the SAP
+      // date itself is also visibly printed on this Billing page.
       if ([30, 45, 60, 90].includes(delta)) return expected;
     }
 
@@ -681,6 +686,14 @@ function selectBillingPageIndex(pages: PageOcr[], expectedBillingDocument?: stri
   return bestScore >= 5 ? bestIndex : -1;
 }
 
+function parsePaymentMoneyToken(value: string): number | null {
+  // Payment lines are often printed as negative credits. For a partial-payment
+  // amount we need the absolute paid value, while gross/outstanding parsers stay
+  // positive-only.
+  const cleaned = String(value || '').trim().replace(/^\(/, '').replace(/^[-–—]+/, '');
+  return parseMoneyToken(cleaned);
+}
+
 function parsePartialPayments(
   text: string,
   allowPrintedDerivation = true,
@@ -688,19 +701,19 @@ function parsePartialPayments(
   const rows: Array<{ amount: number; date: string | null; reference: string | null }> = [];
 
   const explicitPatterns = [
-    /(?:PARTIAL\s+PAYMENT|PARTIAL\s+PAID|PAYMENT\s+PARTIAL)\s*[:#=-]?\s*(?:RP\.?\s*)?([0-9][0-9.,:\s-]*)/gi,
-    /(?:PAYMENT\s+RECEIVED|PAYMENT\s+PAID|AMOUNT\s+PAID|PAID\s+AMOUNT)\s*[:#=-]?\s*(?:RP\.?\s*)?([0-9][0-9.,:\s-]*)/gi,
-    /(?:JUMLAH\s+DIBAYAR|PEMBAYARAN\s+(?:PARTIAL|PARSIAL|DITERIMA|SEBELUMNYA|TERDAHULU)|TELAH\s+DIBAYAR|SUDAH\s+DIBAYAR)\s*[:#=-]?\s*(?:RP\.?\s*)?([0-9][0-9.,:\s-]*)/gi,
-    /(?:DOWN\s+PAYMENT|\bDP\b|UANG\s+MUKA)\s*[:#=-]?\s*(?:RP\.?\s*)?([0-9][0-9.,:\s-]*)/gi,
+    /(?:PARTIAL\s+PAYMENT|PARTIAL\s+PAID|PAYMENT\s+PARTIAL|PARTIAL\s+BILLING)[ \t]*[:#=-]?[ \t]*(?:RP\.?[ \t]*)?([-–—(]?[0-9][0-9.,: \t-]*)/gi,
+    /(?:PAYMENT\s+RECEIVED|PAYMENT\s+PAID|PAYMENT\s+AMOUNT|AMOUNT\s+PAID|PAID\s+AMOUNT)[ \t]*[:#=-]?[ \t]*(?:RP\.?[ \t]*)?([-–—(]?[0-9][0-9.,: \t-]*)/gi,
+    /(?:JUMLAH\s+DIBAYAR|NILAI\s+PEMBAYARAN|TOTAL\s+PEMBAYARAN|JUMLAH\s+PEMBAYARAN|PEMBAYARAN\s+(?:PARTIAL|PARSIAL|SEBAGIAN|DITERIMA|SEBELUMNYA|TERDAHULU)|PELUNASAN\s+SEBAGIAN|TELAH\s+DIBAYAR|SUDAH\s+DIBAYAR)[ \t]*[:#=-]?[ \t]*(?:RP\.?[ \t]*)?([-–—(]?[0-9][0-9.,: \t-]*)/gi,
+    /(?:DOWN\s+PAYMENT|\bDP\b|UANG\s+MUKA)[ \t]*[:#=-]?[ \t]*(?:RP\.?[ \t]*)?([-–—(]?[0-9][0-9.,: \t-]*)/gi,
   ];
 
   for (const pattern of explicitPatterns) {
     pattern.lastIndex = 0;
     let match: RegExpExecArray | null;
     while ((match = pattern.exec(text)) !== null) {
-      const amount = parseMoneyToken(match[1]);
+      const amount = parsePaymentMoneyToken(match[1]);
       if (amount === null) continue;
-      const reference = match[0].trim().slice(0, 140);
+      const reference = match[0].trim().slice(0, 160);
       if (!rows.some((row) => Math.abs(row.amount - amount) < 0.01 && row.reference === reference)) {
         rows.push({ amount, date: null, reference });
       }
@@ -708,26 +721,55 @@ function parsePartialPayments(
   }
 
   const gross = findLabeledAmount(text, [
-    /(?:GRAND\s+TOTAL|TOTAL\s+TAGIHAN|TOTAL\s+INVOICE|JUMLAH\s+TAGIHAN|INVOICE\s+TOTAL|TOTAL\s+BILLING|NILAI\s+FAKTUR)\s*[:#=-]?\s*(?:RP\.?\s*)?([0-9][0-9.,:\s-]*)/i,
+    /(?:GRAND[ \t]+TOTAL|TOTAL[ \t]+TAGIHAN|TOTAL[ \t]+INVOICE|JUMLAH[ \t]+TAGIHAN|INVOICE[ \t]+TOTAL|TOTAL[ \t]+BILLING|NILAI[ \t]+FAKTUR|TOTAL[ \t]+FAKTUR)[ \t]*[:#=-]?[ \t]*(?:RP\.?[ \t]*)?([0-9][0-9.,: \t-]*)/i,
+  ]);
+  const subtotal = findLabeledAmount(text, [
+    /(?:SUB[ \t]*TOTAL|DPP)[ \t]*[:#=-]?[ \t]*(?:RP\.?[ \t]*)?([0-9][0-9.,: \t-]*)/i,
+  ]);
+  const tax = findLabeledAmount(text, [
+    /(?:PPN|VAT)[ \t]*[:#=-]?[ \t]*(?:RP\.?[ \t]*)?([0-9][0-9.,: \t-]*)/i,
   ]);
   const outstanding = findLabeledAmount(text, [
-    /(?:OUTSTANDING|BALANCE\s+DUE|AMOUNT\s+DUE|SISA\s+TAGIHAN|SISA\s+PEMBAYARAN|SALDO\s+TERUTANG|NET\s+DUE|NET\s+OUTSTANDING)\s*[:#=-]?\s*(?:RP\.?\s*)?([0-9][0-9.,:\s-]*)/i,
+    /(?:OUTSTANDING(?:[ \t]+PIUTANG)?|TOTAL[ \t]+OUTSTANDING|BALANCE[ \t]+DUE|AMOUNT[ \t]+DUE|SISA[ \t]+TAGIHAN|SISA[ \t]+TAGIH|SISA[ \t]+PEMBAYARAN|SISA[ \t]+PIUTANG|SISA[ \t]+BILLING|SALDO[ \t]+TERUTANG|SALDO[ \t]+PIUTANG|NET[ \t]+DUE|NET[ \t]+OUTSTANDING)[ \t]*[:#=-]?[ \t]*(?:RP\.?[ \t]*)?([0-9][0-9.,: \t-]*)/i,
   ]);
 
-  // Derive partial payment only when BOTH amounts are printed on the same
-  // Billing page. Never derive payment from SAP outstanding.
-  if (allowPrintedDerivation && rows.length === 0 && gross && outstanding && gross.amount > outstanding.amount) {
-    const derived = Math.round((gross.amount - outstanding.amount) * 100) / 100;
+  let grossTotal = gross?.amount ?? null;
+
+  // Real SID billings often print Sub Total + PPN + Grand Total. When OCR drops
+  // a zero in Grand Total (e.g. 8.815.890 -> 881.589), the printed arithmetic is
+  // stronger evidence than the damaged total token. Use it only when the direct
+  // total is absent or clearly below its own subtotal.
+  if (subtotal && tax) {
+    const componentTotal = Math.round((subtotal.amount + tax.amount) * 100) / 100;
+    if (grossTotal === null || grossTotal < subtotal.amount || grossTotal < componentTotal * 0.5) {
+      grossTotal = componentTotal;
+    }
+  }
+
+  // Derive partial payment only from values printed on the physical evidence.
+  // SAP outstanding is never used to manufacture a payment.
+  if (
+    allowPrintedDerivation &&
+    rows.length === 0 &&
+    grossTotal !== null &&
+    outstanding &&
+    grossTotal > outstanding.amount
+  ) {
+    const derived = Math.round((grossTotal - outstanding.amount) * 100) / 100;
     if (derived > 0) {
       rows.push({
         amount: derived,
         date: null,
-        reference: 'DERIVED_DOCUMENT_TOTAL_MINUS_PRINTED_OUTSTANDING | ' + gross.reference + ' | ' + outstanding.reference,
+        reference:
+          'DERIVED_DOCUMENT_TOTAL_MINUS_PRINTED_OUTSTANDING | GROSS ' +
+          grossTotal +
+          ' | ' +
+          outstanding.reference,
       });
     }
   }
 
-  return { rows, grossTotal: gross?.amount ?? null };
+  return { rows, grossTotal };
 }
 
 async function localAnalyze(
@@ -895,7 +937,7 @@ async function localAnalyze(
   // same Billing evidence are accepted by parsePartialPayments().
 
   return {
-    engine: 'LOCAL_TESSERACT_VISUAL_V15',
+    engine: 'LOCAL_TESSERACT_VISUAL_V16',
     billing_document: billingDocument,
     invoice_date: invoiceDate,
     grand_total: paymentResult.grossTotal,
@@ -911,7 +953,8 @@ async function localAnalyze(
         ? 'SPJ resmi dipilih dari halaman PT Semen Indonesia Distributor berjudul SURAT PERINTAH JALAN.'
         : 'Header SPJ resmi tidak terbaca; sistem memakai fallback dokumen.',
       'TTD hanya dinilai dari ada/tidaknya coretan visual; keaslian dan identitas tidak dianalisis.',
-      'Tanggal fisik Billing hanya diambil dari label tanggal Invoice/Faktur/Billing/Document pada halaman Billing; Due/Jatuh Tempo/Delivery tidak pernah dipakai.',
+      'Tanggal fisik Billing hanya diambil dari tanggal Faktur/Invoice/Billing/Document yang tercetak pada halaman Billing; Due/Jatuh Tempo/Delivery tidak pernah dipakai.',
+      'Nominal fisik memakai Gross/Grand Total yang tercetak, dengan recovery Sub Total + PPN bila token Grand Total kehilangan digit.',
       'Partial payment hanya dibaca dari bukti fisik: label pembayaran atau Total dikurangi Outstanding/Sisa yang sama-sama tercetak pada Billing. Selisih terhadap SAP tidak pernah dianggap sebagai partial payment.'
     ],
     ocr_text: ocrText,
@@ -922,7 +965,7 @@ app.get('/health', (c) =>
   c.json({
     status: 'ok',
     service: 'vision',
-    engine: 'LOCAL_TESSERACT_VISUAL_V15',
+    engine: 'LOCAL_TESSERACT_VISUAL_V16',
   }),
 );
 
@@ -930,7 +973,7 @@ app.get('/vision-ai-health', async (c) => {
   // Preview-only diagnostic route used while this branch is under test.
   return c.json({
     status: 'ok',
-    engine: 'LOCAL_TESSERACT_VISUAL_V15',
+    engine: 'LOCAL_TESSERACT_VISUAL_V16',
     paid_gateway_required: false,
   });
 });
