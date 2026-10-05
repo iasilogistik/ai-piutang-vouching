@@ -980,34 +980,80 @@ app.get('/vision-ai-health', async (c) => {
 
 app.get('/vision-local-selftest', async (c) => {
   try {
-    const svg = `
+    // Billing page is deliberately rotated 90 degrees and its Grand Total is
+    // deliberately missing one zero. The self-test therefore covers the two
+    // production failures reported in the working paper: rotated scans and
+    // gross-total magnitude loss.
+    const billingSvg = `
       <svg width="1200" height="900" xmlns="http://www.w3.org/2000/svg">
         <rect width="1200" height="900" fill="white"/>
-        <text x="70" y="90" font-size="38" font-family="Arial">BILLING DOCUMENT 8501735930</text>
-        <text x="70" y="145" font-size="34" font-family="Arial">NO SPJ S41C/202608/2501787882</text>
-        <text x="70" y="200" font-size="34" font-family="Arial">GRAND TOTAL 3000000</text>
-        <text x="70" y="255" font-size="34" font-family="Arial">PARTIAL PAYMENT 1000000</text>
-        <rect x="60" y="560" width="1080" height="230" fill="none" stroke="black" stroke-width="3"/>
-        <text x="90" y="620" font-size="30" font-family="Arial">PENERIMA</text>
-        <text x="335" y="620" font-size="30" font-family="Arial">DRIVER</text>
-        <text x="565" y="620" font-size="30" font-family="Arial">SECURITY</text>
-        <text x="790" y="620" font-size="30" font-family="Arial">CHECKER</text>
-        <path d="M100 700 C160 630 210 760 270 680" fill="none" stroke="#1557d5" stroke-width="10"/>
-        <path d="M340 700 C390 640 450 760 500 680" fill="none" stroke="#1557d5" stroke-width="10"/>
-        <path d="M580 700 C630 650 690 760 740 680" fill="none" stroke="#1557d5" stroke-width="10"/>
-        <path d="M800 700 C850 645 910 755 970 680" fill="none" stroke="#1557d5" stroke-width="10"/>
-        <ellipse cx="1080" cy="690" rx="70" ry="50" fill="none" stroke="#0a8a55" stroke-width="10"/>
-        <text x="1020" y="700" font-size="22" font-family="Arial" fill="#0a8a55">SANTOSO</text>
+        <text x="70" y="90" font-size="38" font-family="Arial">BILLING DOCUMENT 8501681202</text>
+        <text x="70" y="155" font-size="34" font-family="Arial">TANGGAL FAKTUR 03 Juli 2026</text>
+        <text x="70" y="215" font-size="30" font-family="Arial">POSTING DATE 10/09/2026</text>
+        <text x="70" y="330" font-size="34" font-family="Arial">SUB TOTAL 7.942.224</text>
+        <text x="70" y="390" font-size="34" font-family="Arial">PPN 873.666</text>
+        <text x="70" y="450" font-size="34" font-family="Arial">GRAND TOTAL 881.589</text>
+        <text x="70" y="520" font-size="34" font-family="Arial">PEMBAYARAN SEBAGIAN 3.400.008</text>
       </svg>`;
-    const image = await sharp(Buffer.from(svg)).jpeg({ quality: 88 }).toBuffer();
-    const dataUrl = 'data:image/jpeg;base64,' + image.toString('base64');
-    const result = await localAnalyze([dataUrl], 'SANTOSO');
+    const billingUpright = await sharp(Buffer.from(billingSvg)).jpeg({ quality: 92 }).toBuffer();
+    const billingRotated = await sharp(billingUpright).rotate(90).jpeg({ quality: 92 }).toBuffer();
+
+    const spjSvg = `
+      <svg width="1200" height="900" xmlns="http://www.w3.org/2000/svg">
+        <rect width="1200" height="900" fill="white"/>
+        <text x="70" y="70" font-size="30" font-family="Arial">PT SEMEN INDONESIA DISTRIBUTOR</text>
+        <text x="620" y="70" font-size="36" font-family="Arial">SURAT PERINTAH JALAN</text>
+        <text x="620" y="115" font-size="28" font-family="Arial">SPJ/S41C/202607/2501731412</text>
+        <text x="85" y="545" font-size="28" font-family="Arial">Penerima</text>
+        <text x="325" y="545" font-size="28" font-family="Arial">Driver</text>
+        <text x="510" y="545" font-size="28" font-family="Arial">Checker</text>
+        <text x="710" y="545" font-size="28" font-family="Arial">Satpam</text>
+        <text x="900" y="545" font-size="28" font-family="Arial">Branch Manager</text>
+        <path d="M90 595 C145 540 190 650 245 575" fill="none" stroke="#1557d5" stroke-width="10"/>
+        <path d="M330 595 C380 545 425 650 485 575" fill="none" stroke="#1557d5" stroke-width="10"/>
+        <path d="M520 595 C570 545 620 650 680 575" fill="none" stroke="#1557d5" stroke-width="10"/>
+        <path d="M715 595 C765 545 815 650 870 575" fill="none" stroke="#1557d5" stroke-width="10"/>
+        <path d="M915 595 C965 545 1030 650 1090 575" fill="none" stroke="#1557d5" stroke-width="10"/>
+        <ellipse cx="170" cy="620" rx="72" ry="45" fill="none" stroke="#0a8a55" stroke-width="9"/>
+        <text x="112" y="628" font-size="20" font-family="Arial" fill="#0a8a55">BERKAH</text>
+      </svg>`;
+    const spjImage = await sharp(Buffer.from(spjSvg)).jpeg({ quality: 92 }).toBuffer();
+
+    const result = await localAnalyze(
+      [
+        'data:image/jpeg;base64,' + billingRotated.toString('base64'),
+        'data:image/jpeg;base64,' + spjImage.toString('base64'),
+      ],
+      'BERKAH AL AQSO, TB',
+      '8501681202',
+      5415882,
+      '2026-09-10',
+    );
+
+    const partial = result.partial_payments.reduce(
+      (sum: number, row: { amount: number }) => sum + Number(row.amount || 0),
+      0,
+    );
+    const netPhysical =
+      result.grand_total == null ? null : Number(result.grand_total) - partial;
+
     return c.json({
-      status: 'ok',
+      status:
+        result.invoice_date === '2026-07-03' &&
+        Number(result.grand_total) === 8815890 &&
+        partial === 3400008 &&
+        netPhysical === 5415882
+          ? 'ok'
+          : 'failed',
       engine: result.engine,
-      ocr_text: String(result.ocr_text || '').slice(0, 700),
+      invoice_date: result.invoice_date,
+      grand_total: result.grand_total,
+      partial_payment: partial,
+      net_physical: netPhysical,
+      spj_number: result.spj_number,
       signatures: result.signatures,
       stamp: result.stamp,
+      ocr_text: String(result.ocr_text || '').slice(0, 1200),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
