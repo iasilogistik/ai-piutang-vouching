@@ -234,9 +234,10 @@ def _normalize_ocr_amount_scale(
 ) -> Decimal | None:
     """Repair obvious OCR magnitude loss without inventing a new amount.
 
-    Example: OCR may return 2.35 for an invoice whose SAP outstanding is
-    2,350,000. Rescale only when x1,000/x1,000,000 lands within 5% of
-    SAP outstanding plus an explicit partial payment.
+    Scans sometimes drop one or more trailing zeroes, for example 881.589 from
+    8.815.890 or 2.35 from 2.350.000.  Rescaling is accepted only when the
+    corrected value lands close to SAP outstanding plus a payment value that
+    was independently read from the physical Billing/SPJ evidence.
     """
     if amount is None:
         return None
@@ -250,12 +251,15 @@ def _normalize_ocr_amount_scale(
     if target_gross <= 0:
         return value.quantize(Decimal("0.01"))
 
-    if value >= (target_gross / Decimal("100")):
-        return value.quantize(Decimal("0.01"))
-
-    candidates = [value * Decimal("1000"), value * Decimal("1000000")]
+    candidates = [
+        value,
+        value * Decimal("10"),
+        value * Decimal("100"),
+        value * Decimal("1000"),
+        value * Decimal("1000000"),
+    ]
     best = min(candidates, key=lambda candidate: abs(candidate - target_gross))
-    if abs(best - target_gross) / target_gross <= Decimal("0.05"):
+    if best != value and abs(best - target_gross) / target_gross <= Decimal("0.05"):
         return best.quantize(Decimal("0.01"))
     return value.quantize(Decimal("0.01"))
 
