@@ -100,8 +100,8 @@ def test_same_spj_with_unclear_stamp_goes_only_to_review(monkeypatch):
         )
         db.add_all([billing_doc, spj_doc])
         db.flush()
-        billing = PhysicalBilling(document_id=billing_doc.id, billing_document="8500000001", no_spj="SPJ-1")
-        spj = SPJ(document_id=spj_doc.id, no_spj="SPJ-1")
+        billing = PhysicalBilling(document_id=billing_doc.id, billing_document="8500000001", no_spj="2500000001")
+        spj = SPJ(document_id=spj_doc.id, no_spj="2500000001")
         db.add_all([billing, spj])
         db.flush()
         _control(db, spj_doc.id, stamp_status="UNKNOWN", stamp_match="REVIEW", review_required=True)
@@ -114,7 +114,7 @@ def test_same_spj_with_unclear_stamp_goes_only_to_review(monkeypatch):
         assert result.spj_match is True
 
 
-def test_same_file_pair_can_pass_when_number_unreadable_but_visual_controls_complete(monkeypatch):
+def test_same_file_pair_requires_review_when_number_unreadable_even_if_visual_controls_complete(monkeypatch):
     import app.services.vouching as service
 
     monkeypatch.setattr(service, "vision_available", lambda: False)
@@ -147,6 +147,7 @@ def test_same_file_pair_can_pass_when_number_unreadable_but_visual_controls_comp
 
         result = next(row for row in vouch_spj(db, branch="KEDIRI") if row.billing_id == billing.id)
 
-        assert result.status == "PASS"
-        assert result.rule_code == "PAIRED_EVIDENCE_COMPLETE"
+        assert result.status == "REVIEW"
+        assert result.rule_code == "SPJ_NUMBER_UNREADABLE_PAIRED_EVIDENCE"
+        assert result.spj_match is False
         assert result.spj_id == spj.id
