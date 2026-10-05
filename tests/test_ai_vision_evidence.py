@@ -377,3 +377,67 @@ def test_v15_refresh_clears_legacy_sap_derived_partial(monkeypatch, tmp_path):
         assert billing.nominal == Decimal("2637230.00")
         assert billing.partial_payment is None
         assert billing.partial_payment_raw is None
+
+
+
+def test_v18_refresh_clears_stale_physical_date_nominal_and_partial_when_not_supported(monkeypatch, tmp_path):
+    monkeypatch.setattr(vouching, "extract_text", lambda path: ("", "REVIEW_REQUIRED"))
+    monkeypatch.setattr(vouching, "vision_available", lambda: True)
+
+    vision = _vision_payload()
+    vision["engine"] = "LOCAL_TESSERACT_VISUAL_V18"
+    vision["invoice_date"] = None
+    vision["grand_total"] = None
+    vision["partial_payments"] = []
+
+    monkeypatch.setattr(vouching, "analyze_document_vision", lambda *args, **kwargs: vision)
+
+    fake_pdf = tmp_path / "combined.pdf"
+    fake_pdf.write_bytes(b"%PDF-test")
+
+    with Session(_engine()) as db:
+        billing_doc = Document(
+            file_name=fake_pdf.name,
+            file_type="PDF",
+            document_type="BILLING",
+            file_hash="strict-v18-hash",
+            storage_path=str(fake_pdf),
+            branch="KEDIRI",
+        )
+        spj_doc = Document(
+            file_name=fake_pdf.name,
+            file_type="PDF",
+            document_type="SPJ",
+            file_hash="strict-v18-hash",
+            storage_path=str(fake_pdf),
+            branch="KEDIRI",
+        )
+        db.add_all([billing_doc, spj_doc])
+        db.flush()
+        billing = PhysicalBilling(
+            document_id=billing_doc.id,
+            billing_document="8501692627",
+            doc_date=date(2026, 7, 15),
+            nominal=Decimal("2637230.00"),
+            partial_payment=Decimal("999950.00"),
+            partial_payment_raw="DERIVED_DOCUMENT_TOTAL_MINUS_SAP_OUTSTANDING",
+        )
+        spj = SPJ(document_id=spj_doc.id, no_spj="2501800001")
+        db.add_all([billing, spj])
+        db.commit()
+
+        vouching.ocr_document(
+            db,
+            spj_doc.id,
+            expected_customer="GEMILANG 86, TB",
+            expected_billing_document="8501692627",
+            expected_nominal=Decimal("1637280.00"),
+            expected_doc_date=date(2026, 9, 10),
+            force_vision=True,
+        )
+        db.refresh(billing)
+
+        assert billing.doc_date is None
+        assert billing.nominal is None
+        assert billing.partial_payment is None
+        assert billing.partial_payment_raw is None
