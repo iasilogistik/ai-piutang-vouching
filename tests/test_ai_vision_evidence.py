@@ -266,3 +266,50 @@ def test_ocr_forwards_expected_doc_date_to_visual_engine(monkeypatch, tmp_path):
 
         assert captured["expected_doc_date"] == date(2026, 8, 24)
         assert billing.doc_date == date(2026, 8, 24)
+
+
+
+def test_unclear_visual_stamp_never_auto_passes(monkeypatch, tmp_path):
+    import app.services.vouching as vouching_module
+
+    monkeypatch.setattr(vouching_module, "extract_text", lambda path: ("", "REVIEW_REQUIRED"))
+    vision = _vision_payload()
+    vision["stamp"] = {
+        "status": "UNCLEAR",
+        "text": None,
+        "confidence": 0.35,
+        "page_number": 1,
+    }
+
+    fake_pdf = tmp_path / "signature-without-clear-stamp.pdf"
+    fake_pdf.write_bytes(b"%PDF-test")
+
+    with Session(_engine()) as db:
+        doc = Document(
+            file_name=fake_pdf.name,
+            file_type="PDF",
+            document_type="SPJ",
+            file_hash="unclear-stamp-hash",
+            storage_path=str(fake_pdf),
+            branch="KEDIRI",
+        )
+        db.add(doc)
+        db.flush()
+        db.add(SPJ(document_id=doc.id, no_spj="2501787882"))
+        db.commit()
+
+        payload = analyze_and_persist_control_evidence(
+            db,
+            doc.id,
+            expected_customer="SANTOSO, TOKO",
+            vision_result=vision,
+        )
+        db.commit()
+
+        row = db.scalar(
+            select(DocumentControlEvidence).where(DocumentControlEvidence.document_id == doc.id)
+        )
+        assert row.receiver_stamp_status == "UNKNOWN"
+        assert row.review_required is True
+        assert "stempel" in (row.review_reasons or "").lower()
+        assert payload["review_required"] is True
