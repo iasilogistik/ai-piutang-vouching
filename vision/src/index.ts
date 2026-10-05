@@ -797,7 +797,7 @@ async function localAnalyze(
   // same Billing evidence are accepted by parsePartialPayments().
 
   return {
-    engine: 'LOCAL_TESSERACT_VISUAL_V17',
+    engine: 'LOCAL_TESSERACT_VISUAL_V18',
     billing_document: billingDocument,
     invoice_date: invoiceDate,
     grand_total: paymentResult.grossTotal,
@@ -824,7 +824,7 @@ app.get('/health', (c) =>
   c.json({
     status: 'ok',
     service: 'vision',
-    engine: 'LOCAL_TESSERACT_VISUAL_V17',
+    engine: 'LOCAL_TESSERACT_VISUAL_V18',
   }),
 );
 
@@ -832,7 +832,7 @@ app.get('/vision-ai-health', async (c) => {
   // Preview-only diagnostic route used while this branch is under test.
   return c.json({
     status: 'ok',
-    engine: 'LOCAL_TESSERACT_VISUAL_V17',
+    engine: 'LOCAL_TESSERACT_VISUAL_V18',
     paid_gateway_required: false,
   });
 });
