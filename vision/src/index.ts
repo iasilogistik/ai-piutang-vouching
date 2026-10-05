@@ -547,56 +547,43 @@ function daysBetweenIso(left: string, right: string): number {
   return Math.abs(a - b) / 86400000;
 }
 
-function parseInvoiceDate(text: string, expectedDocDate?: string | null): string | null {
+function parseInvoiceDate(text: string, _expectedDocDate?: string | null): string | null {
   const lines = String(text || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   const datePattern = /(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{1,2}\s+[A-Za-z]{3,12}\s+\d{4}|[A-Za-z]{3,12}\s+\d{1,2},?\s+\d{4})/i;
 
-  // Physical Doc. Date means invoice/faktur issue date only.
-  const strictInvoiceLabels = [
+  // Physical Doc. Date is evidence-only. Accept a date only when the Billing
+  // page explicitly labels it as Invoice/Faktur/Billing/Document date. Never
+  // use SAP date as a substitute and never accept Due/Jatuh Tempo/Delivery date.
+  const invoiceLabels = [
     /\bTANGGAL\s+FAKTUR(?:\s+PAJAK)?\b/i,
     /\bTGL\.?\s+FAKTUR(?:\s+PAJAK)?\b/i,
+    /\bFAKTUR\s+DATE\b/i,
     /\bINVOICE\s+DATE\b/i,
     /\bDATE\s+OF\s+INVOICE\b/i,
     /\bTANGGAL\s+INVOICE\b/i,
     /\bTGL\.?\s+INVOICE\b/i,
+    /\bBILLING\s+DATE\b/i,
+    /\bBILL\s+DATE\b/i,
+    /\bDOCUMENT\s+DATE\b/i,
+    /\bDOC\.?\s*DATE\b/i,
+    /\bTANGGAL\s+DOKUMEN\b/i,
   ];
   const forbiddenLabels = /\b(DUE\s+DATE|PAYMENT\s+DUE|NET\s+DUE|JATUH\s+TEMPO|TANGGAL\s+JATUH\s+TEMPO|TGL\.?\s+JATUH\s+TEMPO|BATAS\s+PEMBAYARAN|DELIVERY\s+DATE|TANGGAL\s+PENGIRIMAN|POSTING\s+DATE|PRINT\s+DATE|TANGGAL\s+CETAK|TGL\.?\s+CETAK|ORDER\s+DATE|PO\s+DATE)\b/i;
 
-  let strictCandidate: string | null = null;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    if (!strictInvoiceLabels.some((pattern) => pattern.test(line))) continue;
+    if (!invoiceLabels.some((pattern) => pattern.test(line))) continue;
     if (forbiddenLabels.test(line)) continue;
 
+    // Date is commonly on the same line or the immediately following OCR line.
     for (let offset = 0; offset <= 1 && i + offset < lines.length; offset++) {
       const candidateLine = lines[i + offset];
       if (forbiddenLabels.test(candidateLine)) continue;
-      if (offset > 0 && strictInvoiceLabels.some((pattern) => pattern.test(candidateLine))) break;
       const match = datePattern.exec(candidateLine);
       if (!match) continue;
-      strictCandidate = parseInvoiceDateValue(match[1]);
-      if (strictCandidate) break;
+      const normalized = parseInvoiceDateValue(match[1]);
+      if (normalized) return normalized;
     }
-    if (strictCandidate) break;
-  }
-
-  if (!expectedDocDate) return strictCandidate;
-
-  // SAP Document Date is not copied into the physical column. It is used only
-  // as a plausibility guard against OCR choosing a due/delivery/print date.
-  if (strictCandidate && daysBetweenIso(strictCandidate, expectedDocDate) <= 31) {
-    return strictCandidate;
-  }
-
-  const visibleCandidates = invoiceDateCandidates(text)
-    .sort((a, b) => daysBetweenIso(a, expectedDocDate) - daysBetweenIso(b, expectedDocDate));
-  const closest = visibleCandidates[0] || null;
-
-  // If OCR labelled an implausibly distant date as Invoice Date, prefer a date
-  // that is actually printed on the same Billing page and close to SAP. If no
-  // such date exists, return null rather than publishing a wrong physical date.
-  if (closest && daysBetweenIso(closest, expectedDocDate) <= 7) {
-    return closest;
   }
   return null;
 }
@@ -832,8 +819,34 @@ async function localAnalyze(
     };
   }
 
+  // Some SID Billing layouts print Gross/Grand Total but do not print a
+  // separate "partial payment" label. When the exact Billing Document is found
+  // on the selected Billing page and SAP contains the remaining outstanding,
+  // the difference is a controlled derived partial payment. Keep an explicit
+  // audit-trail reference so it is never mistaken for directly OCR-read text.
+  if (
+    paymentResult.rows.length === 0 &&
+    billingDocument &&
+    billingPageIndex >= 0 &&
+    paymentResult.grossTotal != null &&
+    expectedNominal != null &&
+    expectedNominal > 0 &&
+    paymentResult.grossTotal > expectedNominal
+  ) {
+    const derived = Math.round((paymentResult.grossTotal - expectedNominal) * 100) / 100;
+    const ratio = paymentResult.grossTotal / expectedNominal;
+    if (derived > 0 && ratio <= 20) {
+      paymentResult.rows.push({
+        amount: derived,
+        date: null,
+        reference: 'DERIVED_BILLING_GROSS_MINUS_SAP_OUTSTANDING | Gross ' +
+          paymentResult.grossTotal + ' | SAP Outstanding ' + expectedNominal,
+      });
+    }
+  }
+
   return {
-    engine: 'LOCAL_TESSERACT_VISUAL_V13',
+    engine: 'LOCAL_TESSERACT_VISUAL_V14',
     billing_document: billingDocument,
     invoice_date: invoiceDate,
     grand_total: paymentResult.grossTotal,
@@ -849,8 +862,8 @@ async function localAnalyze(
         ? 'SPJ resmi dipilih dari halaman PT Semen Indonesia Distributor berjudul SURAT PERINTAH JALAN.'
         : 'Header SPJ resmi tidak terbaca; sistem memakai fallback dokumen.',
       'TTD hanya dinilai dari ada/tidaknya coretan visual; keaslian dan identitas tidak dianalisis.',
-      'Tanggal fisik Billing diambil dari tanggal yang tercetak pada halaman Billing/Invoice/Faktur; SAP hanya dipakai untuk memilih kandidat tanggal yang tercetak bila OCR label tanggal hilang.',
-      'Partial payment hanya dibaca dari label pembayaran eksplisit atau Total minus Outstanding yang keduanya tercetak pada Billing yang sama; tidak pernah dihitung dari SAP outstanding.'
+      'Tanggal fisik Billing hanya diambil dari label tanggal Invoice/Faktur/Billing/Document pada halaman Billing; Due/Jatuh Tempo/Delivery tidak pernah dipakai.',
+      'Partial payment dibaca dari label pembayaran/Total-Outstanding; bila label tidak tersedia, selisih Gross Billing dengan SAP outstanding hanya dipakai jika exact Billing Document yang sama ditemukan dan dicatat sebagai DERIVED_BILLING_GROSS_MINUS_SAP_OUTSTANDING.'
     ],
     ocr_text: ocrText,
   };
@@ -860,7 +873,7 @@ app.get('/health', (c) =>
   c.json({
     status: 'ok',
     service: 'vision',
-    engine: 'LOCAL_TESSERACT_VISUAL_V13',
+    engine: 'LOCAL_TESSERACT_VISUAL_V14',
   }),
 );
 
@@ -868,7 +881,7 @@ app.get('/vision-ai-health', async (c) => {
   // Preview-only diagnostic route used while this branch is under test.
   return c.json({
     status: 'ok',
-    engine: 'LOCAL_TESSERACT_VISUAL_V13',
+    engine: 'LOCAL_TESSERACT_VISUAL_V14',
     paid_gateway_required: false,
   });
 });
