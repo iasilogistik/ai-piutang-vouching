@@ -1108,7 +1108,7 @@ def _control_evidence_complete(row: DocumentControlEvidence | None) -> bool:
         return False
     if row.receiver_stamp_status != "PRESENT":
         return False
-    return row.stamp_customer_match_status in {"MATCH", "NOT_EVALUATED"}
+    return row.stamp_customer_match_status == "MATCH"
 
 
 def _refresh_visual_pair(
