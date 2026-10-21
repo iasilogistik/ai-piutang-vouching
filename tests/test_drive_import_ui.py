@@ -42,7 +42,7 @@ def test_drive_share_links_allow_rar_archives():
 
 
 def test_drive_import_ui_uses_chunked_folder_upload_and_separate_ocr():
-    html = drive_import_html()
+    html = client.get("/ui/drive-import").text
 
     assert "form.append('offset',String(offset))" in html
     assert "form.append('limit',String(limit))" in html
