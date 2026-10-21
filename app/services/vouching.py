@@ -211,7 +211,7 @@ def _parse_date(value: str | None) -> date | None:
 def _extract_partial_payments(text: str) -> tuple[Decimal | None, str | None]:
     patterns = [
         r"(?:Pembayaran\s+(?:Partial|Parsial)|(?:Partial|Parsial)\s+Payment|Bayar\s+(?:Partial|Parsial)|Partial)\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9][0-9.,:\s-]*)",
-        r"(?:Payment\s+Received|Amount\s+Paid|Paid\s+Amount|Jumlah\s+Dibayar|Pembayaran\s+(?:Diterima|Sebelumnya|Terdahulu)|Telah\s+Dibayar|Sudah\s+Dibayar)\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9][0-9.,:\s-]*)",
+        r"(?:Payment\s+Received|Payment\s+Paid|Amount\s+Paid|Paid\s+Amount|Total\s+Paid|Total\s+Payment|Payment\s+Amount|Jumlah\s+Dibayar|Nilai\s+Bayar|Total\s+Bayar|Jumlah\s+Pembayaran|Pembayaran\s+(?:Diterima|Sebelumnya|Terdahulu)|Telah\s+Dibayar|Sudah\s+Dibayar)\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9][0-9.,:\s-]*)",
         r"(?:DP|Down\s+Payment|Uang\s+Muka)\s*[:#-]?\s*(?:Rp\.?\s*)?([0-9][0-9.,:\s-]*)",
     ]
     amounts: list[Decimal] = []
@@ -849,7 +849,7 @@ def reconcile_batch(db: Session, batch_id: int, *, branch: str | None = None) ->
             partial_note: str | None = None
             if physical.no_spj:
                 spj_query = select(SPJ).join(SPJ.document).where(
-                    SPJ.no_spj == _norm_key(physical.no_spj),
+                    SPJ.no_spj == _normalize_spj_number(physical.no_spj),
                     Document.archived_at.is_(None),
                 )
                 spj_query = spj_query.where(
@@ -893,23 +893,39 @@ def reconcile_batch(db: Session, batch_id: int, *, branch: str | None = None) ->
             billing_partial = physical.partial_payment or Decimal("0.00")
             net_nominal = _net_document_amount(physical.nominal, billing_partial, spj_partial)
             difference = sap.nominal - net_nominal if net_nominal is not None else Decimal("0.00")
-            nominal_match = difference == Decimal("0.00") if net_nominal is not None else False
-            date_evaluated = physical.doc_date is not None
+
+            # OCR can be off by one rupiah on a scanned total (e.g. 6,878,174
+            # versus 6,878,175). Treat only +/- Rp1 as a harmless OCR rounding
+            # tolerance; larger differences remain real exceptions.
+            nominal_tolerance = Decimal("1.00")
             nominal_evaluated = net_nominal is not None
+            nominal_match = (
+                abs(difference) <= nominal_tolerance
+                if nominal_evaluated
+                else False
+            )
+
+            date_evaluated = physical.doc_date is not None
+            date_match = physical.doc_date == sap.doc_date if date_evaluated else False
             date_conflict = date_evaluated and not date_match
             nominal_conflict = nominal_evaluated and not nominal_match
             missing_ocr = physical.doc_date is None or physical.nominal is None
 
-            # Reconciliation's primary identity is the unique Billing Document.
-            # Missing scan fields are "not evaluated", not mismatches. A unique
-            # exact Billing match therefore remains MATCH unless a field that was
-            # actually read contradicts SAP. This avoids sending clean scans to
-            # manual review merely because OCR could not read every field.
-            status = (
-                "MATCH"
-                if billing_match and not date_conflict and not nominal_conflict
-                else "EXCEPTION"
-            )
+            # Accuracy-first status:
+            # - MATCH requires an exact Billing identity and a readable nominal
+            #   that agrees with SAP after evidence-backed partial payments.
+            # - REVIEW is used when the Billing is identified but nominal is not
+            #   readable; do not label an unevaluated amount as MATCH.
+            # - EXCEPTION means a readable field actually conflicts.
+            if not billing_match:
+                status = "EXCEPTION"
+            elif not nominal_evaluated:
+                status = "REVIEW"
+            elif nominal_conflict or date_conflict:
+                status = "EXCEPTION"
+            else:
+                status = "MATCH"
+
             remarks_parts = []
             if billing_partial:
                 remarks_parts.append(f"Billing partial payment deducted: {billing_partial}")
@@ -918,13 +934,16 @@ def reconcile_batch(db: Session, batch_id: int, *, branch: str | None = None) ->
             if missing_ocr:
                 missing_fields = []
                 if physical.doc_date is None:
-                    missing_fields.append("tanggal")
+                    missing_fields.append("tanggal faktur")
                 if physical.nominal is None:
-                    missing_fields.append("nominal")
+                    missing_fields.append("nominal fisik")
                 remarks_parts.append(
-                    "MATCH berdasarkan Billing Document unik; "
-                    + "/".join(missing_fields)
-                    + " belum terbaca OCR dan dicatat sebagai tidak dievaluasi, bukan mismatch."
+                    "/".join(missing_fields)
+                    + " belum terbaca dari evidence fisik."
+                )
+            if nominal_evaluated and difference != 0 and nominal_match:
+                remarks_parts.append(
+                    f"Selisih OCR {difference} masih dalam toleransi +/- Rp1."
                 )
             if partial_note:
                 remarks_parts.append(partial_note)
@@ -934,7 +953,15 @@ def reconcile_batch(db: Session, batch_id: int, *, branch: str | None = None) ->
             rec.nominal_match = nominal_match
             rec.nominal_difference = difference
             rec.status = status
-            rec.exception_code = None if status == "MATCH" else "BILLING_FIELD_MISMATCH"
+            rec.exception_code = (
+                None
+                if status == "MATCH"
+                else (
+                    "BILLING_NOMINAL_UNREADABLE"
+                    if status == "REVIEW" and not nominal_evaluated
+                    else "BILLING_FIELD_MISMATCH"
+                )
+            )
             rec.remarks = "; ".join(remarks_parts) or partial_note
         if existing is None:
             db.add(rec)
