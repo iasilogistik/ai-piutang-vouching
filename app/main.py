@@ -153,7 +153,8 @@ def _batch_for_user(db: Session, batch_id: int, user: CurrentUser) -> ImportBatc
 
 def _ingest_physical_document(db: Session, upload, *, document_type: str, uploaded_by: str | None,
                               source_mode: str, branch: str | None = None,
-                              metadata_extra: dict[str, object] | None = None) -> dict[str, object]:
+                              metadata_extra: dict[str, object] | None = None,
+                              analyze_immediately: bool = True) -> dict[str, object]:
     incoming_name = Path(upload.filename or "document").name
     normalized_branch = normalize_branch(branch)
     previous_query = (
@@ -200,43 +201,62 @@ def _ingest_physical_document(db: Session, upload, *, document_type: str, upload
         metadata.update(metadata_extra)
     record_audit(db, entity_type="DOCUMENT", entity_id=doc.id, action="UPLOAD", actor=uploaded_by,
                  status_to="UPLOADED", metadata=metadata, branch=doc.branch)
-    analysis = ocr_document(db, doc.id)
+    analysis = None
     control_evidence = None
-    if document_type == "SPJ":
-        if analysis.get("vision"):
-            control_evidence = analyze_and_persist_control_evidence(
-                db,
-                doc.id,
-                vision_result=analysis.get("vision"),
-            )
-        else:
-            control_evidence = analyze_and_persist_control_evidence(db, doc.id)
-    record_audit(db, entity_type="DOCUMENT", entity_id=doc.id, action="AUTO_EXTRACT",
-                 actor=uploaded_by, status_to="EXTRACTED",
-                 metadata={"engine": analysis.get("engine"), "confidence": analysis.get("confidence"),
-                           "source_mode": source_mode,
-                           "control_evidence_review_required": bool(control_evidence and control_evidence.get("review_required")),
-                           **(metadata_extra or {})}, branch=doc.branch)
+    if analyze_immediately:
+        analysis = ocr_document(db, doc.id)
+        if document_type == "SPJ":
+            if analysis.get("vision"):
+                control_evidence = analyze_and_persist_control_evidence(
+                    db,
+                    doc.id,
+                    vision_result=analysis.get("vision"),
+                )
+            else:
+                control_evidence = analyze_and_persist_control_evidence(db, doc.id)
+        record_audit(db, entity_type="DOCUMENT", entity_id=doc.id, action="AUTO_EXTRACT",
+                     actor=uploaded_by, status_to="EXTRACTED",
+                     metadata={"engine": analysis.get("engine"), "confidence": analysis.get("confidence"),
+                               "source_mode": source_mode,
+                               "control_evidence_review_required": bool(control_evidence and control_evidence.get("review_required")),
+                               **(metadata_extra or {})}, branch=doc.branch)
+    else:
+        record_audit(
+            db,
+            entity_type="DOCUMENT",
+            entity_id=doc.id,
+            action="AUTO_EXTRACT_DEFERRED",
+            actor=uploaded_by,
+            status_to="PENDING_ANALYSIS",
+            metadata={"source_mode": source_mode, **(metadata_extra or {})},
+            branch=doc.branch,
+        )
     return {"document_id": doc.id, "file_name": doc.file_name, "file_hash": doc.file_hash,
             "document_type": document_type, "analysis": analysis, "control_evidence": control_evidence,
+            "analysis_deferred": not analyze_immediately,
             "ingest_action": ingest_action, "supersedes_document_id": doc.supersedes_document_id,
             "evidence_version_number": doc.evidence_version_number}
 
 
 def _ingest_classified_upload(db: Session, upload, *, document_types: list[str], uploaded_by: str | None,
                               source_mode: str, branch: str | None = None,
-                              metadata_extra: dict[str, object] | None = None) -> dict[str, object]:
+                              metadata_extra: dict[str, object] | None = None,
+                              analyze_immediately: bool = True) -> dict[str, object]:
     if document_types == ["BILLING", "SPJ"]:
         billing = _ingest_physical_document(db, upload, document_type="BILLING", uploaded_by=uploaded_by,
                                             source_mode=source_mode, branch=branch,
-                                            metadata_extra=metadata_extra)
+                                            metadata_extra=metadata_extra,
+                                            analyze_immediately=analyze_immediately)
         upload.file.seek(0)
         spj_meta = {**(metadata_extra or {}), "billing_document_id": billing["document_id"]}
         spj = _ingest_physical_document(db, upload, document_type="SPJ", uploaded_by=uploaded_by,
                                         source_mode=source_mode, branch=branch,
-                                        metadata_extra=spj_meta)
+                                        metadata_extra=spj_meta,
+                                        analyze_immediately=analyze_immediately)
         return {"mode": "COMBINED", "status": "SUCCESS", "billing_document_id": billing["document_id"],
                 "spj_document_id": spj["document_id"],
+                "analysis_document_id": spj["document_id"],
+                "analysis_deferred": bool(spj.get("analysis_deferred")),
                 "ingest_action": "REPLACED" if "REPLACED" in {billing["ingest_action"], spj["ingest_action"]} else "ADDED",
                 "billing_ingest_action": billing["ingest_action"], "spj_ingest_action": spj["ingest_action"],
                 "control_evidence_review_required": bool(spj.get("control_evidence") and spj["control_evidence"].get("review_required"))}
@@ -244,18 +264,22 @@ def _ingest_classified_upload(db: Session, upload, *, document_types: list[str],
     document_type = document_types[0]
     payload = _ingest_physical_document(db, upload, document_type=document_type, uploaded_by=uploaded_by,
                                         source_mode=source_mode, branch=branch,
-                                        metadata_extra=metadata_extra)
+                                        metadata_extra=metadata_extra,
+                                        analyze_immediately=analyze_immediately)
     return {"mode": document_type, "status": "SUCCESS", "ingest_action": payload["ingest_action"],
             "supersedes_document_id": payload["supersedes_document_id"],
             "evidence_version_number": payload["evidence_version_number"],
             "billing_document_id": payload["document_id"] if document_type == "BILLING" else None,
             "spj_document_id": payload["document_id"] if document_type == "SPJ" else None,
+            "analysis_document_id": payload["document_id"],
+            "analysis_deferred": bool(payload.get("analysis_deferred")),
             "control_evidence_review_required": bool(payload.get("control_evidence") and payload["control_evidence"].get("review_required"))}
 
 
 def _process_upload_or_zip(db: Session, upload, *, mode: str, uploaded_by: str | None,
                            source_mode: str, branch: str | None = None,
-                           metadata_extra: dict[str, object] | None = None) -> tuple[int, list[dict[str, object]]]:
+                           metadata_extra: dict[str, object] | None = None,
+                           analyze_immediately: bool = True) -> tuple[int, list[dict[str, object]]]:
     suffix = Path(upload.filename).suffix.lower()
     if suffix in {".zip", ".rar"}:
         entries = iter_bulk_zip_entries(upload)
@@ -269,7 +293,8 @@ def _process_upload_or_zip(db: Session, upload, *, mode: str, uploaded_by: str |
             try:
                 payload = _ingest_classified_upload(db, make_upload(entry), document_types=document_types,
                                                     uploaded_by=uploaded_by, source_mode=source_mode, branch=branch,
-                                                    metadata_extra={**(metadata_extra or {}), "zip_source_path": entry.source_path})
+                                                    metadata_extra={**(metadata_extra or {}), "zip_source_path": entry.source_path},
+                                                    analyze_immediately=analyze_immediately)
                 db.commit()
                 results.append({"source_path": entry.source_path, "file_name": entry.filename, **payload})
             except ValueError as item_exc:
@@ -282,7 +307,8 @@ def _process_upload_or_zip(db: Session, upload, *, mode: str, uploaded_by: str |
     if not document_types:
         raise ValueError("Unable to classify downloaded file as BILLING, SPJ, or COMBINED. Use mode BILLING, SPJ, or COMBINED.")
     payload = _ingest_classified_upload(db, upload, document_types=document_types, uploaded_by=uploaded_by,
-                                        source_mode=source_mode, branch=branch, metadata_extra=metadata_extra)
+                                        source_mode=source_mode, branch=branch, metadata_extra=metadata_extra,
+                                        analyze_immediately=analyze_immediately)
     db.commit()
     return 1, [{"source_path": upload.filename, "file_name": upload.filename, **payload}]
 
@@ -378,18 +404,39 @@ def sap_validate(batch_id: int, db: Session = Depends(get_db), user: CurrentUser
 
 
 @app.post("/documents/drive-folder-import")
-def import_drive_folder(url: str = Form(...), mode: str = Form("AUTO"), branch: str | None = Form(None),
-                        db: Session = Depends(get_db),
-                        user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR"))):
+def import_drive_folder(
+    url: str = Form(...),
+    mode: str = Form("AUTO"),
+    branch: str | None = Form(None),
+    offset: int = Form(0),
+    limit: int = Form(4),
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR")),
+):
+    """Import a Google Drive folder in small storage-only chunks.
+
+    OCR/vision is deliberately deferred to separate per-document requests. The
+    previous implementation downloaded + stored + OCR'd the whole folder inside
+    one request and hit Vercel's 300-second FUNCTION_INVOCATION_TIMEOUT.
+    """
     try:
         uploaded_by = user.user_id
         target_branch = _prepare_upload_branch(db, user, branch)
         files = list_google_drive_folder_files(url)
+        safe_offset = max(int(offset or 0), 0)
+        safe_limit = min(max(int(limit or 4), 1), 6)
+        page = files[safe_offset:safe_offset + safe_limit]
+
         results: list[dict[str, object]] = []
-        for item in files:
+        for item in page:
             if not is_supported_drive_folder_file(item):
-                results.append({"source_path": item.name, "file_name": item.name, "mode": mode.upper(),
-                                "status": "SKIPPED", "reason": "Unsupported Google Drive file type"})
+                results.append({
+                    "source_path": item.name,
+                    "file_name": item.name,
+                    "mode": mode.upper(),
+                    "status": "SKIPPED",
+                    "reason": "Unsupported Google Drive file type",
+                })
                 continue
             try:
                 upload = download_drive_folder_file(item)
@@ -400,20 +447,55 @@ def import_drive_folder(url: str = Form(...), mode: str = Form("AUTO"), branch: 
                     uploaded_by=uploaded_by,
                     branch=target_branch,
                     source_mode="DRIVE_FOLDER_ARCHIVE" if Path(upload.filename).suffix.lower() in {".zip", ".rar"} else "DRIVE_FOLDER",
-                    metadata_extra={"drive_folder_url": url, "drive_file_id": item.file_id, "drive_file_name": item.name},
+                    metadata_extra={
+                        "drive_folder_url": url,
+                        "drive_file_id": item.file_id,
+                        "drive_file_name": item.name,
+                    },
+                    analyze_immediately=False,
                 )
                 for result in item_results:
-                    result["source_path"] = f"{item.name}/{result.get('source_path')}" if Path(upload.filename).suffix.lower() in {".zip", ".rar"} else item.name
+                    result["source_path"] = (
+                        f"{item.name}/{result.get('source_path')}"
+                        if Path(upload.filename).suffix.lower() in {".zip", ".rar"}
+                        else item.name
+                    )
                     result["file_name"] = result.get("file_name") or item.name
                 results.extend(item_results)
             except ValueError as item_exc:
                 db.rollback()
-                results.append({"source_path": item.name, "file_name": item.name,
-                                "mode": mode.upper(), "status": "ERROR", "reason": str(item_exc)})
-        return {"source": "GOOGLE_DRIVE_FOLDER", "mode": mode.upper(), "total_entries": len(results),
-                "summary": _summary(results), "results": results}
+                results.append({
+                    "source_path": item.name,
+                    "file_name": item.name,
+                    "mode": mode.upper(),
+                    "status": "ERROR",
+                    "reason": str(item_exc),
+                })
+
+        next_offset = safe_offset + len(page)
+        analysis_document_ids = [
+            int(row["analysis_document_id"])
+            for row in results
+            if row.get("status") == "SUCCESS"
+            and row.get("analysis_deferred")
+            and row.get("analysis_document_id") is not None
+        ]
+        return {
+            "source": "GOOGLE_DRIVE_FOLDER",
+            "mode": mode.upper(),
+            "total_files": len(files),
+            "offset": safe_offset,
+            "limit": safe_limit,
+            "next_offset": next_offset,
+            "has_more": next_offset < len(files),
+            "total_entries": len(results),
+            "summary": _summary(results),
+            "analysis_document_ids": analysis_document_ids,
+            "results": results,
+        }
     except ValueError as exc:
-        db.rollback(); raise handle_error(exc) from exc
+        db.rollback()
+        raise handle_error(exc) from exc
 
 
 @app.post("/documents/drive-import")
@@ -424,13 +506,35 @@ def import_drive_link(url: str = Form(...), mode: str = Form("AUTO"), branch: st
         uploaded_by = user.user_id
         target_branch = _prepare_upload_branch(db, user, branch)
         upload = download_drive_link_file(url)
-        total, results = _process_upload_or_zip(db, upload, mode=mode, uploaded_by=uploaded_by, branch=target_branch,
-                                                source_mode="DRIVE_ARCHIVE" if Path(upload.filename).suffix.lower() in {".zip", ".rar"} else "DRIVE_LINK",
-                                                metadata_extra={"drive_source_url": url})
-        return {"source": "SHARE_LINK", "file_name": upload.filename, "mode": mode.upper(),
-                "total_entries": total, "summary": _summary(results), "results": results}
+        total, results = _process_upload_or_zip(
+            db,
+            upload,
+            mode=mode,
+            uploaded_by=uploaded_by,
+            branch=target_branch,
+            source_mode="DRIVE_ARCHIVE" if Path(upload.filename).suffix.lower() in {".zip", ".rar"} else "DRIVE_LINK",
+            metadata_extra={"drive_source_url": url},
+            analyze_immediately=False,
+        )
+        analysis_document_ids = [
+            int(row["analysis_document_id"])
+            for row in results
+            if row.get("status") == "SUCCESS"
+            and row.get("analysis_deferred")
+            and row.get("analysis_document_id") is not None
+        ]
+        return {
+            "source": "SHARE_LINK",
+            "file_name": upload.filename,
+            "mode": mode.upper(),
+            "total_entries": total,
+            "summary": _summary(results),
+            "analysis_document_ids": analysis_document_ids,
+            "results": results,
+        }
     except ValueError as exc:
-        db.rollback(); raise handle_error(exc) from exc
+        db.rollback()
+        raise handle_error(exc) from exc
 
 
 @app.post("/documents/bulk-archive")
@@ -450,10 +554,19 @@ def upload_bulk_zip(file: UploadFile = File(...), mode: str = "AUTO", branch: st
                                 "status": "SKIPPED", "reason": "Unable to classify file as BILLING, SPJ, or COMBINED"})
                 continue
             try:
-                payload = _ingest_classified_upload(db, make_upload(entry), document_types=document_types,
-                                                    uploaded_by=uploaded_by, branch=target_branch,
-                                                    source_mode="BULK_ARCHIVE_COMBINED" if document_types == ["BILLING", "SPJ"] else "BULK_ARCHIVE",
-                                                    metadata_extra={"archive_source_path": entry.source_path, "archive_type": Path(file.filename or "").suffix.lower().lstrip(".").upper()})
+                payload = _ingest_classified_upload(
+                    db,
+                    make_upload(entry),
+                    document_types=document_types,
+                    uploaded_by=uploaded_by,
+                    branch=target_branch,
+                    source_mode="BULK_ARCHIVE_COMBINED" if document_types == ["BILLING", "SPJ"] else "BULK_ARCHIVE",
+                    metadata_extra={
+                        "archive_source_path": entry.source_path,
+                        "archive_type": Path(file.filename or "").suffix.lower().lstrip(".").upper(),
+                    },
+                    analyze_immediately=False,
+                )
                 db.commit()
                 results.append({"source_path": entry.source_path, "file_name": entry.filename, **payload})
             except ValueError as item_exc:
@@ -462,7 +575,20 @@ def upload_bulk_zip(file: UploadFile = File(...), mode: str = "AUTO", branch: st
                                 "mode": "+".join(document_types), "status": "ERROR", "reason": str(item_exc)})
     except ValueError as exc:
         db.rollback(); raise handle_error(exc) from exc
-    return {"mode": mode.upper(), "total_entries": len(entries), "summary": _summary(results), "results": results}
+    analysis_document_ids = [
+        int(row["analysis_document_id"])
+        for row in results
+        if row.get("status") == "SUCCESS"
+        and row.get("analysis_deferred")
+        and row.get("analysis_document_id") is not None
+    ]
+    return {
+        "mode": mode.upper(),
+        "total_entries": len(entries),
+        "summary": _summary(results),
+        "analysis_document_ids": analysis_document_ids,
+        "results": results,
+    }
 
 
 @app.post("/documents/combined")
@@ -534,7 +660,13 @@ def upload_document(document_type: str, file: UploadFile = File(...), branch: st
         analysis = ocr_document(db, doc.id)
         control_evidence = None
         if doc.document_type == "SPJ":
-            control_evidence = analyze_and_persist_control_evidence(db, doc.id)
+            control_evidence = analyze_and_persist_control_evidence(
+                db,
+                doc.id,
+                vision_result=analysis.get("vision"),
+                ocr_text=analysis.get("ocr_text"),
+                ocr_engine=analysis.get("engine"),
+            )
         record_audit(db, entity_type="DOCUMENT", entity_id=doc.id, action="AUTO_EXTRACT",
                      actor=uploaded_by, status_to="EXTRACTED",
                      metadata={"engine": analysis.get("engine"), "confidence": analysis.get("confidence"),
@@ -555,7 +687,13 @@ def run_ocr(document_id: int, db: Session = Depends(get_db),
         result = ocr_document(db, document_id)
         control_evidence = None
         if doc and doc.document_type == "SPJ":
-            control_evidence = analyze_and_persist_control_evidence(db, document_id)
+            control_evidence = analyze_and_persist_control_evidence(
+                db,
+                document_id,
+                vision_result=result.get("vision"),
+                ocr_text=result.get("ocr_text"),
+                ocr_engine=result.get("engine"),
+            )
         record_audit(db, entity_type="DOCUMENT", entity_id=document_id, action="OCR", actor=user.user_id,
                      status_to="OCR_PROCESSED", metadata={"engine": result.get("engine"), "confidence": result.get("confidence"),
                                                            "control_evidence_review_required": bool(control_evidence and control_evidence.get("review_required"))},

@@ -300,13 +300,79 @@ async function uploadArchive(){
 async function importDrive(){
   const url=document.getElementById('driveUrl').value.trim();
   if(!url)throw new Error('Masukkan Google Drive / share link terlebih dahulu.');
-  const fd=new FormData();
-  fd.append('url',url);
-  fd.append('mode',document.getElementById('driveMode').value);
-  if(branch())fd.append('branch',branch());
-  const endpoint=/\/folders\//i.test(url)?'/documents/drive-folder-import':'/documents/drive-import';
-  const response=await fetch(endpoint,{method:'POST',headers:authHeaders(),body:fd});
-  return responseBody(response);
+  const isFolder=/\/folders\//i.test(url);
+  const mode=document.getElementById('driveMode').value;
+  if(!isFolder){
+    const fd=new FormData();
+    fd.append('url',url);
+    fd.append('mode',mode);
+    if(branch())fd.append('branch',branch());
+    const response=await fetch('/documents/drive-import',{method:'POST',headers:authHeaders(),body:fd});
+    return responseBody(response);
+  }
+
+  let offset=0;
+  const limit=4;
+  const allResults=[];
+  const analysisIds=[];
+  let totalFiles=null;
+  while(true){
+    const fd=new FormData();
+    fd.append('url',url);
+    fd.append('mode',mode);
+    fd.append('offset',String(offset));
+    fd.append('limit',String(limit));
+    if(branch())fd.append('branch',branch());
+    const response=await fetch('/documents/drive-folder-import',{method:'POST',headers:authHeaders(),body:fd});
+    const page=await responseBody(response);
+    totalFiles=page.total_files??totalFiles;
+    (page.results||[]).forEach(item=>allResults.push(item));
+    (page.analysis_document_ids||[]).forEach(id=>analysisIds.push(Number(id)));
+    const imported=Math.min(Number(page.next_offset||0),Number(totalFiles||page.next_offset||0));
+    log(evidenceLog,'GOOGLE DRIVE: file tersimpan '+imported+'/'+(totalFiles??'?')+'. OCR dipisahkan agar tidak timeout.',{
+      summary:page.summary,
+      offset:page.offset,
+      next_offset:page.next_offset,
+      has_more:page.has_more
+    });
+    if(!page.has_more)break;
+    const next=Number(page.next_offset);
+    if(!Number.isFinite(next)||next<=offset)throw new Error('Pagination Google Drive tidak maju; proses dihentikan agar tidak loop.');
+    offset=next;
+  }
+  return {
+    source:'GOOGLE_DRIVE_FOLDER',
+    mode,
+    total_files:totalFiles,
+    total_entries:allResults.length,
+    analysis_document_ids:[...new Set(analysisIds)],
+    results:allResults
+  };
+}
+async function analyzeDeferredEvidence(ids,label){
+  const unique=[...new Set((ids||[]).map(Number).filter(Number.isFinite))];
+  if(!unique.length)return {total:0,success:0,failed:0,results:[]};
+  const results=[];
+  for(let index=0;index<unique.length;index++){
+    const id=unique[index];
+    log(evidenceLog,label+': analisis OCR '+(index+1)+'/'+unique.length+' (Document #'+id+')...');
+    let lastError=null;
+    for(let attempt=1;attempt<=2;attempt++){
+      try{
+        const response=await fetch('/documents/'+id+'/ocr',{method:'POST',headers:authHeaders()});
+        const body=await responseBody(response);
+        results.push({document_id:id,status:'SUCCESS',engine:body.engine||null,confidence:body.confidence??null});
+        lastError=null;
+        break;
+      }catch(error){
+        lastError=error;
+        if(attempt<2)await new Promise(resolve=>setTimeout(resolve,900));
+      }
+    }
+    if(lastError)results.push({document_id:id,status:'ERROR',error:lastError.message});
+  }
+  const success=results.filter(row=>row.status==='SUCCESS').length;
+  return {total:results.length,success,failed:results.length-success,results};
 }
 async function uploadJobs(jobs){
   const results=[];
@@ -340,14 +406,22 @@ async function uploadEvidence(){
   if(mode==='ARCHIVE'){
     log(evidenceLog,'Mengupload arsip ZIP/RAR...');
     const body=await uploadArchive();
-    log(evidenceLog,'UPLOAD ARSIP SELESAI',body);
+    log(evidenceLog,'UPLOAD ARSIP TERSIMPAN. Memulai OCR per dokumen...',body);
+    const analysis=await analyzeDeferredEvidence(body.analysis_document_ids||[],'ARSIP');
+    log(evidenceLog,'UPLOAD ARSIP SELESAI - '+analysis.success+'/'+analysis.total+' OCR berhasil',{upload:body,analysis});
     await loadHistory();
     return;
   }
   if(mode==='DRIVE'){
-    log(evidenceLog,'Mengimpor evidence dari Google Drive...');
+    log(evidenceLog,'Mengimpor evidence dari Google Drive dalam batch kecil...');
     const body=await importDrive();
-    log(evidenceLog,'IMPORT GOOGLE DRIVE SELESAI',body);
+    log(evidenceLog,'IMPORT GOOGLE DRIVE TERSIMPAN. Memulai OCR per dokumen...',{
+      total_files:body.total_files,
+      total_entries:body.total_entries,
+      analysis_count:(body.analysis_document_ids||[]).length
+    });
+    const analysis=await analyzeDeferredEvidence(body.analysis_document_ids||[],'GOOGLE DRIVE');
+    log(evidenceLog,'IMPORT GOOGLE DRIVE SELESAI - '+analysis.success+'/'+analysis.total+' OCR berhasil',{upload:body,analysis});
     await loadHistory();
     return;
   }

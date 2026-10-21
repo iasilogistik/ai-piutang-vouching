@@ -141,3 +141,14 @@ def test_upload_center_explains_incremental_add_and_replace_for_archive_and_driv
     assert "REPLACED" in html
     assert "versi lama diarsipkan" in html
     assert "ZIP dan Google Drive dapat di-upload ulang" in html
+
+
+
+def test_upload_center_chunks_drive_folder_and_runs_ocr_separately():
+    html = upload_center_html()
+
+    assert "fd.append('offset',String(offset))" in html
+    assert "fd.append('limit',String(limit))" in html
+    assert "analyzeDeferredEvidence" in html
+    assert "'/documents/'+id+'/ocr" in html
+    assert "OCR dipisahkan agar tidak timeout" in html

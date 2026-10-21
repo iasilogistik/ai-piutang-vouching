@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 
 from app.main import app
+import app.main as main_module
 from app.services import drive_folder
 from app.services.drive_folder import (
     DriveFolderFile,
@@ -311,3 +312,62 @@ def test_public_unknown_binary_is_rejected_after_download(monkeypatch):
         assert "not a supported PDF/JPG/PNG/ZIP/RAR document" in str(exc)
     else:
         raise AssertionError("expected unsupported binary to be rejected after content detection")
+
+
+
+def test_drive_folder_import_is_chunked_and_defers_expensive_ocr(monkeypatch):
+    files = [
+        DriveFolderFile(str(i), f"COMBINED/evidence-{i}.pdf", "application/pdf")
+        for i in range(9)
+    ]
+    calls = []
+
+    monkeypatch.setattr(main_module, "_prepare_upload_branch", lambda db, user, branch: "KEDIRI")
+    monkeypatch.setattr(main_module, "list_google_drive_folder_files", lambda url: files)
+    monkeypatch.setattr(
+        main_module,
+        "download_drive_folder_file",
+        lambda item: SimpleNamespace(
+            filename=Path(item.name).name,
+            file=__import__("io").BytesIO(b"%PDF-mock"),
+        ),
+    )
+
+    def fake_process(db, upload, **kwargs):
+        calls.append(kwargs)
+        index = int(Path(upload.filename).stem.split("-")[-1])
+        return 1, [{
+            "source_path": upload.filename,
+            "file_name": upload.filename,
+            "mode": "COMBINED",
+            "status": "SUCCESS",
+            "billing_document_id": index * 2 + 1,
+            "spj_document_id": index * 2 + 2,
+            "analysis_document_id": index * 2 + 2,
+            "analysis_deferred": True,
+            "ingest_action": "ADDED",
+        }]
+
+    monkeypatch.setattr(main_module, "_process_upload_or_zip", fake_process)
+
+    class FakeDb:
+        def rollback(self):
+            pass
+
+    payload = main_module.import_drive_folder(
+        url="https://drive.google.com/drive/folders/folder123",
+        mode="COMBINED",
+        branch="KEDIRI",
+        offset=4,
+        limit=4,
+        db=FakeDb(),
+        user=SimpleNamespace(user_id="auditor-1"),
+    )
+
+    assert payload["offset"] == 4
+    assert payload["next_offset"] == 8
+    assert payload["has_more"] is True
+    assert payload["total_files"] == 9
+    assert len(payload["results"]) == 4
+    assert len(payload["analysis_document_ids"]) == 4
+    assert all(call["analyze_immediately"] is False for call in calls)

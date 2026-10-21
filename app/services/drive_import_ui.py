@@ -98,22 +98,71 @@ function renderRows() {
   if (!rows.length) { resultRows.innerHTML = '<tr><td colspan="5">Belum ada import.</td></tr>'; return; }
   resultRows.innerHTML = rows.map(row => `<tr><td>${row.file}</td><td>${row.mode || '-'}</td><td>${row.billing || '-'}</td><td>${row.spj || '-'}</td><td class="${row.cls}">${row.status}</td></tr>`).join('');
 }
+async function parseResponse(response) {
+  const text = await response.text();
+  let body;
+  try { body = JSON.parse(text); } catch { body = text; }
+  if (!response.ok) throw new Error(`${response.status} ${JSON.stringify(body)}`);
+  return body;
+}
+async function analyzeIds(ids,label) {
+  const unique=[...new Set((ids||[]).map(Number).filter(Number.isFinite))];
+  let success=0,failed=0;
+  for(let i=0;i<unique.length;i++){
+    const id=unique[i];
+    appendLog(label,`OCR ${i+1}/${unique.length} · Document #${id}`);
+    try{
+      const response=await fetch('/documents/'+id+'/ocr',{method:'POST',headers:authHeaders()});
+      await parseResponse(response);
+      success+=1;
+    }catch(error){
+      failed+=1;
+      appendLog(label,`OCR Document #${id} gagal: ${error.message}`,false);
+    }
+  }
+  return {total:unique.length,success,failed};
+}
 async function importTo(endpoint, label) {
   try {
     const url = urlInput.value.trim();
     if (!url) { appendLog(label, 'Share link wajib diisi.', false); return; }
     appendLog(label, `Importing ${url}...`);
-    const form = new FormData();
-    form.append('url', url);
-    form.append('mode', modeInput.value);
     const branch = branchInput.value.trim();
-    if (branch) form.append('branch', branch);
-    const response = await fetch(endpoint, { method:'POST', headers:authHeaders(), body:form });
-    const text = await response.text();
-    let body;
-    try { body = JSON.parse(text); } catch { body = text; }
-    if (!response.ok) throw new Error(`${response.status} ${JSON.stringify(body)}`);
-    rows = (body.results || []).map(item => ({
+    const allResults=[];
+    const analysisIds=[];
+
+    if(endpoint==='/documents/drive-folder-import'){
+      let offset=0;
+      const limit=4;
+      while(true){
+        const form=new FormData();
+        form.append('url',url);
+        form.append('mode',modeInput.value);
+        form.append('offset',String(offset));
+        form.append('limit',String(limit));
+        if(branch)form.append('branch',branch);
+        const response=await fetch(endpoint,{method:'POST',headers:authHeaders(),body:form});
+        const body=await parseResponse(response);
+        (body.results||[]).forEach(item=>allResults.push(item));
+        (body.analysis_document_ids||[]).forEach(id=>analysisIds.push(Number(id)));
+        appendLog(label,`Tersimpan ${Math.min(Number(body.next_offset||0),Number(body.total_files||0))}/${body.total_files||'?'} file. OCR diproses terpisah.`);
+        if(!body.has_more)break;
+        const next=Number(body.next_offset);
+        if(!Number.isFinite(next)||next<=offset)throw new Error('Pagination folder tidak maju.');
+        offset=next;
+      }
+    }else{
+      const form = new FormData();
+      form.append('url', url);
+      form.append('mode', modeInput.value);
+      if (branch) form.append('branch', branch);
+      const response = await fetch(endpoint, { method:'POST', headers:authHeaders(), body:form });
+      const body = await parseResponse(response);
+      (body.results||[]).forEach(item=>allResults.push(item));
+      (body.analysis_document_ids||[]).forEach(id=>analysisIds.push(Number(id)));
+    }
+
+    rows = allResults.map(item => ({
       file: item.source_path || item.file_name,
       mode: item.mode,
       billing: item.billing_document_id,
@@ -122,7 +171,8 @@ async function importTo(endpoint, label) {
       cls: item.status === 'SUCCESS' ? 'ok' : (item.status === 'SKIPPED' ? 'skip' : 'err')
     }));
     renderRows();
-    appendLog(label, body);
+    const analysis=await analyzeIds(analysisIds,label);
+    appendLog(label,{upload_results:allResults.length,analysis});
   } catch (error) {
     rows.unshift({ file: urlInput.value.trim() || '-', mode: modeInput.value, billing: null, spj: null, status: error.message, cls: 'err' });
     renderRows();
