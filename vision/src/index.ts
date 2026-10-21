@@ -561,8 +561,6 @@ function parseInvoiceDate(text: string, expectedDocDate?: string | null): string
     /\bDATE\s+OF\s+INVOICE\b/i,
     /\bTANGGAL\s+INVOICE\b/i,
     /\bTGL\.?\s+INVOICE\b/i,
-    /\bDOCUMENT\s+DATE\b/i,
-    /\bDOC\.?\s+DATE\b/i,
     /\bBILLING\s+DATE\b/i,
   ];
   const forbiddenLabels = /\b(DUE\s+DATE|PAYMENT\s+DUE|NET\s+DUE|JATUH\s+TEMPO|TANGGAL\s+JATUH\s+TEMPO|TGL\.?\s+JATUH\s+TEMPO|BATAS\s+PEMBAYARAN|DELIVERY\s+DATE|TANGGAL\s+PENGIRIMAN|POSTING\s+DATE|PRINT\s+DATE|TANGGAL\s+CETAK|TGL\.?\s+CETAK|ORDER\s+DATE|PO\s+DATE)\b/i;
@@ -592,18 +590,9 @@ function parseInvoiceDate(text: string, expectedDocDate?: string | null): string
     }
   }
 
-  // 2) OCR sometimes loses the label but still reads the printed date. Only use
-  // dates physically visible on the selected Billing page, excluding forbidden
-  // labels. SAP date is used solely to choose among visible candidates; it is
-  // never returned unless the same date was actually read from the document.
-  const candidates = invoiceDateCandidates(text).filter(plausible);
-  if (!candidates.length) return null;
-  if (candidates.length === 1) return candidates[0];
-  if (expectedDocDate) {
-    return [...candidates].sort(
-      (left, right) => daysBetweenIso(left, expectedDocDate) - daysBetweenIso(right, expectedDocDate),
-    )[0];
-  }
+  // Accuracy first: if the invoice/faktur label itself is not readable, leave
+  // physical Doc. Date blank. Never guess from an unlabeled date, SAP date,
+  // due date, delivery date, posting date, print date, or order date.
   return null;
 }
 
@@ -633,6 +622,39 @@ function selectBillingPageIndex(pages: PageOcr[], expectedBillingDocument?: stri
   return bestScore >= 5 ? bestIndex : -1;
 }
 
+function paymentAmountFromOcrLine(line: string): number | null {
+  const upper = String(line || '').toUpperCase();
+  const paymentSignal =
+    /\b(PAYMENT|PAID|PEMBAYARAN|DIBAYAR|BAYAR|DOWN\s+PAYMENT|UANG\s+MUKA|DP)\b/i.test(upper);
+  const forbidden =
+    /\b(PAYMENT\s+DUE|DUE\s+DATE|PAYMENT\s+TERM|TERMS?\s+OF\s+PAYMENT|PAYMENT\s+METHOD|METODE\s+PEMBAYARAN|JATUH\s+TEMPO|OUTSTANDING|BALANCE\s+DUE|GRAND\s+TOTAL|TOTAL\s+TAGIHAN)\b/i.test(upper);
+  if (!paymentSignal || forbidden) return null;
+
+  const candidates = String(line || '').match(/[0-9OoIl][0-9OoIl.,:\s-]{2,}/g) || [];
+  const parsed = candidates
+    .map((token) => token.replace(/[Oo]/g, '0').replace(/[Il]/g, '1'))
+    .map((token) => parseMoneyToken(token))
+    .filter((value): value is number => value !== null && value > 0);
+  if (!parsed.length) return null;
+  return Math.max(...parsed);
+}
+
+async function focusedBillingOcr(page: PageOcr): Promise<string> {
+  try {
+    const image = await sharp(page.image)
+      .grayscale()
+      .normalise()
+      .sharpen()
+      .threshold(205)
+      .jpeg({ quality: 92 })
+      .toBuffer();
+    return await recognizeBufferText(image);
+  } catch (error) {
+    console.warn('FOCUSED_BILLING_OCR_FAILED', error instanceof Error ? error.message : String(error));
+    return '';
+  }
+}
+
 function parsePartialPayments(text: string) {
   const rows: Array<{ amount: number; date: string | null; reference: string | null }> = [];
 
@@ -653,6 +675,20 @@ function parsePartialPayments(text: string) {
       if (!rows.some((row) => Math.abs(row.amount - amount) < 0.01)) {
         rows.push({ amount, date: null, reference });
       }
+    }
+  }
+
+  // OCR often damages words or digits (e.g. RECEIVEO, 999.95O). When a line
+  // still clearly contains a payment concept, recover the amount conservatively.
+  for (const rawLine of String(text || '').split(/\r?\n/)) {
+    const amount = paymentAmountFromOcrLine(rawLine);
+    if (amount === null) continue;
+    if (!rows.some((row) => Math.abs(row.amount - amount) < 0.01)) {
+      rows.push({
+        amount,
+        date: null,
+        reference: 'OCR_PAYMENT_LINE | ' + rawLine.trim().slice(0, 120),
+      });
     }
   }
 
@@ -829,7 +865,30 @@ async function localAnalyze(
   // among dates that are actually visible on that Billing page.
   const billingText = billingPageIndex >= 0 ? pages[billingPageIndex].text : '';
   const invoiceDate = billingText ? parseInvoiceDate(billingText, expectedDocDate) : null;
-  const paymentResult = parsePartialPayments(billingText);
+  let paymentResult = parsePartialPayments(billingText);
+  let billingOcrText = billingText;
+
+  // If the printed gross is higher than SAP outstanding, a partial payment may
+  // exist but be faint. Run one high-contrast OCR retry on the Billing page.
+  // SAP only triggers the retry; the payment amount still must be read from
+  // physical evidence (or Total - printed Outstanding on the same page).
+  if (
+    billingPageIndex >= 0 &&
+    paymentResult.rows.length === 0 &&
+    paymentResult.grossTotal != null &&
+    expectedNominal != null &&
+    paymentResult.grossTotal > expectedNominal
+  ) {
+    const focusedText = await focusedBillingOcr(pages[billingPageIndex]);
+    if (focusedText) {
+      billingOcrText = billingText + '\n' + focusedText;
+      const focusedResult = parsePartialPayments(billingOcrText);
+      paymentResult = {
+        rows: focusedResult.rows,
+        grossTotal: focusedResult.grossTotal ?? paymentResult.grossTotal,
+      };
+    }
+  }
 
   // Partial payment must come from the selected Billing page only. Never scan
   // SPJ/Delivery Order pages for payment words because that produced false
@@ -840,7 +899,7 @@ async function localAnalyze(
   // same Billing evidence are accepted by parsePartialPayments().
 
   return {
-    engine: 'LOCAL_TESSERACT_VISUAL_V19',
+    engine: 'LOCAL_TESSERACT_VISUAL_V20',
     billing_document: billingDocument,
     invoice_date: invoiceDate,
     grand_total: paymentResult.grossTotal,
@@ -848,6 +907,7 @@ async function localAnalyze(
     delivery_order_number: null,
     receiver_name: null,
     partial_payments: paymentResult.rows,
+    billing_ocr_text: billingOcrText,
     signatures,
     stamp,
     official_spj_page: officialPageIndex >= 0 ? officialPageIndex + 1 : null,
@@ -856,8 +916,8 @@ async function localAnalyze(
         ? 'SPJ resmi dipilih dari halaman PT Semen Indonesia Distributor berjudul SURAT PERINTAH JALAN.'
         : 'Header SPJ resmi tidak terbaca; sistem memakai fallback dokumen.',
       'TTD hanya dinilai dari ada/tidaknya coretan visual; keaslian dan identitas tidak dianalisis.',
-      'Tanggal fisik Billing hanya diambil dari label Invoice Date/Tanggal Faktur/Tanggal Invoice pada halaman Billing; SAP, Due/Jatuh Tempo, Delivery, Posting, Print dan Order Date tidak pernah dipakai.',
-      'Partial payment dibaca dari label pembayaran eksplisit atau dari Total Faktur dikurangi Outstanding yang keduanya tercetak pada halaman Billing. Selisih SAP tidak pernah dipakai untuk menciptakan partial payment.'
+      'Tanggal fisik Billing hanya diambil dari label Invoice Date/Tanggal Faktur/Tanggal Invoice/Billing Date; tanggal tanpa label, SAP, Due/Jatuh Tempo, Delivery, Posting, Print dan Order Date tidak pernah dipakai.',
+      'Partial payment dibaca dari evidence Billing dengan OCR utama + retry high-contrast jika gross lebih besar dari SAP outstanding; nilai SAP tidak pernah dipakai sebagai nilai partial payment.'
     ],
     ocr_text: ocrText,
   };
@@ -867,7 +927,7 @@ app.get('/health', (c) =>
   c.json({
     status: 'ok',
     service: 'vision',
-    engine: 'LOCAL_TESSERACT_VISUAL_V19',
+    engine: 'LOCAL_TESSERACT_VISUAL_V20',
   }),
 );
 
@@ -875,7 +935,7 @@ app.get('/vision-ai-health', async (c) => {
   // Preview-only diagnostic route used while this branch is under test.
   return c.json({
     status: 'ok',
-    engine: 'LOCAL_TESSERACT_VISUAL_V19',
+    engine: 'LOCAL_TESSERACT_VISUAL_V20',
     paid_gateway_required: false,
   });
 });
@@ -887,8 +947,9 @@ app.get('/vision-local-selftest', async (c) => {
         <rect width="1200" height="900" fill="white"/>
         <text x="70" y="90" font-size="38" font-family="Arial">BILLING DOCUMENT 8501735930</text>
         <text x="70" y="145" font-size="34" font-family="Arial">NO SPJ S41C/202608/2501787882</text>
-        <text x="70" y="200" font-size="34" font-family="Arial">GRAND TOTAL 3000000</text>
-        <text x="70" y="255" font-size="34" font-family="Arial">PARTIAL PAYMENT 1000000</text>
+        <text x="70" y="200" font-size="34" font-family="Arial">INVOICE DATE 24/08/2026</text>
+        <text x="70" y="255" font-size="34" font-family="Arial">GRAND TOTAL 3000000</text>
+        <text x="70" y="310" font-size="34" font-family="Arial">PARTIAL PAYMENT 1000000</text>
         <rect x="60" y="560" width="1080" height="230" fill="none" stroke="black" stroke-width="3"/>
         <text x="90" y="620" font-size="30" font-family="Arial">PENERIMA</text>
         <text x="335" y="620" font-size="30" font-family="Arial">DRIVER</text>
@@ -903,13 +964,16 @@ app.get('/vision-local-selftest', async (c) => {
       </svg>`;
     const image = await sharp(Buffer.from(svg)).jpeg({ quality: 88 }).toBuffer();
     const dataUrl = 'data:image/jpeg;base64,' + image.toString('base64');
-    const result = await localAnalyze([dataUrl], 'SANTOSO');
+    const result = await localAnalyze([dataUrl], 'SANTOSO', '8501735930', 2000000, '2026-08-24');
     return c.json({
       status: 'ok',
       engine: result.engine,
       ocr_text: String(result.ocr_text || '').slice(0, 700),
       signatures: result.signatures,
       stamp: result.stamp,
+      invoice_date: result.invoice_date,
+      grand_total: result.grand_total,
+      partial_payments: result.partial_payments,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
