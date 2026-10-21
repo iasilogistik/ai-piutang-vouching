@@ -140,3 +140,14 @@ def test_invalid_spj_fragment_is_not_used_for_matching():
     assert _normalize_spj_number("SPJ-ABC-1234") is None
     assert _normalize_spj_number("SPJ/S41C/202608/2501787882") == "2501787882"
     assert _normalize_spj_number("2501787882") == "2501787882"
+
+
+
+def test_partial_payment_parser_supports_total_payment_and_nilai_bayar():
+    amount, raw = _extract_partial_payments(
+        "Total Payment: Rp 2.500.000\nNilai Bayar: Rp 1.505.000"
+    )
+
+    assert amount == Decimal("4005000.00")
+    assert "Total Payment" in raw
+    assert "Nilai Bayar" in raw
