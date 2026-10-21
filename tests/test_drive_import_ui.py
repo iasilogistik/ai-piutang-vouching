@@ -38,3 +38,14 @@ def test_drive_import_endpoint_order_not_caught_by_document_type_route():
 
 def test_drive_share_links_allow_rar_archives():
     assert ".rar" in ALLOWED_SHARE_LINK_EXTENSIONS
+
+
+
+def test_drive_import_ui_uses_chunked_folder_upload_and_separate_ocr():
+    html = drive_import_html()
+
+    assert "form.append('offset',String(offset))" in html
+    assert "form.append('limit',String(limit))" in html
+    assert "analyzeIds" in html
+    assert "'/documents/'+id+'/ocr" in html
+    assert "OCR diproses terpisah" in html
