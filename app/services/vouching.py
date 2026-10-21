@@ -223,8 +223,83 @@ def _extract_partial_payments(text: str) -> tuple[Decimal | None, str | None]:
                 amounts.append(amount)
                 raw_matches.append(_norm(match.group(0)) or match.group(0))
     if not amounts:
+        for raw_line in text.splitlines():
+            upper = raw_line.upper()
+            payment_signal = re.search(
+                r"\b(PAYMENT|PAID|PEMBAYARAN|DIBAYAR|BAYAR|DOWN\s+PAYMENT|UANG\s+MUKA|DP)\b",
+                upper,
+                re.IGNORECASE,
+            )
+            forbidden = re.search(
+                r"\b(PAYMENT\s+DUE|DUE\s+DATE|PAYMENT\s+TERM|TERMS?\s+OF\s+PAYMENT|PAYMENT\s+METHOD|"
+                r"METODE\s+PEMBAYARAN|JATUH\s+TEMPO|OUTSTANDING|BALANCE\s+DUE|GRAND\s+TOTAL|TOTAL\s+TAGIHAN)\b",
+                upper,
+                re.IGNORECASE,
+            )
+            if not payment_signal or forbidden:
+                continue
+            candidates = re.findall(r"[0-9OoIl][0-9OoIl.,:\s-]{2,}", raw_line)
+            parsed: list[Decimal] = []
+            for token in candidates:
+                token = token.replace("O", "0").replace("o", "0").replace("I", "1").replace("l", "1")
+                amount = _parse_amount(token)
+                if amount is not None and amount > 0:
+                    parsed.append(amount)
+            if parsed:
+                amount = max(parsed)
+                amounts.append(amount)
+                raw_matches.append(f"OCR_PAYMENT_LINE | {_norm(raw_line) or raw_line}")
+    if not amounts:
         return None, None
-    return sum(amounts, Decimal("0.00")).quantize(Decimal("0.01")), "; ".join(raw_matches)
+    unique_amounts: list[Decimal] = []
+    for amount in amounts:
+        if not any(abs(amount - existing) <= Decimal("0.01") for existing in unique_amounts):
+            unique_amounts.append(amount)
+    return sum(unique_amounts, Decimal("0.00")).quantize(Decimal("0.01")), "; ".join(raw_matches)
+
+
+def _normalize_partial_payment_scale(
+    partial_payment: Decimal | int | float | None,
+    gross_nominal: Decimal | int | float | None,
+    expected_nominal: Decimal | int | float | None,
+) -> tuple[Decimal | None, bool]:
+    """Correct OCR magnitude only when the printed payment is otherwise credible.
+
+    SAP is used only as a consistency check. No partial payment is created when
+    the evidence contains no payment amount.
+    """
+    if partial_payment is None:
+        return None, False
+    value = Decimal(str(partial_payment)).quantize(Decimal("0.01"))
+    if value <= 0:
+        return None, False
+    if gross_nominal is None or expected_nominal is None:
+        return value, False
+
+    gross = Decimal(str(gross_nominal))
+    expected = Decimal(str(expected_nominal))
+    if gross <= 0 or expected < 0:
+        return value, False
+
+    candidates = [value]
+    for divisor in (Decimal("10"), Decimal("100"), Decimal("1000"), Decimal("10000")):
+        candidates.append((value / divisor).quantize(Decimal("0.01")))
+    for multiplier in (Decimal("10"), Decimal("100"), Decimal("1000")):
+        candidates.append((value * multiplier).quantize(Decimal("0.01")))
+
+    valid = [candidate for candidate in candidates if Decimal("0") < candidate <= gross]
+    if not valid:
+        return None, False
+
+    best = min(valid, key=lambda candidate: abs((gross - candidate) - expected))
+    best_error = abs((gross - best) - expected)
+    if best_error <= Decimal("1.00"):
+        return best, best != value
+
+    # Keep the evidence value only when it is physically possible. A mismatching
+    # partial will remain an EXCEPTION during reconciliation rather than being
+    # silently altered to fit SAP.
+    return (value, False) if value <= gross else (None, False)
 
 
 def _normalize_ocr_amount_scale(
@@ -590,11 +665,21 @@ def ocr_document(
                         fields["nominal"] = vision["grand_total"]
                 vision_partial, vision_partial_raw = partial_payment_summary(vision)
                 if doc.document_type == "BILLING":
-                    # Partial payment is evidence-only. Always replace the old
-                    # value, including clearing legacy derived/false positives
-                    # when no explicit payment label exists on the Billing page.
-                    fields["partial_payment"] = vision_partial
-                    fields["partial_payment_raw"] = vision_partial_raw
+                    # Prefer structured visual output, then an OCR-tolerant parse
+                    # of the selected Billing page only.
+                    billing_text = str(vision.get("billing_ocr_text") or "")
+                    fallback_partial, fallback_raw = _extract_partial_payments(billing_text)
+                    partial = vision_partial if vision_partial is not None else fallback_partial
+                    partial_raw = vision_partial_raw if vision_partial is not None else fallback_raw
+                    partial, corrected = _normalize_partial_payment_scale(
+                        partial,
+                        vision.get("grand_total"),
+                        expected_nominal,
+                    )
+                    if corrected and partial_raw:
+                        partial_raw = f"{partial_raw}; OCR_SCALE_CORRECTED"
+                    fields["partial_payment"] = partial
+                    fields["partial_payment_raw"] = partial_raw if partial is not None else None
                 elif fields.get("partial_payment") is None and vision_partial is not None:
                     fields["partial_payment"] = vision_partial
                     fields["partial_payment_raw"] = vision_partial_raw
@@ -710,8 +795,19 @@ def ocr_document(
                 # the parsed text result. Persist once on Billing to prevent
                 # double subtraction in reconciliation.
                 vision_partial, vision_partial_raw = partial_payment_summary(vision)
-                paired.partial_payment = vision_partial
-                paired.partial_payment_raw = vision_partial_raw
+                billing_text = str(vision.get("billing_ocr_text") or "")
+                fallback_partial, fallback_raw = _extract_partial_payments(billing_text)
+                paired_partial = vision_partial if vision_partial is not None else fallback_partial
+                paired_partial_raw = vision_partial_raw if vision_partial is not None else fallback_raw
+                paired_partial, corrected = _normalize_partial_payment_scale(
+                    paired_partial,
+                    strict_grand_total,
+                    expected_nominal,
+                )
+                if corrected and paired_partial_raw:
+                    paired_partial_raw = f"{paired_partial_raw}; OCR_SCALE_CORRECTED"
+                paired.partial_payment = paired_partial
+                paired.partial_payment_raw = paired_partial_raw if paired_partial is not None else None
                 # Combined-file payment is stored once on Billing to avoid
                 # subtracting the same amount twice.
                 row.partial_payment = None
