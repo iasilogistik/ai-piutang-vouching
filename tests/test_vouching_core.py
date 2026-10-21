@@ -5,6 +5,7 @@ from app.services.vouching import (
     _billing_document_from_filename,
     _normalize_spj_number,
     _normalize_ocr_amount_scale,
+    _normalize_partial_payment_scale,
     _spj_numbers_match,
     parse_document_fields,
     _extract_partial_payments,
@@ -151,3 +152,49 @@ def test_partial_payment_parser_supports_total_payment_and_nilai_bayar():
     assert amount == Decimal("4005000.00")
     assert "Total Payment" in raw
     assert "Nilai Bayar" in raw
+
+
+
+def test_partial_payment_parser_recovers_common_ocr_confusions():
+    amount, raw = _extract_partial_payments(
+        "PAYMENT RECEIVEO : RP 999.95O"
+    )
+
+    assert amount == Decimal("999950.00")
+    assert "OCR_PAYMENT_LINE" in (raw or "")
+
+
+def test_partial_payment_scale_correction_requires_gross_and_sap_consistency():
+    corrected, changed = _normalize_partial_payment_scale(
+        Decimal("45002000.00"),
+        Decimal("5644800.00"),
+        Decimal("1144600.00"),
+    )
+    assert corrected == Decimal("4500200.00")
+    assert changed is True
+
+    impossible, changed = _normalize_partial_payment_scale(
+        Decimal("45002000.00"),
+        Decimal("5644800.00"),
+        Decimal("3000000.00"),
+    )
+    assert impossible is None
+    assert changed is False
+
+
+def test_partial_payment_examples_net_to_expected_sap_outstanding():
+    gemilang, changed = _normalize_partial_payment_scale(
+        Decimal("999950.00"),
+        Decimal("2637230.00"),
+        Decimal("1637280.00"),
+    )
+    assert changed is False
+    assert Decimal("2637230.00") - gemilang == Decimal("1637280.00")
+
+    joyo, changed = _normalize_partial_payment_scale(
+        Decimal("45002000.00"),
+        Decimal("5644800.00"),
+        Decimal("1144600.00"),
+    )
+    assert changed is True
+    assert Decimal("5644800.00") - joyo == Decimal("1144600.00")
