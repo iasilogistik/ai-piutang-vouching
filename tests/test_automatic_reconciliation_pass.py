@@ -84,10 +84,10 @@ def test_unique_billing_identity_matches_when_optional_scan_fields_are_unreadabl
         rows = reconcile_batch(db, batch.id, branch="KEDIRI")
         rec = next(row for row in rows if row.sap_billing_id == sap.id)
 
-        assert rec.status == "MATCH"
+        assert rec.status == "REVIEW"
         assert rec.billing_match is True
-        assert rec.exception_code is None
-        assert "MATCH berdasarkan Billing Document unik" in (rec.remarks or "")
+        assert rec.exception_code == "BILLING_NOMINAL_UNREADABLE"
+        assert "nominal fisik belum terbaca" in (rec.remarks or "")
 
 
 def test_readable_conflict_still_becomes_exception():
@@ -231,7 +231,7 @@ def test_reconciliation_rerun_updates_same_unique_row_in_place(monkeypatch):
         second_row = next(row for row in second if row.sap_billing_id == sap.id)
 
         assert second_row.id == first_id
-        assert second_row.status == "MATCH"
+        assert second_row.status == "REVIEW"
         assert db.query(BillingReconciliation).filter(
             BillingReconciliation.sap_billing_id == sap.id
         ).count() == 1
@@ -289,7 +289,7 @@ def test_reconciliation_defers_visual_scan_to_per_document_refresh(monkeypatch):
 
         rows = reconcile_batch(db, batch.id, branch="KEDIRI")
 
-        assert rows[0].status == "MATCH"
+        assert rows[0].status == "REVIEW"
         assert db.query(DocumentControlEvidence).filter(
             DocumentControlEvidence.document_id == spj_doc.id
         ).count() == 0
@@ -346,4 +346,85 @@ def test_reconciliation_does_not_run_expensive_ocr_inline(monkeypatch):
         rows = reconcile_batch(db, batch.id, branch="KEDIRI")
         rec = next(row for row in rows if row.sap_billing_id == sap.id)
 
+        assert rec.status == "REVIEW"
+
+
+
+def test_one_rupiah_ocr_difference_is_match_tolerance():
+    with Session(_engine()) as db:
+        batch = ImportBatch(file_name="sap.xlsx", branch="JAKARTA TIMUR", total_records=1, status="IMPORTED")
+        db.add(batch)
+        db.flush()
+        sap = SAPBilling(
+            import_batch_id=batch.id,
+            billing_document="8501780185",
+            doc_date=date(2026, 10, 2),
+            nominal=Decimal("6878175.00"),
+        )
+        db.add(sap)
+        db.flush()
+        doc = Document(
+            file_name="ADHI JAYA MANDIRI - 8501780185.pdf",
+            file_type="PDF",
+            document_type="BILLING",
+            file_hash="adhi",
+            storage_path="billing.pdf",
+            branch="JAKARTA TIMUR",
+        )
+        db.add(doc)
+        db.flush()
+        db.add(PhysicalBilling(
+            document_id=doc.id,
+            billing_document="8501780185",
+            doc_date=date(2026, 10, 2),
+            nominal=Decimal("6878174.00"),
+        ))
+        db.commit()
+
+        rec = reconcile_batch(db, batch.id, branch="JAKARTA TIMUR")[0]
+
         assert rec.status == "MATCH"
+        assert rec.nominal_match is True
+        assert rec.nominal_difference == Decimal("1.00")
+        assert "toleransi" in (rec.remarks or "").lower()
+
+
+def test_evidence_backed_partial_payment_nets_physical_to_sap():
+    with Session(_engine()) as db:
+        batch = ImportBatch(file_name="sap.xlsx", branch="JAKARTA TIMUR", total_records=1, status="IMPORTED")
+        db.add(batch)
+        db.flush()
+        sap = SAPBilling(
+            import_batch_id=batch.id,
+            billing_document="8501733547",
+            doc_date=date(2026, 10, 13),
+            nominal=Decimal("6595106.00"),
+        )
+        db.add(sap)
+        db.flush()
+        doc = Document(
+            file_name="AJ JAYA MANDIRI - 8501733547.pdf",
+            file_type="PDF",
+            document_type="BILLING",
+            file_hash="aj",
+            storage_path="billing.pdf",
+            branch="JAKARTA TIMUR",
+        )
+        db.add(doc)
+        db.flush()
+        db.add(PhysicalBilling(
+            document_id=doc.id,
+            billing_document="8501733547",
+            doc_date=date(2026, 10, 13),
+            nominal=Decimal("9095106.00"),
+            partial_payment=Decimal("2500000.00"),
+            partial_payment_raw="DERIVED_PHYSICAL_TOTAL_MINUS_PRINTED_OUTSTANDING",
+        ))
+        db.commit()
+
+        rec = reconcile_batch(db, batch.id, branch="JAKARTA TIMUR")[0]
+
+        assert rec.status == "MATCH"
+        assert rec.nominal_match is True
+        assert rec.nominal_difference == Decimal("0.00")
+        assert "2500000.00" in (rec.remarks or "")
