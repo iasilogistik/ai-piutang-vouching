@@ -260,13 +260,14 @@ def _vision_evidence(vision: dict[str, Any], *, expected_customer: str | None) -
     stamp_text = stamp_value.get("text")
     stamp_match = compare_stamp_to_customer(stamp_text, expected_customer)
     if stamp_status == "PRESENT" and not stamp_text:
-        # User policy: for vouching we test presence of a receiver stamp, not
-        # authenticity. If the cap is visibly present but its letters are too
-        # faint for OCR, do not force a reviewer solely for unreadable stamp text.
+        # Stamp presence alone is not enough for automatic PASS. If the stamp is
+        # visually present but its wording cannot be read, route it to REVIEW so
+        # a human only checks the ambiguous stamp rather than trusting a false
+        # positive.
         stamp_match = {
-            "status": "NOT_EVALUATED",
+            "status": "REVIEW",
             "confidence": stamp_value.get("confidence") or 0.0,
-            "remarks": "Stempel terlihat secara visual; tulisan stempel tidak dipakai sebagai syarat PASS.",
+            "remarks": "Stempel terlihat, tetapi tulisan/nama stempel belum terbaca jelas; perlu review.",
         }
     result["receiver_stamp"] = {
         "status": stamp_status if stamp_status in {"PRESENT", "MISSING", "UNKNOWN"} else "UNKNOWN",
