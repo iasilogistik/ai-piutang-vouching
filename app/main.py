@@ -404,18 +404,39 @@ def sap_validate(batch_id: int, db: Session = Depends(get_db), user: CurrentUser
 
 
 @app.post("/documents/drive-folder-import")
-def import_drive_folder(url: str = Form(...), mode: str = Form("AUTO"), branch: str | None = Form(None),
-                        db: Session = Depends(get_db),
-                        user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR"))):
+def import_drive_folder(
+    url: str = Form(...),
+    mode: str = Form("AUTO"),
+    branch: str | None = Form(None),
+    offset: int = Form(0),
+    limit: int = Form(4),
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(require_roles("ADMIN", "AUDITOR")),
+):
+    """Import a Google Drive folder in small storage-only chunks.
+
+    OCR/vision is deliberately deferred to separate per-document requests. The
+    previous implementation downloaded + stored + OCR'd the whole folder inside
+    one request and hit Vercel's 300-second FUNCTION_INVOCATION_TIMEOUT.
+    """
     try:
         uploaded_by = user.user_id
         target_branch = _prepare_upload_branch(db, user, branch)
         files = list_google_drive_folder_files(url)
+        safe_offset = max(int(offset or 0), 0)
+        safe_limit = min(max(int(limit or 4), 1), 6)
+        page = files[safe_offset:safe_offset + safe_limit]
+
         results: list[dict[str, object]] = []
-        for item in files:
+        for item in page:
             if not is_supported_drive_folder_file(item):
-                results.append({"source_path": item.name, "file_name": item.name, "mode": mode.upper(),
-                                "status": "SKIPPED", "reason": "Unsupported Google Drive file type"})
+                results.append({
+                    "source_path": item.name,
+                    "file_name": item.name,
+                    "mode": mode.upper(),
+                    "status": "SKIPPED",
+                    "reason": "Unsupported Google Drive file type",
+                })
                 continue
             try:
                 upload = download_drive_folder_file(item)
@@ -426,20 +447,55 @@ def import_drive_folder(url: str = Form(...), mode: str = Form("AUTO"), branch: 
                     uploaded_by=uploaded_by,
                     branch=target_branch,
                     source_mode="DRIVE_FOLDER_ARCHIVE" if Path(upload.filename).suffix.lower() in {".zip", ".rar"} else "DRIVE_FOLDER",
-                    metadata_extra={"drive_folder_url": url, "drive_file_id": item.file_id, "drive_file_name": item.name},
+                    metadata_extra={
+                        "drive_folder_url": url,
+                        "drive_file_id": item.file_id,
+                        "drive_file_name": item.name,
+                    },
+                    analyze_immediately=False,
                 )
                 for result in item_results:
-                    result["source_path"] = f"{item.name}/{result.get('source_path')}" if Path(upload.filename).suffix.lower() in {".zip", ".rar"} else item.name
+                    result["source_path"] = (
+                        f"{item.name}/{result.get('source_path')}"
+                        if Path(upload.filename).suffix.lower() in {".zip", ".rar"}
+                        else item.name
+                    )
                     result["file_name"] = result.get("file_name") or item.name
                 results.extend(item_results)
             except ValueError as item_exc:
                 db.rollback()
-                results.append({"source_path": item.name, "file_name": item.name,
-                                "mode": mode.upper(), "status": "ERROR", "reason": str(item_exc)})
-        return {"source": "GOOGLE_DRIVE_FOLDER", "mode": mode.upper(), "total_entries": len(results),
-                "summary": _summary(results), "results": results}
+                results.append({
+                    "source_path": item.name,
+                    "file_name": item.name,
+                    "mode": mode.upper(),
+                    "status": "ERROR",
+                    "reason": str(item_exc),
+                })
+
+        next_offset = safe_offset + len(page)
+        analysis_document_ids = [
+            int(row["analysis_document_id"])
+            for row in results
+            if row.get("status") == "SUCCESS"
+            and row.get("analysis_deferred")
+            and row.get("analysis_document_id") is not None
+        ]
+        return {
+            "source": "GOOGLE_DRIVE_FOLDER",
+            "mode": mode.upper(),
+            "total_files": len(files),
+            "offset": safe_offset,
+            "limit": safe_limit,
+            "next_offset": next_offset,
+            "has_more": next_offset < len(files),
+            "total_entries": len(results),
+            "summary": _summary(results),
+            "analysis_document_ids": analysis_document_ids,
+            "results": results,
+        }
     except ValueError as exc:
-        db.rollback(); raise handle_error(exc) from exc
+        db.rollback()
+        raise handle_error(exc) from exc
 
 
 @app.post("/documents/drive-import")
@@ -450,13 +506,35 @@ def import_drive_link(url: str = Form(...), mode: str = Form("AUTO"), branch: st
         uploaded_by = user.user_id
         target_branch = _prepare_upload_branch(db, user, branch)
         upload = download_drive_link_file(url)
-        total, results = _process_upload_or_zip(db, upload, mode=mode, uploaded_by=uploaded_by, branch=target_branch,
-                                                source_mode="DRIVE_ARCHIVE" if Path(upload.filename).suffix.lower() in {".zip", ".rar"} else "DRIVE_LINK",
-                                                metadata_extra={"drive_source_url": url})
-        return {"source": "SHARE_LINK", "file_name": upload.filename, "mode": mode.upper(),
-                "total_entries": total, "summary": _summary(results), "results": results}
+        total, results = _process_upload_or_zip(
+            db,
+            upload,
+            mode=mode,
+            uploaded_by=uploaded_by,
+            branch=target_branch,
+            source_mode="DRIVE_ARCHIVE" if Path(upload.filename).suffix.lower() in {".zip", ".rar"} else "DRIVE_LINK",
+            metadata_extra={"drive_source_url": url},
+            analyze_immediately=False,
+        )
+        analysis_document_ids = [
+            int(row["analysis_document_id"])
+            for row in results
+            if row.get("status") == "SUCCESS"
+            and row.get("analysis_deferred")
+            and row.get("analysis_document_id") is not None
+        ]
+        return {
+            "source": "SHARE_LINK",
+            "file_name": upload.filename,
+            "mode": mode.upper(),
+            "total_entries": total,
+            "summary": _summary(results),
+            "analysis_document_ids": analysis_document_ids,
+            "results": results,
+        }
     except ValueError as exc:
-        db.rollback(); raise handle_error(exc) from exc
+        db.rollback()
+        raise handle_error(exc) from exc
 
 
 @app.post("/documents/bulk-archive")
