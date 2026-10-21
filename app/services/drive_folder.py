@@ -79,9 +79,61 @@ def _safe_name(name: str, mime_type: str, fallback: str) -> str:
     return filename
 
 
+def _detect_extension_from_content(content: bytes) -> str | None:
+    head = content[:16]
+    if head.startswith(b"%PDF-"):
+        return ".pdf"
+    if head.startswith(b"\xff\xd8\xff"):
+        return ".jpg"
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return ".png"
+    if head.startswith((b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")):
+        return ".zip"
+    if head.startswith(b"Rar!\x1a\x07"):
+        return ".rar"
+    return None
+
+
+def _content_type_for_extension(extension: str) -> str:
+    return {
+        ".pdf": "application/pdf",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".zip": "application/zip",
+        ".rar": "application/vnd.rar",
+    }.get(extension.lower(), "application/octet-stream")
+
+
+def _filename_from_detected_content(item: DriveFolderFile, content: bytes) -> tuple[str, str]:
+    filename = _safe_name(item.name, item.mime_type, f"gdrive_{item.file_id}")
+    suffix = Path(filename).suffix.lower()
+    if suffix in SUPPORTED_DRIVE_EXTENSIONS:
+        return filename, content_type_for(filename)
+
+    detected = _detect_extension_from_content(content)
+    if not detected:
+        raise ValueError(
+            f"{item.name} was downloaded but is not a supported PDF/JPG/PNG/ZIP/RAR document"
+        )
+    stem = Path(filename).stem or f"gdrive_{item.file_id}"
+    normalized = f"{stem}{detected}"
+    return normalized, _content_type_for_extension(detected)
+
+
 def is_supported_drive_folder_file(item: DriveFolderFile) -> bool:
     suffix = Path(item.name).suffix.lower()
-    return item.mime_type.lower() in SUPPORTED_DRIVE_MIME_TYPES or suffix in SUPPORTED_DRIVE_EXTENSIONS
+    if item.mime_type.lower() in SUPPORTED_DRIVE_MIME_TYPES or suffix in SUPPORTED_DRIVE_EXTENSIONS:
+        return True
+
+    # Public Drive folder HTML often omits the real file extension and MIME type
+    # even when the underlying file is a PDF/image. Do not reject those entries
+    # before download; detect the file type from the downloaded bytes instead.
+    return (
+        item.source == "PUBLIC"
+        and item.mime_type.lower() in {"", "application/octet-stream"}
+        and not suffix
+    )
 
 
 def _list_with_drive_api(folder_url: str, api_key: str) -> list[DriveFolderFile]:
@@ -340,7 +392,8 @@ def download_drive_folder_file(item: DriveFolderFile) -> MemoryUpload:
         content = _download_public_file(item)
         if len(content) > MAX_DRIVE_FILE_BYTES:
             raise ValueError(f"{item.name} is larger than the allowed 75 MB limit")
-        return MemoryUpload(filename, content, content_type_for(filename))
+        filename, content_type = _filename_from_detected_content(item, content)
+        return MemoryUpload(filename, content, content_type)
 
     api_key = (settings.google_drive_api_key or "").strip()
     if not api_key:
@@ -355,7 +408,8 @@ def download_drive_folder_file(item: DriveFolderFile) -> MemoryUpload:
         )
         if len(content) > MAX_DRIVE_FILE_BYTES:
             raise ValueError(f"{item.name} is larger than the allowed 75 MB limit")
-        return MemoryUpload(filename, content, content_type_for(filename))
+        filename, content_type = _filename_from_detected_content(item, content)
+        return MemoryUpload(filename, content, content_type)
 
     with httpx.Client(timeout=90.0, follow_redirects=True) as client:
         response = client.get(
@@ -366,4 +420,8 @@ def download_drive_folder_file(item: DriveFolderFile) -> MemoryUpload:
         raise ValueError(f"Unable to download {item.name} from Google Drive ({response.status_code})")
     if len(response.content) > MAX_DRIVE_FILE_BYTES:
         raise ValueError(f"{item.name} is larger than the allowed 75 MB limit")
-    return MemoryUpload(filename, response.content, content_type_for(filename))
+    if Path(filename).suffix.lower() not in SUPPORTED_DRIVE_EXTENSIONS:
+        filename, content_type = _filename_from_detected_content(item, response.content)
+    else:
+        content_type = content_type_for(filename)
+    return MemoryUpload(filename, response.content, content_type)
