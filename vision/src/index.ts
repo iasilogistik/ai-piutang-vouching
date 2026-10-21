@@ -562,6 +562,9 @@ function parseInvoiceDate(text: string, expectedDocDate?: string | null): string
     /\bTANGGAL\s+INVOICE\b/i,
     /\bTGL\.?\s+INVOICE\b/i,
     /\bBILLING\s+DATE\b/i,
+    /\bINVOICE\s+DT\.?\b/i,
+    /\bTANGGAL\s+PENERBITAN\s+FAKTUR\b/i,
+    /\bFAKTUR\s*[:#-]?\s*TANGGAL\b/i,
   ];
   const forbiddenLabels = /\b(DUE\s+DATE|PAYMENT\s+DUE|NET\s+DUE|JATUH\s+TEMPO|TANGGAL\s+JATUH\s+TEMPO|TGL\.?\s+JATUH\s+TEMPO|BATAS\s+PEMBAYARAN|DELIVERY\s+DATE|TANGGAL\s+PENGIRIMAN|POSTING\s+DATE|PRINT\s+DATE|TANGGAL\s+CETAK|TGL\.?\s+CETAK|ORDER\s+DATE|PO\s+DATE)\b/i;
 
@@ -695,26 +698,11 @@ function parsePartialPayments(text: string) {
   const gross = findLabeledAmount(text, [
     /(?:GRAND\s+TOTAL|TOTAL\s+TAGIHAN|TOTAL\s+INVOICE|JUMLAH\s+TAGIHAN|INVOICE\s+TOTAL|TOTAL\s+BILLING|NILAI\s+FAKTUR|TOTAL\s+FAKTUR)\s*[:#=-]?\s*(?:RP\.?\s*)?([0-9][0-9.,:\s-]*)/i,
   ]);
-  const outstanding = findLabeledAmount(text, [
-    /(?:OUTSTANDING|NET\s+OUTSTANDING|BALANCE\s+DUE|AMOUNT\s+DUE|SISA\s+TAGIHAN|SISA\s+PIUTANG|SISA\s+PEMBAYARAN|SALDO\s+TERUTANG|NET\s+DUE)\s*[:#=-]?\s*(?:RP\.?\s*)?([0-9][0-9.,:\s-]*)/i,
-  ]);
 
-  // Evidence-backed derivation only: if both original invoice total and printed
-  // outstanding balance exist on the same Billing page, the paid amount is the
-  // arithmetic difference. This does not use SAP to manufacture a payment.
-  if (rows.length === 0 && gross && outstanding && gross.amount > outstanding.amount) {
-    const derived = Math.round((gross.amount - outstanding.amount) * 100) / 100;
-    if (derived > 0) {
-      rows.push({
-        amount: derived,
-        date: null,
-        reference:
-          'DERIVED_PHYSICAL_TOTAL_MINUS_PRINTED_OUTSTANDING | ' +
-          gross.reference + ' | ' + outstanding.reference,
-      });
-    }
-  }
-
+  // Audit accuracy rule: a partial payment is accepted only when the Billing
+  // physically prints a payment concept (Payment Received, Amount Paid, DP,
+  // Pembayaran Sebelumnya, etc.). Never derive a partial merely from
+  // Total-Outstanding or from SAP because that can make a mismatch look correct.
   return { rows, grossTotal: gross?.amount ?? null };
 }
 
@@ -899,7 +887,7 @@ async function localAnalyze(
   // same Billing evidence are accepted by parsePartialPayments().
 
   return {
-    engine: 'LOCAL_TESSERACT_VISUAL_V20',
+    engine: 'LOCAL_TESSERACT_VISUAL_V21',
     billing_document: billingDocument,
     invoice_date: invoiceDate,
     grand_total: paymentResult.grossTotal,
@@ -917,7 +905,7 @@ async function localAnalyze(
         : 'Header SPJ resmi tidak terbaca; sistem memakai fallback dokumen.',
       'TTD hanya dinilai dari ada/tidaknya coretan visual; keaslian dan identitas tidak dianalisis.',
       'Tanggal fisik Billing hanya diambil dari label Invoice Date/Tanggal Faktur/Tanggal Invoice/Billing Date; tanggal tanpa label, SAP, Due/Jatuh Tempo, Delivery, Posting, Print dan Order Date tidak pernah dipakai.',
-      'Partial payment dibaca dari evidence Billing dengan OCR utama + retry high-contrast jika gross lebih besar dari SAP outstanding; nilai SAP tidak pernah dipakai sebagai nilai partial payment.'
+      'Partial payment hanya diterima bila ada label pembayaran eksplisit pada Billing (mis. Payment Received/Amount Paid/DP/Pembayaran Sebelumnya); tidak pernah dihitung dari Total-Outstanding atau SAP.'
     ],
     ocr_text: ocrText,
   };
@@ -927,7 +915,7 @@ app.get('/health', (c) =>
   c.json({
     status: 'ok',
     service: 'vision',
-    engine: 'LOCAL_TESSERACT_VISUAL_V20',
+    engine: 'LOCAL_TESSERACT_VISUAL_V21',
   }),
 );
 
@@ -935,7 +923,7 @@ app.get('/vision-ai-health', async (c) => {
   // Preview-only diagnostic route used while this branch is under test.
   return c.json({
     status: 'ok',
-    engine: 'LOCAL_TESSERACT_VISUAL_V20',
+    engine: 'LOCAL_TESSERACT_VISUAL_V21',
     paid_gateway_required: false,
   });
 });
