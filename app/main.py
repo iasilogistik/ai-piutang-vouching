@@ -814,14 +814,14 @@ def reconciliation_visual_refresh_candidates(
             continue
         seen.add(spj.document_id)
 
-        current_v20 = db.scalar(
+        current_v21 = db.scalar(
             select(ControlEvidenceDetection.id).where(
                 ControlEvidenceDetection.document_id == spj.document_id,
-                ControlEvidenceDetection.extraction_engine.contains("LOCAL_TESSERACT_VISUAL_V20"),
+                ControlEvidenceDetection.extraction_engine.contains("LOCAL_TESSERACT_VISUAL_V21"),
             ).limit(1)
         )
         malformed_spj = bool(spj.no_spj and _normalize_spj_number(spj.no_spj) is None)
-        if current_v20 is not None and not malformed_spj:
+        if current_v21 is not None and not malformed_spj:
             continue
 
         control = db.scalar(
