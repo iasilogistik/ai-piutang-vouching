@@ -132,7 +132,6 @@ def is_supported_drive_folder_file(item: DriveFolderFile) -> bool:
     return (
         item.source == "PUBLIC"
         and item.mime_type.lower() in {"", "application/octet-stream"}
-        and not suffix
     )
 
 
