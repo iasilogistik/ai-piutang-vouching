@@ -441,3 +441,51 @@ def test_v18_refresh_clears_stale_physical_date_nominal_and_partial_when_not_sup
         assert billing.nominal is None
         assert billing.partial_payment is None
         assert billing.partial_payment_raw is None
+
+
+
+def test_visible_but_unreadable_stamp_requires_review(monkeypatch, tmp_path):
+    import app.services.vouching as vouching_module
+
+    monkeypatch.setattr(vouching_module, "extract_text", lambda path: ("", "REVIEW_REQUIRED"))
+    vision = _vision_payload()
+    vision["stamp"] = {
+        "status": "PRESENT",
+        "text": None,
+        "confidence": 0.88,
+        "page_number": 1,
+    }
+
+    fake_pdf = tmp_path / "visible-stamp-unreadable.pdf"
+    fake_pdf.write_bytes(b"%PDF-test")
+
+    with Session(_engine()) as db:
+        doc = Document(
+            file_name=fake_pdf.name,
+            file_type="PDF",
+            document_type="SPJ",
+            file_hash="visible-stamp-unreadable-hash",
+            storage_path=str(fake_pdf),
+            branch="KEDIRI",
+        )
+        db.add(doc)
+        db.flush()
+        db.add(SPJ(document_id=doc.id, no_spj="2501787882"))
+        db.commit()
+
+        payload = analyze_and_persist_control_evidence(
+            db,
+            doc.id,
+            expected_customer="SANTOSO, TOKO",
+            vision_result=vision,
+        )
+        db.commit()
+
+        row = db.scalar(
+            select(DocumentControlEvidence).where(DocumentControlEvidence.document_id == doc.id)
+        )
+        assert row.receiver_stamp_status == "PRESENT"
+        assert row.stamp_customer_match_status == "REVIEW"
+        assert row.review_required is True
+        assert "stempel" in (row.review_reasons or "").lower()
+        assert payload["review_required"] is True
