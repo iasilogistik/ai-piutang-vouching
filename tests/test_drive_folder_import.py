@@ -254,3 +254,60 @@ def test_gdown_folder_discovery_uses_only_supported_v52_arguments(monkeypatch):
     assert calls[0]["skip_download"] is True
     assert "timeout" not in calls[0]
     assert "retries" not in calls[0]
+
+
+
+def test_public_extensionless_entry_is_probed_instead_of_skipped():
+    item = DriveFolderFile(
+        "file-no-extension",
+        "ADHI JAYA MANDIRI - 8501780185",
+        "application/octet-stream",
+        source="PUBLIC",
+    )
+
+    assert is_supported_drive_folder_file(item) is True
+
+
+def test_public_extensionless_pdf_gets_pdf_extension_after_download(monkeypatch):
+    monkeypatch.setattr(drive_folder.settings, "google_drive_api_key", None)
+
+    def fake_download(*, id, output, **kwargs):
+        Path(output).write_bytes(b"%PDF-1.7\nmock evidence")
+        return output
+
+    monkeypatch.setattr(drive_folder.gdown, "download", fake_download)
+    item = DriveFolderFile(
+        "file-pdf-no-ext",
+        "SANTOSO - 8501735930",
+        "application/octet-stream",
+        source="PUBLIC",
+    )
+
+    upload = download_drive_folder_file(item)
+
+    assert upload.filename == "SANTOSO - 8501735930.pdf"
+    assert upload.content_type == "application/pdf"
+    assert upload.file.read().startswith(b"%PDF-")
+
+
+def test_public_unknown_binary_is_rejected_after_download(monkeypatch):
+    monkeypatch.setattr(drive_folder.settings, "google_drive_api_key", None)
+
+    def fake_download(*, id, output, **kwargs):
+        Path(output).write_bytes(b"not-a-supported-document")
+        return output
+
+    monkeypatch.setattr(drive_folder.gdown, "download", fake_download)
+    item = DriveFolderFile(
+        "file-unknown",
+        "CATATAN TANPA EXTENSION",
+        "application/octet-stream",
+        source="PUBLIC",
+    )
+
+    try:
+        download_drive_folder_file(item)
+    except ValueError as exc:
+        assert "not a supported PDF/JPG/PNG/ZIP/RAR document" in str(exc)
+    else:
+        raise AssertionError("expected unsupported binary to be rejected after content detection")
