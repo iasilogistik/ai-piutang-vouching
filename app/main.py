@@ -554,10 +554,19 @@ def upload_bulk_zip(file: UploadFile = File(...), mode: str = "AUTO", branch: st
                                 "status": "SKIPPED", "reason": "Unable to classify file as BILLING, SPJ, or COMBINED"})
                 continue
             try:
-                payload = _ingest_classified_upload(db, make_upload(entry), document_types=document_types,
-                                                    uploaded_by=uploaded_by, branch=target_branch,
-                                                    source_mode="BULK_ARCHIVE_COMBINED" if document_types == ["BILLING", "SPJ"] else "BULK_ARCHIVE",
-                                                    metadata_extra={"archive_source_path": entry.source_path, "archive_type": Path(file.filename or "").suffix.lower().lstrip(".").upper()})
+                payload = _ingest_classified_upload(
+                    db,
+                    make_upload(entry),
+                    document_types=document_types,
+                    uploaded_by=uploaded_by,
+                    branch=target_branch,
+                    source_mode="BULK_ARCHIVE_COMBINED" if document_types == ["BILLING", "SPJ"] else "BULK_ARCHIVE",
+                    metadata_extra={
+                        "archive_source_path": entry.source_path,
+                        "archive_type": Path(file.filename or "").suffix.lower().lstrip(".").upper(),
+                    },
+                    analyze_immediately=False,
+                )
                 db.commit()
                 results.append({"source_path": entry.source_path, "file_name": entry.filename, **payload})
             except ValueError as item_exc:
@@ -566,7 +575,20 @@ def upload_bulk_zip(file: UploadFile = File(...), mode: str = "AUTO", branch: st
                                 "mode": "+".join(document_types), "status": "ERROR", "reason": str(item_exc)})
     except ValueError as exc:
         db.rollback(); raise handle_error(exc) from exc
-    return {"mode": mode.upper(), "total_entries": len(entries), "summary": _summary(results), "results": results}
+    analysis_document_ids = [
+        int(row["analysis_document_id"])
+        for row in results
+        if row.get("status") == "SUCCESS"
+        and row.get("analysis_deferred")
+        and row.get("analysis_document_id") is not None
+    ]
+    return {
+        "mode": mode.upper(),
+        "total_entries": len(entries),
+        "summary": _summary(results),
+        "analysis_document_ids": analysis_document_ids,
+        "results": results,
+    }
 
 
 @app.post("/documents/combined")
@@ -638,7 +660,13 @@ def upload_document(document_type: str, file: UploadFile = File(...), branch: st
         analysis = ocr_document(db, doc.id)
         control_evidence = None
         if doc.document_type == "SPJ":
-            control_evidence = analyze_and_persist_control_evidence(db, doc.id)
+            control_evidence = analyze_and_persist_control_evidence(
+                db,
+                doc.id,
+                vision_result=analysis.get("vision"),
+                ocr_text=analysis.get("ocr_text"),
+                ocr_engine=analysis.get("engine"),
+            )
         record_audit(db, entity_type="DOCUMENT", entity_id=doc.id, action="AUTO_EXTRACT",
                      actor=uploaded_by, status_to="EXTRACTED",
                      metadata={"engine": analysis.get("engine"), "confidence": analysis.get("confidence"),
@@ -659,7 +687,13 @@ def run_ocr(document_id: int, db: Session = Depends(get_db),
         result = ocr_document(db, document_id)
         control_evidence = None
         if doc and doc.document_type == "SPJ":
-            control_evidence = analyze_and_persist_control_evidence(db, document_id)
+            control_evidence = analyze_and_persist_control_evidence(
+                db,
+                document_id,
+                vision_result=result.get("vision"),
+                ocr_text=result.get("ocr_text"),
+                ocr_engine=result.get("engine"),
+            )
         record_audit(db, entity_type="DOCUMENT", entity_id=document_id, action="OCR", actor=user.user_id,
                      status_to="OCR_PROCESSED", metadata={"engine": result.get("engine"), "confidence": result.get("confidence"),
                                                            "control_evidence_review_required": bool(control_evidence and control_evidence.get("review_required"))},
