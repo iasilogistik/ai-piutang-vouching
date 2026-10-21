@@ -198,3 +198,13 @@ def test_partial_payment_examples_net_to_expected_sap_outstanding():
     )
     assert changed is True
     assert Decimal("5644800.00") - joyo == Decimal("1144600.00")
+
+
+
+def test_partial_payment_is_not_derived_from_total_and_outstanding_without_payment_label():
+    amount, raw = _extract_partial_payments(
+        "Grand Total: 2.637.230\nOutstanding: 1.637.280\nDue Date: 10/10/2026"
+    )
+
+    assert amount is None
+    assert raw is None
