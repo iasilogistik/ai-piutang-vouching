@@ -547,12 +547,12 @@ function daysBetweenIso(left: string, right: string): number {
   return Math.abs(a - b) / 86400000;
 }
 
-function parseInvoiceDate(text: string): string | null {
+function parseInvoiceDate(text: string, expectedDocDate?: string | null): string | null {
   const lines = String(text || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   const datePattern = /(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{1,2}\s+[A-Za-z]{3,12}\s+\d{4}|[A-Za-z]{3,12}\s+\d{1,2},?\s+\d{4})/i;
 
-  // Physical Doc. Date must be the invoice/faktur issue date printed on Billing.
-  // Never infer it from SAP and never accept due/delivery/posting/print/order dates.
+  // Physical Doc. Date is the invoice/faktur issue date printed on Billing.
+  // Due/Jatuh Tempo/Delivery/Posting/Print/Order dates are never eligible.
   const invoiceLabels = [
     /\bTANGGAL\s+FAKTUR(?:\s+PAJAK)?\b/i,
     /\bTGL\.?\s+FAKTUR(?:\s+PAJAK)?\b/i,
@@ -561,9 +561,22 @@ function parseInvoiceDate(text: string): string | null {
     /\bDATE\s+OF\s+INVOICE\b/i,
     /\bTANGGAL\s+INVOICE\b/i,
     /\bTGL\.?\s+INVOICE\b/i,
+    /\bDOCUMENT\s+DATE\b/i,
+    /\bDOC\.?\s+DATE\b/i,
+    /\bBILLING\s+DATE\b/i,
   ];
   const forbiddenLabels = /\b(DUE\s+DATE|PAYMENT\s+DUE|NET\s+DUE|JATUH\s+TEMPO|TANGGAL\s+JATUH\s+TEMPO|TGL\.?\s+JATUH\s+TEMPO|BATAS\s+PEMBAYARAN|DELIVERY\s+DATE|TANGGAL\s+PENGIRIMAN|POSTING\s+DATE|PRINT\s+DATE|TANGGAL\s+CETAK|TGL\.?\s+CETAK|ORDER\s+DATE|PO\s+DATE)\b/i;
 
+  const plausible = (iso: string): boolean => {
+    const year = Number(iso.slice(0, 4));
+    if (expectedDocDate) {
+      const expectedYear = Number(expectedDocDate.slice(0, 4));
+      if (Number.isFinite(expectedYear) && Math.abs(year - expectedYear) > 1) return false;
+    }
+    return year >= 2000 && year <= 2100;
+  };
+
+  // 1) Strongest source: a date attached to an invoice/faktur/document-date label.
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (!invoiceLabels.some((pattern) => pattern.test(line))) continue;
@@ -575,8 +588,21 @@ function parseInvoiceDate(text: string): string | null {
       const match = datePattern.exec(candidateLine);
       if (!match) continue;
       const normalized = parseInvoiceDateValue(match[1]);
-      if (normalized) return normalized;
+      if (normalized && plausible(normalized)) return normalized;
     }
+  }
+
+  // 2) OCR sometimes loses the label but still reads the printed date. Only use
+  // dates physically visible on the selected Billing page, excluding forbidden
+  // labels. SAP date is used solely to choose among visible candidates; it is
+  // never returned unless the same date was actually read from the document.
+  const candidates = invoiceDateCandidates(text).filter(plausible);
+  if (!candidates.length) return null;
+  if (candidates.length === 1) return candidates[0];
+  if (expectedDocDate) {
+    return [...candidates].sort(
+      (left, right) => daysBetweenIso(left, expectedDocDate) - daysBetweenIso(right, expectedDocDate),
+    )[0];
   }
   return null;
 }
@@ -610,13 +636,10 @@ function selectBillingPageIndex(pages: PageOcr[], expectedBillingDocument?: stri
 function parsePartialPayments(text: string) {
   const rows: Array<{ amount: number; date: string | null; reference: string | null }> = [];
 
-  // Accuracy-first: a partial payment is accepted only when a payment label is
-  // explicitly printed in the physical evidence. Do not derive it from
-  // Total-Outstanding or SAP values.
   const explicitPatterns = [
     /(?:PARTIAL\s+PAYMENT|PARTIAL\s+PAID|PAYMENT\s+PARTIAL)\s*[:#=-]?\s*(?:RP\.?\s*)?([0-9][0-9.,:\s-]*)/gi,
-    /(?:PAYMENT\s+RECEIVED|PAYMENT\s+PAID|AMOUNT\s+PAID|PAID\s+AMOUNT)\s*[:#=-]?\s*(?:RP\.?\s*)?([0-9][0-9.,:\s-]*)/gi,
-    /(?:JUMLAH\s+DIBAYAR|PEMBAYARAN\s+(?:PARTIAL|PARSIAL|DITERIMA|SEBELUMNYA|TERDAHULU)|TELAH\s+DIBAYAR|SUDAH\s+DIBAYAR)\s*[:#=-]?\s*(?:RP\.?\s*)?([0-9][0-9.,:\s-]*)/gi,
+    /(?:PAYMENT\s+RECEIVED|PAYMENT\s+PAID|AMOUNT\s+PAID|PAID\s+AMOUNT|TOTAL\s+PAID|TOTAL\s+PAYMENT|PAYMENT\s+AMOUNT)\s*[:#=-]?\s*(?:RP\.?\s*)?([0-9][0-9.,:\s-]*)/gi,
+    /(?:JUMLAH\s+DIBAYAR|NILAI\s+BAYAR|TOTAL\s+BAYAR|JUMLAH\s+PEMBAYARAN|PEMBAYARAN\s+(?:PARTIAL|PARSIAL|DITERIMA|SEBELUMNYA|TERDAHULU)|TELAH\s+DIBAYAR|SUDAH\s+DIBAYAR)\s*[:#=-]?\s*(?:RP\.?\s*)?([0-9][0-9.,:\s-]*)/gi,
     /(?:DOWN\s+PAYMENT|\bDP\b|UANG\s+MUKA)\s*[:#=-]?\s*(?:RP\.?\s*)?([0-9][0-9.,:\s-]*)/gi,
   ];
 
@@ -634,8 +657,28 @@ function parsePartialPayments(text: string) {
   }
 
   const gross = findLabeledAmount(text, [
-    /(?:GRAND\s+TOTAL|TOTAL\s+TAGIHAN|TOTAL\s+INVOICE|JUMLAH\s+TAGIHAN|INVOICE\s+TOTAL|TOTAL\s+BILLING|NILAI\s+FAKTUR)\s*[:#=-]?\s*(?:RP\.?\s*)?([0-9][0-9.,:\s-]*)/i,
+    /(?:GRAND\s+TOTAL|TOTAL\s+TAGIHAN|TOTAL\s+INVOICE|JUMLAH\s+TAGIHAN|INVOICE\s+TOTAL|TOTAL\s+BILLING|NILAI\s+FAKTUR|TOTAL\s+FAKTUR)\s*[:#=-]?\s*(?:RP\.?\s*)?([0-9][0-9.,:\s-]*)/i,
   ]);
+  const outstanding = findLabeledAmount(text, [
+    /(?:OUTSTANDING|NET\s+OUTSTANDING|BALANCE\s+DUE|AMOUNT\s+DUE|SISA\s+TAGIHAN|SISA\s+PIUTANG|SISA\s+PEMBAYARAN|SALDO\s+TERUTANG|NET\s+DUE)\s*[:#=-]?\s*(?:RP\.?\s*)?([0-9][0-9.,:\s-]*)/i,
+  ]);
+
+  // Evidence-backed derivation only: if both original invoice total and printed
+  // outstanding balance exist on the same Billing page, the paid amount is the
+  // arithmetic difference. This does not use SAP to manufacture a payment.
+  if (rows.length === 0 && gross && outstanding && gross.amount > outstanding.amount) {
+    const derived = Math.round((gross.amount - outstanding.amount) * 100) / 100;
+    if (derived > 0) {
+      rows.push({
+        amount: derived,
+        date: null,
+        reference:
+          'DERIVED_PHYSICAL_TOTAL_MINUS_PRINTED_OUTSTANDING | ' +
+          gross.reference + ' | ' + outstanding.reference,
+      });
+    }
+  }
+
   return { rows, grossTotal: gross?.amount ?? null };
 }
 
@@ -785,7 +828,7 @@ async function localAnalyze(
   // the label but keeps the printed date, expected SAP date only disambiguates
   // among dates that are actually visible on that Billing page.
   const billingText = billingPageIndex >= 0 ? pages[billingPageIndex].text : '';
-  const invoiceDate = billingText ? parseInvoiceDate(billingText) : null;
+  const invoiceDate = billingText ? parseInvoiceDate(billingText, expectedDocDate) : null;
   const paymentResult = parsePartialPayments(billingText);
 
   // Partial payment must come from the selected Billing page only. Never scan
@@ -797,7 +840,7 @@ async function localAnalyze(
   // same Billing evidence are accepted by parsePartialPayments().
 
   return {
-    engine: 'LOCAL_TESSERACT_VISUAL_V18',
+    engine: 'LOCAL_TESSERACT_VISUAL_V19',
     billing_document: billingDocument,
     invoice_date: invoiceDate,
     grand_total: paymentResult.grossTotal,
@@ -814,7 +857,7 @@ async function localAnalyze(
         : 'Header SPJ resmi tidak terbaca; sistem memakai fallback dokumen.',
       'TTD hanya dinilai dari ada/tidaknya coretan visual; keaslian dan identitas tidak dianalisis.',
       'Tanggal fisik Billing hanya diambil dari label Invoice Date/Tanggal Faktur/Tanggal Invoice pada halaman Billing; SAP, Due/Jatuh Tempo, Delivery, Posting, Print dan Order Date tidak pernah dipakai.',
-      'Partial payment hanya dibaca bila ada label pembayaran eksplisit pada bukti fisik. Total-Outstanding dan selisih SAP tidak pernah dianggap sebagai partial payment.'
+      'Partial payment dibaca dari label pembayaran eksplisit atau dari Total Faktur dikurangi Outstanding yang keduanya tercetak pada halaman Billing. Selisih SAP tidak pernah dipakai untuk menciptakan partial payment.'
     ],
     ocr_text: ocrText,
   };
@@ -824,7 +867,7 @@ app.get('/health', (c) =>
   c.json({
     status: 'ok',
     service: 'vision',
-    engine: 'LOCAL_TESSERACT_VISUAL_V18',
+    engine: 'LOCAL_TESSERACT_VISUAL_V19',
   }),
 );
 
@@ -832,7 +875,7 @@ app.get('/vision-ai-health', async (c) => {
   // Preview-only diagnostic route used while this branch is under test.
   return c.json({
     status: 'ok',
-    engine: 'LOCAL_TESSERACT_VISUAL_V18',
+    engine: 'LOCAL_TESSERACT_VISUAL_V19',
     paid_gateway_required: false,
   });
 });
