@@ -859,7 +859,7 @@ async function localAnalyze(
   // If the printed gross is higher than SAP outstanding, a partial payment may
   // exist but be faint. Run one high-contrast OCR retry on the Billing page.
   // SAP only triggers the retry; the payment amount still must be read from
-  // physical evidence (or Total - printed Outstanding on the same page).
+  // an explicit payment label on the physical Billing evidence.
   if (
     billingPageIndex >= 0 &&
     paymentResult.rows.length === 0 &&
@@ -883,8 +883,8 @@ async function localAnalyze(
   // partials in combined evidence packages.
   // Never manufacture a payment as Gross Billing - SAP outstanding: that can
   // make reconciliation appear correct even when the document has no payment
-  // history. Only explicit payment labels or Total - printed Outstanding on the
-  // same Billing evidence are accepted by parsePartialPayments().
+  // history. Only explicit payment labels on the selected Billing evidence are
+  // accepted by parsePartialPayments().
 
   return {
     engine: 'LOCAL_TESSERACT_VISUAL_V21',
